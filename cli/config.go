@@ -1,9 +1,9 @@
-package cmd
+package cli
 
 import (
-	"chaathan/pkg/config"
-	"chaathan/pkg/logger"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/config"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
 	"os"
 	"os/exec"
 	"runtime"

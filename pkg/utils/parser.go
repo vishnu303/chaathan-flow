@@ -2,8 +2,8 @@ package utils
 
 import (
 	"bufio"
-	"chaathan/pkg/database"
 	"encoding/json"
+	"github.com/vishnu303/chaathan-flow/pkg/database"
 	"os"
 	"strconv"
 	"strings"
@@ -41,14 +41,14 @@ func ParseSubdomainsFile(scanID int64, filePath, source string) (int, error) {
 
 // HttpxResult represents a line from httpx JSON output
 type HttpxResult struct {
-	URL           string   `json:"url"`
-	StatusCode    int      `json:"status_code"`
-	Title         string   `json:"title"`
-	ContentType   string   `json:"content_type"`
-	Technologies  []string `json:"tech"`
-	Host          string   `json:"host"`
-	Input         string   `json:"input"`
-	ResponseTime  string   `json:"response_time"`
+	URL          string   `json:"url"`
+	StatusCode   int      `json:"status_code"`
+	Title        string   `json:"title"`
+	ContentType  string   `json:"content_type"`
+	Technologies []string `json:"tech"`
+	Host         string   `json:"host"`
+	Input        string   `json:"input"`
+	ResponseTime string   `json:"response_time"`
 }
 
 // ParseHttpxOutput parses httpx JSON output and stores in database
@@ -99,15 +99,15 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 
 // NucleiResult represents a line from nuclei JSON output
 type NucleiResult struct {
-	TemplateID  string `json:"template-id"`
-	TemplateName string `json:"name"`
-	Severity    string `json:"severity"`
-	Host        string `json:"host"`
-	MatchedAt   string `json:"matched-at"`
-	ExtractorName string `json:"extractor-name"`
-	Matcher     string `json:"matcher-name"`
-	Description string `json:"description"`
-	Extracted   []string `json:"extracted-results"`
+	TemplateID    string   `json:"template-id"`
+	TemplateName  string   `json:"name"`
+	Severity      string   `json:"severity"`
+	Host          string   `json:"host"`
+	MatchedAt     string   `json:"matched-at"`
+	ExtractorName string   `json:"extractor-name"`
+	Matcher       string   `json:"matcher-name"`
+	Description   string   `json:"description"`
+	Extracted     []string `json:"extracted-results"`
 }
 
 // ParseNucleiOutput parses nuclei JSON output and stores in database

@@ -1,9 +1,9 @@
 package report
 
 import (
-	"chaathan/pkg/database"
 	"encoding/json"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/database"
 	"os"
 	"path/filepath"
 	"strings"
@@ -471,7 +471,7 @@ func (r *Report) toText() (string, error) {
 	sb.WriteString(fmt.Sprintf("Open Ports: %d\n", r.Stats.TotalPorts))
 	sb.WriteString(fmt.Sprintf("URLs: %d\n", r.Stats.TotalURLs))
 	sb.WriteString(fmt.Sprintf("Endpoints: %d\n", r.Stats.TotalEndpoints))
-	
+
 	sb.WriteString("\nVulnerabilities:\n")
 	for sev, count := range r.Stats.Vulnerabilities {
 		sb.WriteString(fmt.Sprintf("  %s: %d\n", strings.ToUpper(sev), count))

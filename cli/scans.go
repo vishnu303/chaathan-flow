@@ -1,10 +1,10 @@
-package cmd
+package cli
 
 import (
-	"chaathan/pkg/database"
-	"chaathan/pkg/logger"
-	"chaathan/pkg/scan"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/database"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/scan"
 	"os"
 	"path/filepath"
 	"text/tabwriter"
@@ -47,14 +47,14 @@ var scansDeleteCmd = &cobra.Command{
 }
 
 var (
-	listLimit int
+	listLimit  int
 	listTarget string
 )
 
 func init() {
 	scansListCmd.Flags().IntVarP(&listLimit, "limit", "n", 20, "Number of scans to show")
 	scansListCmd.Flags().StringVarP(&listTarget, "target", "t", "", "Filter by target domain")
-	
+
 	scansCmd.AddCommand(scansListCmd)
 	scansCmd.AddCommand(scansShowCmd)
 	scansCmd.AddCommand(scansResumeCmd)
@@ -185,7 +185,7 @@ func runScansResume(cmd *cobra.Command, args []string) {
 	logger.Section("Resuming Scan #%d", scanID)
 	logger.Info("Target: %s", state.Target)
 	logger.Info("Progress: %.1f%% (%d/%d steps)", state.Progress(), len(state.CompletedSteps), state.TotalSteps)
-	
+
 	nextStep := state.GetNextStep()
 	if nextStep != nil {
 		logger.Info("Next step: %s", nextStep.Description)
@@ -220,7 +220,7 @@ func runScansDelete(cmd *cobra.Command, args []string) {
 
 	logger.Warning("This will delete scan #%d for %s", s.ID, s.Target)
 	logger.Warning("This action cannot be undone.")
-	
+
 	// Simple confirmation (in real implementation, add proper prompt)
 	logger.Info("Deleting scan data...")
 

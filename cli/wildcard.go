@@ -1,18 +1,17 @@
-package cmd
+package cli
 
 import (
-	"chaathan/pkg/config"
-	"chaathan/pkg/database"
-	"chaathan/pkg/logger"
-	"chaathan/pkg/notify"
-	"chaathan/pkg/report"
-	"chaathan/pkg/runner"
-	"chaathan/pkg/scan"
-	"chaathan/pkg/tools"
-	"chaathan/pkg/utils"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/database"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/notify"
+	"github.com/vishnu303/chaathan-flow/pkg/report"
+	"github.com/vishnu303/chaathan-flow/pkg/runner"
+	"github.com/vishnu303/chaathan-flow/pkg/scan"
+	"github.com/vishnu303/chaathan-flow/pkg/tools"
+	"github.com/vishnu303/chaathan-flow/pkg/utils"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,12 +23,12 @@ import (
 )
 
 var (
-	targetDomain  string
-	skipAmass     bool
-	skipNuclei    bool
-	wordlistPath  string
-	githubToken   string
-	resumeScanID  int64
+	targetDomain   string
+	skipAmass      bool
+	skipNuclei     bool
+	wordlistPath   string
+	githubToken    string
+	resumeScanID   int64
 	generateReport bool
 )
 
@@ -128,7 +127,7 @@ func runWildcard(cmd *cobra.Command, args []string) {
 	home, _ := os.UserHomeDir()
 	stateDir := filepath.Join(home, ".chaathan", "state")
 	stateMgr := scan.NewManager(stateDir)
-	
+
 	scanState, _ := stateMgr.CreateState(scanID, targetDomain, "wildcard", resultDir, configJSON)
 
 	// Setup runner and tools
@@ -559,7 +558,7 @@ func finalizeScan(scanID int64, status string, stateMgr *scan.Manager, state *sc
 			logger.Info("  Open Ports: %d", stats.TotalPorts)
 			logger.Info("  URLs: %d", stats.TotalURLs)
 			logger.Info("  Endpoints: %d", stats.TotalEndpoints)
-			
+
 			if len(stats.Vulnerabilities) > 0 {
 				logger.Info("  Vulnerabilities:")
 				for sev, count := range stats.Vulnerabilities {
@@ -607,7 +606,7 @@ func finalizeScan(scanID int64, status string, stateMgr *scan.Manager, state *sc
 				if err := rpt.Export(report.FormatMarkdown, reportPath); err == nil {
 					logger.Success("Report saved: %s", reportPath)
 				}
-				
+
 				// Also save report in result directory
 				localReportPath := filepath.Join(resultDir, "REPORT.md")
 				if err := rpt.Export(report.FormatMarkdown, localReportPath); err == nil {

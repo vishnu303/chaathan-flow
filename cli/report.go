@@ -1,9 +1,9 @@
-package cmd
+package cli
 
 import (
-	"chaathan/pkg/logger"
-	"chaathan/pkg/report"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/report"
 	"os"
 	"path/filepath"
 	"time"
@@ -56,7 +56,7 @@ func runReportGenerate(cmd *cobra.Command, args []string) {
 		home, _ := os.UserHomeDir()
 		reportsDir := filepath.Join(home, ".chaathan", "reports")
 		os.MkdirAll(reportsDir, 0755)
-		
+
 		ext := getExtension(reportFormat)
 		timestamp := time.Now().Format("20060102_150405")
 		outputPath = filepath.Join(reportsDir, fmt.Sprintf("scan_%d_%s%s", scanID, timestamp, ext))
@@ -70,7 +70,7 @@ func runReportGenerate(cmd *cobra.Command, args []string) {
 	}
 
 	logger.Success("Report saved to: %s", outputPath)
-	
+
 	// Print quick summary
 	logger.Info("\nSummary: %s", rpt.QuickSummary())
 }

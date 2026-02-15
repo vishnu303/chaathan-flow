@@ -1,7 +1,7 @@
 package scope
 
 import (
-	"chaathan/pkg/config"
+	"github.com/vishnu303/chaathan-flow/pkg/config"
 	"net"
 	"regexp"
 	"strings"
@@ -184,17 +184,17 @@ func (s *Scope) Summary() string {
 // e.g., "example.com" allows "*.example.com" and "example.com"
 func WildcardScope(domain string) (*Scope, error) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
-	
+
 	// Escape dots for regex
 	escapedDomain := strings.ReplaceAll(domain, ".", "\\.")
-	
+
 	// Pattern: exact domain or any subdomain
 	pattern := "^(" + escapedDomain + "|.*\\." + escapedDomain + ")$"
-	
+
 	cfg := &config.ScopeConfig{
 		InScope: []string{pattern},
 	}
-	
+
 	return New(cfg)
 }
 
@@ -204,7 +204,7 @@ func (s *Scope) ValidateTarget(domain string, ip string, port int) bool {
 	if domain != "" && s.IsOutOfScope(domain) {
 		return false
 	}
-	
+
 	if len(s.inScopePatterns) > 0 && domain != "" && !s.IsInScope(domain) {
 		return false
 	}

@@ -1,8 +1,8 @@
 package utils
 
 import (
-	"chaathan/pkg/database"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/database"
 	"os"
 	"path/filepath"
 	"strings"

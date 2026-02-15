@@ -1,7 +1,7 @@
-package cmd
+package cli
 
 import (
-	"chaathan/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -161,7 +161,7 @@ func installRubyTools() {
 
 func installMassDNS() {
 	logger.Section("Checking for MassDNS")
-	
+
 	if _, err := exec.LookPath("massdns"); err == nil {
 		logger.Success("MassDNS is already installed.")
 		return
@@ -174,7 +174,7 @@ func installMassDNS() {
 
 	// Attempt to build on Linux/Mac
 	logger.Info("MassDNS not found. Attempting to build from source...")
-	
+
 	tempDir, err := os.MkdirTemp("", "massdns_build")
 	if err != nil {
 		logger.Error("Failed to create temp dir: %v", err)
@@ -207,12 +207,12 @@ func installMassDNS() {
 		goPath = filepath.Join(home, "go")
 	}
 	binDir := filepath.Join(goPath, "bin")
-	
+
 	srcPath := filepath.Join(tempDir, "bin", "massdns")
 	destPath := filepath.Join(binDir, "massdns")
 
 	logger.SubStep("Installing to %s...", destPath)
-	
+
 	input, err := os.ReadFile(srcPath)
 	if err != nil {
 		logger.Error("Failed to read compiled binary: %v", err)
@@ -222,7 +222,7 @@ func installMassDNS() {
 	// Write dest
 	// Check if bin exists
 	os.MkdirAll(binDir, 0755)
-	
+
 	if err := os.WriteFile(destPath, input, 0755); err != nil {
 		logger.Error("Failed to install binary: %v", err)
 		logger.Warning("You may need to sudo cp the binary manually.")

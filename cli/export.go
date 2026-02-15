@@ -1,10 +1,10 @@
-package cmd
+package cli
 
 import (
-	"chaathan/pkg/database"
-	"chaathan/pkg/logger"
-	"chaathan/pkg/utils"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/database"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/utils"
 	"os"
 	"path/filepath"
 

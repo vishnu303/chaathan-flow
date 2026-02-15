@@ -1,10 +1,10 @@
-package cmd
+package cli
 
 import (
-	"chaathan/pkg/runner"
-	"chaathan/pkg/tools"
-	"chaathan/pkg/logger"
 	"context"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/runner"
+	"github.com/vishnu303/chaathan-flow/pkg/tools"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -48,7 +48,7 @@ func runCompany(cmd *cobra.Command, args []string) {
 	}()
 
 	logger.Info("Starting Company Workflow for: %s", targetCompany)
-	
+
 	resultDir, err := CreateOutputDir(targetCompany)
 	if err != nil {
 		logger.Error("Error creating output dir: %v", err)

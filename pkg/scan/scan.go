@@ -1,9 +1,9 @@
 package scan
 
 import (
-	"chaathan/pkg/database"
 	"encoding/json"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/database"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,25 +11,25 @@ import (
 
 // State represents the current state of a scan
 type State struct {
-	ScanID        int64             `json:"scan_id"`
-	Target        string            `json:"target"`
-	Type          string            `json:"type"`
-	CurrentStep   int               `json:"current_step"`
-	TotalSteps    int               `json:"total_steps"`
-	CompletedSteps []string         `json:"completed_steps"`
-	FailedSteps   []FailedStep      `json:"failed_steps"`
-	StartedAt     time.Time         `json:"started_at"`
-	LastUpdated   time.Time         `json:"last_updated"`
-	Config        json.RawMessage   `json:"config"`
-	ResultDir     string            `json:"result_dir"`
+	ScanID         int64           `json:"scan_id"`
+	Target         string          `json:"target"`
+	Type           string          `json:"type"`
+	CurrentStep    int             `json:"current_step"`
+	TotalSteps     int             `json:"total_steps"`
+	CompletedSteps []string        `json:"completed_steps"`
+	FailedSteps    []FailedStep    `json:"failed_steps"`
+	StartedAt      time.Time       `json:"started_at"`
+	LastUpdated    time.Time       `json:"last_updated"`
+	Config         json.RawMessage `json:"config"`
+	ResultDir      string          `json:"result_dir"`
 }
 
 // FailedStep represents a step that failed during scanning
 type FailedStep struct {
-	Name      string    `json:"name"`
-	Error     string    `json:"error"`
-	FailedAt  time.Time `json:"failed_at"`
-	Retries   int       `json:"retries"`
+	Name     string    `json:"name"`
+	Error    string    `json:"error"`
+	FailedAt time.Time `json:"failed_at"`
+	Retries  int       `json:"retries"`
 }
 
 // Step represents a workflow step
@@ -98,7 +98,7 @@ func (m *Manager) CreateState(scanID int64, target, scanType, resultDir string, 
 // LoadState loads an existing scan state
 func (m *Manager) LoadState(scanID int64) (*State, error) {
 	path := m.statePath(scanID)
-	
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read state file: %w", err)
@@ -133,7 +133,7 @@ func (m *Manager) MarkStepFailed(state *State, stepName string, err error) error
 		FailedAt: time.Now(),
 		Retries:  0,
 	}
-	
+
 	// Check if this step already failed (for retry tracking)
 	for i, fs := range state.FailedSteps {
 		if fs.Name == stepName {
@@ -143,7 +143,7 @@ func (m *Manager) MarkStepFailed(state *State, stepName string, err error) error
 			return m.UpdateState(state)
 		}
 	}
-	
+
 	state.FailedSteps = append(state.FailedSteps, failedStep)
 	return m.UpdateState(state)
 }
@@ -229,7 +229,7 @@ func (m *Manager) ListResumableScans() ([]State, error) {
 		if entry.IsDir() {
 			continue
 		}
-		
+
 		path := filepath.Join(m.stateDir, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {

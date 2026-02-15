@@ -2,9 +2,9 @@ package notify
 
 import (
 	"bytes"
-	"chaathan/pkg/config"
 	"encoding/json"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/config"
 	"net/http"
 	"strings"
 	"time"
@@ -21,24 +21,24 @@ var severityLevels = map[string]int{
 
 // Finding represents a security finding to notify about
 type Finding struct {
-	Target      string `json:"target"`
-	Type        string `json:"type"` // vulnerability, subdomain, port, etc.
-	Name        string `json:"name"`
-	Severity    string `json:"severity"`
-	Description string `json:"description,omitempty"`
-	URL         string `json:"url,omitempty"`
-	Evidence    string `json:"evidence,omitempty"`
-	TemplateID  string `json:"template_id,omitempty"`
+	Target      string    `json:"target"`
+	Type        string    `json:"type"` // vulnerability, subdomain, port, etc.
+	Name        string    `json:"name"`
+	Severity    string    `json:"severity"`
+	Description string    `json:"description,omitempty"`
+	URL         string    `json:"url,omitempty"`
+	Evidence    string    `json:"evidence,omitempty"`
+	TemplateID  string    `json:"template_id,omitempty"`
 	Timestamp   time.Time `json:"timestamp"`
 }
 
 // ScanComplete represents a completed scan notification
 type ScanComplete struct {
-	Target      string         `json:"target"`
-	ScanID      int64          `json:"scan_id"`
-	Duration    time.Duration  `json:"duration"`
-	Stats       map[string]int `json:"stats"`
-	ReportPath  string         `json:"report_path,omitempty"`
+	Target     string         `json:"target"`
+	ScanID     int64          `json:"scan_id"`
+	Duration   time.Duration  `json:"duration"`
+	Stats      map[string]int `json:"stats"`
+	ReportPath string         `json:"report_path,omitempty"`
 }
 
 // Notifier handles sending notifications

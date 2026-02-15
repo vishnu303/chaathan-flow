@@ -1,13 +1,13 @@
 package main
 
 import (
-	"chaathan/cmd"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/cli"
 	"os"
 )
 
 func main() {
-	if err := cmd.Execute(); err != nil {
+	if err := cli.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}

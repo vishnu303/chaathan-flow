@@ -1,9 +1,9 @@
 package tools
 
 import (
-	"chaathan/pkg/runner"
 	"context"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/runner"
 	"os"
 	"strings"
 )
@@ -67,7 +67,7 @@ func (t *ToolBox) RunDnsx(ctx context.Context, inputFile string, outputFile stri
 func (t *ToolBox) RunHttpx(ctx context.Context, domainsFile string, outputFile string) error {
 	args := []string{
 		"-l", domainsFile,
-		"-ports", "80,443,8080,8443,8081,8000,8008,8888", 
+		"-ports", "80,443,8080,8443,8081,8000,8008,8888",
 		"-tech-detect", "-title", "-status-code", "-json",
 		"-o", outputFile,
 	}

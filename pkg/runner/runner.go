@@ -2,9 +2,9 @@ package runner
 
 import (
 	"bytes"
-	"chaathan/pkg/logger"
 	"context"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
 	"os"
 	"os/exec"
 	"strings"
@@ -37,7 +37,7 @@ func WithDir(dir string) Option {
 
 func (r *NativeRunner) Run(ctx context.Context, command string, args []string, opts ...Option) (string, error) {
 	var cmd *exec.Cmd
-	
+
 	switch command {
 	case "cloud_enum":
 		cmd = exec.CommandContext(ctx, "cloud_enum", args...)
@@ -84,16 +84,16 @@ func (r *NativeRunner) Run(ctx context.Context, command string, args []string, o
 
 func (r *DockerRunner) Run(ctx context.Context, command string, args []string, opts ...Option) (string, error) {
 	image := getDockerImage(command)
-	
+
 	// We do NOT use -t (tty) here because it messes up output capturing usually
 	dockerArgs := []string{"run", "--rm", "-i"}
-	
+
 	pwd, _ := os.Getwd()
 	dockerArgs = append(dockerArgs, "-v", fmt.Sprintf("%s:/data", pwd))
 	dockerArgs = append(dockerArgs, "-w", "/data")
-	
+
 	dockerArgs = append(dockerArgs, image)
-	
+
 	if !isEntrypointImage(command) {
 		switch command {
 		// Handle cases where command needs to be passed to container
@@ -101,7 +101,7 @@ func (r *DockerRunner) Run(ctx context.Context, command string, args []string, o
 			dockerArgs = append(dockerArgs, command)
 		}
 	}
-	
+
 	dockerArgs = append(dockerArgs, args...)
 
 	if r.Verbose {

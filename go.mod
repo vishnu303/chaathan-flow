@@ -1,4 +1,4 @@
-module chaathan
+module github.com/vishnu303/chaathan-flow
 
 go 1.21
 

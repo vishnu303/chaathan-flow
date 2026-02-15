@@ -1,9 +1,9 @@
-package cmd
+package cli
 
 import (
-	"chaathan/pkg/database"
-	"chaathan/pkg/logger"
 	"fmt"
+	"github.com/vishnu303/chaathan-flow/pkg/database"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
 	"os"
 	"path/filepath"
 
@@ -48,8 +48,8 @@ var deleteListCmd = &cobra.Command{
 }
 
 var (
-	deleteFiles      bool
-	deleteVacuum     bool
+	deleteFiles  bool
+	deleteVacuum bool
 )
 
 func init() {
@@ -84,7 +84,7 @@ func runDeleteTarget(cmd *cobra.Command, args []string) {
 
 	// Show what will be deleted
 	logger.Info("Deleting data for: %s", target)
-	logger.Info("  Scans: %d, Subdomains: %d, Ports: %d, URLs: %d, Vulns: %d", 
+	logger.Info("  Scans: %d, Subdomains: %d, Ports: %d, URLs: %d, Vulns: %d",
 		stats["scans"], stats["subdomains"], stats["ports"], stats["urls"], stats["vulnerabilities"])
 
 	// Delete from database
@@ -192,13 +192,13 @@ func runDeleteList(cmd *cobra.Command, args []string) {
 	}
 
 	logger.Section("Targets in Database")
-	
+
 	for _, target := range targets {
 		stats, _ := database.GetTargetStats(target)
-		logger.Info("%-40s  [%d scans, %d subs, %d vulns]", 
-			target, 
-			stats["scans"], 
-			stats["subdomains"], 
+		logger.Info("%-40s  [%d scans, %d subs, %d vulns]",
+			target,
+			stats["scans"],
+			stats["subdomains"],
 			stats["vulnerabilities"])
 	}
 
