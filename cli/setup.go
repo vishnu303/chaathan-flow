@@ -29,9 +29,12 @@ func init() {
 func runSetup(cmd *cobra.Command, args []string) {
 	logger.Info("Starting Chaathan Setup...")
 
-	// Check for Go
+	// 0. Install prerequisites (Go, pip3, gem, git, make, gcc)
+	installPrerequisites()
+
+	// Check for Go (must be available after prerequisites)
 	if _, err := exec.LookPath("go"); err != nil {
-		logger.Error("Go is not installed or not in PATH. Please install Go 1.21+")
+		logger.Error("Go is not installed or not in PATH. Please install Go 1.21+ manually.")
 		os.Exit(1)
 	}
 
@@ -84,6 +87,81 @@ func runSetup(cmd *cobra.Command, args []string) {
 
 	logger.Section("Setup Complete")
 	logger.Info("Ensure your $GOPATH/bin is in your $PATH.")
+}
+
+func installPrerequisites() {
+	logger.Section("Installing Prerequisites")
+
+	if runtime.GOOS != "linux" {
+		logger.Warning("Automatic prerequisite installation is only supported on Ubuntu/Debian Linux.")
+		logger.Warning("Please manually install: go, pip3, gem, git, make, gcc")
+		return
+	}
+
+	prerequisites := []struct {
+		Name   string // display name
+		Binary string // binary to check in PATH
+		AptPkg string // apt package name
+	}{
+		{"Go", "go", "golang-go"},
+		{"pip3", "pip3", "python3-pip"},
+		{"Ruby gem", "gem", "ruby-full"},
+		{"Git", "git", "git"},
+		{"Make", "make", "make"},
+		{"GCC", "gcc", "gcc"},
+	}
+
+	toInstall := []string{}
+
+	for _, p := range prerequisites {
+		if _, err := exec.LookPath(p.Binary); err == nil {
+			logger.Success("%s is already installed, skipping.", p.Name)
+		} else {
+			logger.SubStep("%s not found, will install via apt.", p.Name)
+			toInstall = append(toInstall, p.AptPkg)
+		}
+	}
+
+	if len(toInstall) == 0 {
+		logger.Success("All prerequisites are already installed!")
+		return
+	}
+
+	// Run apt update first
+	logger.SubStep("Running apt update...")
+	updateCmd := exec.Command("sudo", "apt", "update", "-y")
+	if Verbose {
+		updateCmd.Stdout = os.Stdout
+		updateCmd.Stderr = os.Stderr
+	}
+	if err := updateCmd.Run(); err != nil {
+		logger.Error("Failed to run apt update: %v", err)
+		logger.Warning("You may need to run 'sudo apt update' manually.")
+	}
+
+	// Install missing packages
+	args := append([]string{"apt", "install", "-y"}, toInstall...)
+	logger.SubStep("Installing: %v", toInstall)
+	installCmd := exec.Command("sudo", args...)
+	installCmd.Stdout = os.Stdout
+	installCmd.Stderr = os.Stderr
+	if err := installCmd.Run(); err != nil {
+		logger.Error("Failed to install prerequisites: %v", err)
+		logger.Warning("Try running manually: sudo apt install -y %s", joinStrings(toInstall))
+	} else {
+		logger.Success("All prerequisites installed successfully!")
+	}
+}
+
+func joinStrings(s []string) string {
+	result := ""
+	for i, v := range s {
+		if i > 0 {
+			result += " "
+		}
+		result += v
+	}
+	return result
 }
 
 func installPythonTools() {
