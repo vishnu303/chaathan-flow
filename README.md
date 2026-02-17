@@ -36,11 +36,11 @@ A powerful, modular CLI pentesting framework for comprehensive bug bounty reconn
 ```bash
 # Clone and build
 git clone https://github.com/vishnu303/chaathan-flow.git
-cd chaathan
-go build -o chaathan .
+cd chaathan-flow
+go build -o chaathan ./cmd/chaathan
 
 # Or install directly
-go install github.com/vishnu303/chaathan-flow@latest
+go install github.com/vishnu303/chaathan-flow/cmd/chaathan@latest
 ```
 
 ### Install Dependencies
