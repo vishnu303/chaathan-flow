@@ -119,52 +119,52 @@ type SubfinderConfig struct {
 }
 
 type AmassConfig struct {
-	Timeout     int  `yaml:"timeout"`
-	Active      bool `yaml:"active"`
-	Brute       bool `yaml:"brute"`
-	MinRecurse  int  `yaml:"min_recurse"`
-	MaxDepth    int  `yaml:"max_depth"`
+	Timeout    int  `yaml:"timeout"`
+	Active     bool `yaml:"active"`
+	Brute      bool `yaml:"brute"`
+	MinRecurse int  `yaml:"min_recurse"`
+	MaxDepth   int  `yaml:"max_depth"`
 }
 
 type NucleiConfig struct {
-	Concurrency    int      `yaml:"concurrency"`
-	RateLimit      int      `yaml:"rate_limit"`
-	BulkSize       int      `yaml:"bulk_size"`
-	Templates      []string `yaml:"templates"`
-	ExcludeTags    []string `yaml:"exclude_tags"`
-	Severity       []string `yaml:"severity"`
-	Retries        int      `yaml:"retries"`
-	Timeout        int      `yaml:"timeout"`
-	HeadlessMode   bool     `yaml:"headless"`
+	Concurrency  int      `yaml:"concurrency"`
+	RateLimit    int      `yaml:"rate_limit"`
+	BulkSize     int      `yaml:"bulk_size"`
+	Templates    []string `yaml:"templates"`
+	ExcludeTags  []string `yaml:"exclude_tags"`
+	Severity     []string `yaml:"severity"`
+	Retries      int      `yaml:"retries"`
+	Timeout      int      `yaml:"timeout"`
+	HeadlessMode bool     `yaml:"headless"`
 }
 
 type HttpxConfig struct {
-	Threads     int      `yaml:"threads"`
-	Timeout     int      `yaml:"timeout"`
-	Retries     int      `yaml:"retries"`
-	Ports       []string `yaml:"ports"`
-	TechDetect  bool     `yaml:"tech_detect"`
-	StatusCode  bool     `yaml:"status_code"`
-	Title       bool     `yaml:"title"`
-	FollowRedirects bool `yaml:"follow_redirects"`
+	Threads         int      `yaml:"threads"`
+	Timeout         int      `yaml:"timeout"`
+	Retries         int      `yaml:"retries"`
+	Ports           []string `yaml:"ports"`
+	TechDetect      bool     `yaml:"tech_detect"`
+	StatusCode      bool     `yaml:"status_code"`
+	Title           bool     `yaml:"title"`
+	FollowRedirects bool     `yaml:"follow_redirects"`
 }
 
 type NaabuConfig struct {
-	Threads   int      `yaml:"threads"`
-	Rate      int      `yaml:"rate"`
-	Ports     string   `yaml:"ports"` // e.g., "top-1000" or "80,443,8080"
-	ScanType  string   `yaml:"scan_type"` // s (SYN), c (Connect)
-	Retries   int      `yaml:"retries"`
+	Threads  int    `yaml:"threads"`
+	Rate     int    `yaml:"rate"`
+	Ports    string `yaml:"ports"`     // e.g., "top-1000" or "80,443,8080"
+	ScanType string `yaml:"scan_type"` // s (SYN), c (Connect)
+	Retries  int    `yaml:"retries"`
 }
 
 type FfufConfig struct {
-	Threads      int      `yaml:"threads"`
-	Timeout      int      `yaml:"timeout"`
-	MatchCodes   []int    `yaml:"match_codes"`
-	FilterCodes  []int    `yaml:"filter_codes"`
-	FilterSize   []int    `yaml:"filter_size"`
-	Recursion    bool     `yaml:"recursion"`
-	RecursionDepth int    `yaml:"recursion_depth"`
+	Threads        int   `yaml:"threads"`
+	Timeout        int   `yaml:"timeout"`
+	MatchCodes     []int `yaml:"match_codes"`
+	FilterCodes    []int `yaml:"filter_codes"`
+	FilterSize     []int `yaml:"filter_size"`
+	Recursion      bool  `yaml:"recursion"`
+	RecursionDepth int   `yaml:"recursion_depth"`
 }
 
 type NotificationConfig struct {
@@ -337,13 +337,13 @@ func DefaultConfig() *Config {
 				Timeout:     10,
 			},
 			Httpx: HttpxConfig{
-				Threads:    50,
-				Timeout:    10,
-				Retries:    2,
-				Ports:      []string{"80", "443", "8080", "8443", "8000", "8888"},
-				TechDetect: true,
-				StatusCode: true,
-				Title:      true,
+				Threads:         50,
+				Timeout:         10,
+				Retries:         2,
+				Ports:           []string{"80", "443", "8080", "8443", "8000", "8888"},
+				TechDetect:      true,
+				StatusCode:      true,
+				Title:           true,
 				FollowRedirects: true,
 			},
 			Naabu: NaabuConfig{
@@ -354,10 +354,10 @@ func DefaultConfig() *Config {
 				Retries:  3,
 			},
 			Ffuf: FfufConfig{
-				Threads:       50,
-				Timeout:       10,
-				MatchCodes:    []int{200, 201, 204, 301, 302, 307, 401, 403, 405, 500},
-				Recursion:     false,
+				Threads:        50,
+				Timeout:        10,
+				MatchCodes:     []int{200, 201, 204, 301, 302, 307, 401, 403, 405, 500},
+				Recursion:      false,
 				RecursionDepth: 2,
 			},
 		},

@@ -16,14 +16,14 @@ var DB *sql.DB
 // Models
 
 type Scan struct {
-	ID          int64     `json:"id"`
-	Target      string    `json:"target"`
-	Type        string    `json:"type"` // wildcard, company
-	Status      string    `json:"status"` // running, completed, failed, cancelled
-	StartedAt   time.Time `json:"started_at"`
+	ID          int64      `json:"id"`
+	Target      string     `json:"target"`
+	Type        string     `json:"type"`   // wildcard, company
+	Status      string     `json:"status"` // running, completed, failed, cancelled
+	StartedAt   time.Time  `json:"started_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	ResultDir   string    `json:"result_dir"`
-	Config      string    `json:"config"` // JSON config used
+	ResultDir   string     `json:"result_dir"`
+	Config      string     `json:"config"` // JSON config used
 }
 
 type Subdomain struct {
@@ -54,7 +54,7 @@ type URL struct {
 	ContentType string    `json:"content_type,omitempty"`
 	Title       string    `json:"title,omitempty"`
 	Tech        string    `json:"tech,omitempty"` // JSON array of technologies
-	Source      string    `json:"source"` // httpx, katana, waybackurls
+	Source      string    `json:"source"`         // httpx, katana, waybackurls
 	CreatedAt   time.Time `json:"created_at"`
 }
 
