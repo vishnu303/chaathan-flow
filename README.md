@@ -35,12 +35,12 @@ A powerful, modular CLI pentesting framework for comprehensive bug bounty reconn
 
 ```bash
 # Clone and build
-git clone https://github.com/yourusername/chaathan.git
+git clone https://github.com/vishnu303/chaathan-flow.git
 cd chaathan
 go build -o chaathan .
 
 # Or install directly
-go install github.com/yourusername/chaathan@latest
+go install github.com/vishnu303/chaathan-flow@latest
 ```
 
 ### Install Dependencies
