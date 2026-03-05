@@ -315,3 +315,7 @@ MIT
 ## Author
 
 Built by [vishnu303](https://github.com/vishnu303) for the bug bounty community.
+
+## Disclaimer
+
+This tool is provided for educational and authorized testing purposes only. The author is not responsible for any misuse, damage, or illegal activities caused by the usage of this tool. Use it at your own risk.
