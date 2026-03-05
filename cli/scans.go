@@ -2,15 +2,17 @@ package cli
 
 import (
 	"fmt"
-	"github.com/vishnu303/chaathan-flow/pkg/database"
-	"github.com/vishnu303/chaathan-flow/pkg/logger"
-	"github.com/vishnu303/chaathan-flow/pkg/scan"
 	"os"
 	"path/filepath"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/vishnu303/chaathan-flow/pkg/database"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/scan"
+	"github.com/vishnu303/chaathan-flow/pkg/utils"
 )
 
 var scansCmd = &cobra.Command{
@@ -107,8 +109,11 @@ func runScansList(cmd *cobra.Command, args []string) {
 }
 
 func runScansShow(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	s, err := database.GetScan(scanID)
 	if err != nil {
@@ -163,8 +168,11 @@ func runScansShow(cmd *cobra.Command, args []string) {
 }
 
 func runScansResume(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	home, _ := os.UserHomeDir()
 	stateDir := filepath.Join(home, ".chaathan", "state")
@@ -209,8 +217,11 @@ func runScansResume(cmd *cobra.Command, args []string) {
 }
 
 func runScansDelete(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	s, err := database.GetScan(scanID)
 	if err != nil {
@@ -221,11 +232,13 @@ func runScansDelete(cmd *cobra.Command, args []string) {
 	logger.Warning("This will delete scan #%d for %s", s.ID, s.Target)
 	logger.Warning("This action cannot be undone.")
 
-	// Simple confirmation (in real implementation, add proper prompt)
 	logger.Info("Deleting scan data...")
 
-	// Delete from database (would need to implement)
-	// For now just log
+	if err := database.DeleteScan(scanID); err != nil {
+		logger.Error("Failed to delete scan #%d: %v", scanID, err)
+		return
+	}
+
 	logger.Success("Scan #%d deleted", scanID)
 }
 

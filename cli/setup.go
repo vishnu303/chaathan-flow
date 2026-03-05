@@ -43,36 +43,51 @@ type tool struct {
 }
 
 var goTools = []struct {
-	name string
-	url  string
+	name     string
+	url      string
+	needsCGO bool
 }{
-	{"subfinder", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"},
-	{"amass", "github.com/owasp-amass/amass/v4/...@latest"},
-	{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"},
-	{"httpx", "github.com/projectdiscovery/httpx/cmd/httpx@latest"},
-	{"naabu", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"},
-	{"assetfinder", "github.com/tomnomnom/assetfinder@latest"},
-	{"gau", "github.com/lc/gau/v2/cmd/gau@latest"},
-	{"metabigor", "github.com/j3ssie/metabigor@latest"},
-	{"shuffledns", "github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest"},
-	{"anew", "github.com/tomnomnom/anew@latest"},
-	{"dnsx", "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"},
-	{"katana", "github.com/projectdiscovery/katana/cmd/katana@latest"},
-	{"ffuf", "github.com/ffuf/ffuf/v2@latest"},
-	{"gospider", "github.com/jaeles-project/gospider@latest"},
-	{"waybackurls", "github.com/tomnomnom/waybackurls@latest"},
-	{"github-subdomains", "github.com/gwen001/github-subdomains@latest"},
+	{"subfinder", "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest", false},
+	{"amass", "github.com/owasp-amass/amass/v4/...@latest", false},
+	{"nuclei", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", true},
+	{"httpx", "github.com/projectdiscovery/httpx/cmd/httpx@latest", false},
+	{"naabu", "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest", true},
+	{"assetfinder", "github.com/tomnomnom/assetfinder@latest", false},
+	{"gau", "github.com/lc/gau/v2/cmd/gau@latest", false},
+	{"metabigor", "github.com/j3ssie/metabigor@latest", false},
+	{"shuffledns", "github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest", false},
+	{"anew", "github.com/tomnomnom/anew@latest", false},
+	{"dnsx", "github.com/projectdiscovery/dnsx/cmd/dnsx@latest", false},
+	{"katana", "github.com/projectdiscovery/katana/cmd/katana@latest", false},
+	{"ffuf", "github.com/ffuf/ffuf/v2@latest", false},
+	{"gospider", "github.com/jaeles-project/gospider@latest", false},
+	{"waybackurls", "github.com/tomnomnom/waybackurls@latest", false},
+	{"github-subdomains", "github.com/gwen001/github-subdomains@latest", false},
+	// --- Phase 3: New tools ---
+	{"alterx", "github.com/projectdiscovery/alterx/cmd/alterx@latest", false},
+	{"subjack", "github.com/haccer/subjack@latest", false},
+	{"dalfox", "github.com/hahwul/dalfox/v2@latest", false},
+	{"tlsx", "github.com/projectdiscovery/tlsx/cmd/tlsx@latest", false},
+	{"uncover", "github.com/projectdiscovery/uncover/cmd/uncover@latest", false},
 }
 
 var pyTools = []struct {
 	name     string
 	package_ string
+	cmdName  string
 }{
-	{"cloud_enum", "git+https://github.com/initstring/cloud_enum.git"},
-	{"sublist3r", "git+https://github.com/aboul3la/Sublist3r.git"},
-	{"subdomainizer", "git+https://github.com/nsonaniya2010/SubDomainizer.git"},
-	{"github-search", "git+https://github.com/gwen001/github-search.git"},
-	{"linkfinder", "git+https://github.com/GerbenJavado/LinkFinder.git"},
+	{"cloud_enum", "git+https://github.com/initstring/cloud_enum.git", "cloud_enum.py"},
+	{"sublist3r", "git+https://github.com/aboul3la/Sublist3r.git", "sublist3r.py"},
+	{"linkfinder", "git+https://github.com/GerbenJavado/LinkFinder.git", "linkfinder.py"},
+}
+
+// Python scripts that need manual installation (not available via pip)
+var pyScripts = []struct {
+	name   string
+	repo   string
+	script string
+}{
+	{"subdomainizer", "https://github.com/nsonaniya2010/SubDomainizer.git", "SubDomainizer.py"},
 }
 
 var rubyTools = []struct {
@@ -120,14 +135,15 @@ func installAllTools() *installStats {
 	for _, t := range goToolsToInstall {
 		wg.Add(1)
 		go func(tool struct {
-			name string
-			url  string
+			name     string
+			url      string
+			needsCGO bool
 		}) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			err := installGoTool(tool.name, tool.url)
+			err := installGoTool(tool.name, tool.url, tool.needsCGO)
 			results <- installResult{name: tool.name, err: err}
 		}(t)
 	}
@@ -155,12 +171,14 @@ func installAllTools() *installStats {
 }
 
 func filterGoTools() []struct {
-	name string
-	url  string
+	name     string
+	url      string
+	needsCGO bool
 } {
 	var toInstall []struct {
-		name string
-		url  string
+		name     string
+		url      string
+		needsCGO bool
 	}
 	for _, t := range goTools {
 		if _, err := exec.LookPath(t.name); err == nil {
@@ -172,12 +190,19 @@ func filterGoTools() []struct {
 	return toInstall
 }
 
-func installGoTool(name, url string) error {
+func installGoTool(name, url string, needsCGO bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "go", "install", "-v", url)
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+
+	// Tools that need libpcap (like naabu, nuclei) require CGO_ENABLED=1
+	if needsCGO {
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	} else {
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	}
+
 	if Verbose {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -258,21 +283,108 @@ func installPythonTools(stats *installStats) {
 		pip = "pip"
 	}
 
+	var wg sync.WaitGroup
 	for _, t := range pyTools {
-		logger.SubStep("Installing %s...", t.name)
-		cmd := exec.Command(pip, "install", "--break-system-packages", t.package_)
-		if Verbose {
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-		}
-		if err := cmd.Run(); err != nil {
-			logger.Error("Failed: %s (%v)", t.name, err)
-			stats.incFailed()
-		} else {
-			logger.Success("%s installed", t.name)
-			stats.incInstalled()
-		}
+		wg.Add(1)
+		go func(tool struct {
+			name     string
+			package_ string
+			cmdName  string
+		}) {
+			defer wg.Done()
+
+			// Check if already installed
+			if _, err := exec.LookPath(tool.cmdName); err == nil {
+				logger.Success("%s already installed, skipping.", tool.name)
+				stats.incSkipped()
+				return
+			}
+
+			logger.SubStep("Installing %s...", tool.name)
+			cmd := exec.Command(pip, "install", "--break-system-packages", tool.package_)
+			if Verbose {
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+			}
+			if err := cmd.Run(); err != nil {
+				logger.Error("Failed: %s (%v)", tool.name, err)
+				stats.incFailed()
+			} else {
+				logger.Success("%s installed", tool.name)
+				stats.incInstalled()
+			}
+		}(t)
 	}
+	wg.Wait()
+
+	// Install Python scripts that need manual setup
+	installPythonScripts(stats)
+}
+
+func installPythonScripts(stats *installStats) {
+	goPath := os.Getenv("GOPATH")
+	if goPath == "" {
+		home, _ := os.UserHomeDir()
+		goPath = filepath.Join(home, "go")
+	}
+	binDir := filepath.Join(goPath, "bin")
+
+	var wg sync.WaitGroup
+	for _, t := range pyScripts {
+		wg.Add(1)
+		go func(tool struct {
+			name   string
+			repo   string
+			script string
+		}) {
+			defer wg.Done()
+
+			// Check if already installed
+			if _, err := exec.LookPath(tool.name); err == nil {
+				logger.Success("%s already installed, skipping.", tool.name)
+				stats.incSkipped()
+				return
+			}
+
+			logger.SubStep("Installing %s from %s...", tool.name, tool.repo)
+
+			tempDir, err := os.MkdirTemp("", tool.name+"_*")
+			if err != nil {
+				logger.Error("Failed to create temp dir for %s: %v", tool.name, err)
+				stats.incFailed()
+				return
+			}
+			defer os.RemoveAll(tempDir)
+
+			// Clone repo
+			if err := exec.Command("git", "clone", "--depth", "1", tool.repo, tempDir).Run(); err != nil {
+				logger.Error("Failed to clone %s: %v", tool.name, err)
+				stats.incFailed()
+				return
+			}
+
+			// Copy script to bin directory with proper name
+			src := filepath.Join(tempDir, tool.script)
+			dst := filepath.Join(binDir, tool.name)
+
+			input, err := os.ReadFile(src)
+			if err != nil {
+				logger.Error("Failed to read %s: %v", tool.script, err)
+				stats.incFailed()
+				return
+			}
+
+			if err := os.WriteFile(dst, input, 0755); err != nil {
+				logger.Error("Failed to install %s: %v", tool.name, err)
+				stats.incFailed()
+				return
+			}
+
+			logger.Success("%s installed", tool.name)
+			stats.incInstalled()
+		}(t)
+	}
+	wg.Wait()
 }
 
 func installRubyTools(stats *installStats) {
@@ -283,21 +395,49 @@ func installRubyTools(stats *installStats) {
 		return
 	}
 
+	var wg sync.WaitGroup
 	for _, t := range rubyTools {
-		logger.SubStep("Installing %s...", t.name)
-		cmd := exec.Command("sudo", "gem", "install", t.gemName)
-		if Verbose {
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-		}
-		if err := cmd.Run(); err != nil {
-			logger.Error("Failed: %s (%v)", t.name, err)
-			stats.incFailed()
-		} else {
-			logger.Success("%s installed", t.name)
+		wg.Add(1)
+		go func(tool struct {
+			name    string
+			gemName string
+		}) {
+			defer wg.Done()
+
+			// Check if already installed
+			if _, err := exec.LookPath(tool.name); err == nil {
+				logger.Success("%s already installed, skipping.", tool.name)
+				stats.incSkipped()
+				return
+			}
+
+			logger.SubStep("Installing %s...", tool.name)
+
+			// Try without sudo first (user might have proper permissions)
+			cmd := exec.Command("gem", "install", tool.gemName)
+			if Verbose {
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+			}
+			if err := cmd.Run(); err != nil {
+				// Try with sudo as fallback
+				logger.SubStep("Retrying with sudo...")
+				cmd = exec.Command("sudo", "gem", "install", tool.gemName)
+				if Verbose {
+					cmd.Stdout = os.Stdout
+					cmd.Stderr = os.Stderr
+				}
+				if err := cmd.Run(); err != nil {
+					logger.Error("Failed: %s (%v)", tool.name, err)
+					stats.incFailed()
+					return
+				}
+			}
+			logger.Success("%s installed", tool.name)
 			stats.incInstalled()
-		}
+		}(t)
 	}
+	wg.Wait()
 }
 
 func installMassDNS(stats *installStats) {

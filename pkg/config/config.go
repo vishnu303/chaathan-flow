@@ -50,6 +50,10 @@ type GeneralConfig struct {
 
 	// Wordlist paths
 	Wordlists WordlistsConfig `yaml:"wordlists"`
+
+	// Retry configuration
+	MaxRetries    int `yaml:"max_retries"`     // number of retries for failed tools (default: 1)
+	RetryDelaySec int `yaml:"retry_delay_sec"` // seconds between retries (default: 3)
 }
 
 type WordlistsConfig struct {

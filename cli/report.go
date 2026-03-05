@@ -2,13 +2,15 @@ package cli
 
 import (
 	"fmt"
-	"github.com/vishnu303/chaathan-flow/pkg/logger"
-	"github.com/vishnu303/chaathan-flow/pkg/report"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/report"
+	"github.com/vishnu303/chaathan-flow/pkg/utils"
 )
 
 var reportCmd = &cobra.Command{
@@ -38,8 +40,11 @@ func init() {
 }
 
 func runReportGenerate(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	logger.Info("Generating report for scan #%d...", scanID)
 

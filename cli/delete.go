@@ -1,13 +1,14 @@
 package cli
 
 import (
-	"fmt"
-	"github.com/vishnu303/chaathan-flow/pkg/database"
-	"github.com/vishnu303/chaathan-flow/pkg/logger"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/vishnu303/chaathan-flow/pkg/database"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/utils"
 )
 
 var deleteCmd = &cobra.Command{
@@ -114,8 +115,11 @@ func runDeleteTarget(cmd *cobra.Command, args []string) {
 }
 
 func runDeleteScan(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	// Get scan info
 	scan, err := database.GetScan(scanID)
@@ -146,11 +150,9 @@ func runDeleteScan(cmd *cobra.Command, args []string) {
 }
 
 func runDeleteOld(cmd *cobra.Command, args []string) {
-	var days int
-	fmt.Sscanf(args[0], "%d", &days)
-
-	if days < 1 {
-		logger.Error("Days must be at least 1")
+	days, err := utils.ParseDays(args[0])
+	if err != nil {
+		logger.Error("%v", err)
 		return
 	}
 

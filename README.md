@@ -1,6 +1,6 @@
 # Chaathan
 
-A powerful, modular CLI pentesting framework for comprehensive bug bounty reconnaissance and vulnerability scanning. Single binary, no dependencies, works on any Linux VPS.
+A modular CLI pentesting framework for bug bounty reconnaissance and vulnerability scanning. Single binary, persistent database, 24+ integrated tools.
 
 ```
    _____ _                 _   _                 
@@ -11,447 +11,170 @@ A powerful, modular CLI pentesting framework for comprehensive bug bounty reconn
   \_____|_| |_|\__,_|\__,_|\__|_| |_|\__,_|_| |_|
 ```
 
-## Features
+## What It Does
 
-- **20+ Integrated Tools**: Subfinder, Amass, Nuclei, Httpx, Naabu, Katana, ffuf, LinkFinder, CeWL, and more
-- **Parallel Execution**: Run multiple tools simultaneously for faster results
-- **SQLite Database**: All results stored persistently for querying and analysis
-- **Text File Export**: All results automatically exported to organized text files
-- **Report Generation**: Export reports in Markdown, JSON, HTML, or Text format
-- **Notifications**: Discord, Slack, Telegram, and webhook alerts for findings
-- **Resume Capability**: Continue interrupted scans from where they left off
-- **YAML Configuration**: Centralized config for API keys, rate limits, and tool settings
-- **Scope Management**: Define in-scope/out-of-scope targets with regex patterns
-- **Easy Cleanup**: Delete target data from database when done
+Chaathan runs a **17-step automated recon workflow** on a target domain — subdomain discovery, DNS resolution, port scanning, web crawling, vulnerability scanning, XSS detection, subdomain takeover checks — and stores everything in a local SQLite database you can query, diff, and export.
 
-## Installation
-
-### Prerequisites
-
-- Go 1.21+
-- Git
-
-### Install Chaathan
+## Install
 
 ```bash
-# Clone and build
 git clone https://github.com/vishnu303/chaathan-flow.git
 cd chaathan-flow
-go build -o chaathan ./cmd/chaathan
 
-# Or install directly
-go install github.com/vishnu303/chaathan-flow/cmd/chaathan@latest
-```
+# Build
+make build
 
-### Install Dependencies
+# Install system-wide (optional)
+make install
 
-```bash
+# Install all external tools
 chaathan setup
 ```
 
-This installs all required tools:
-- **Go tools**: subfinder, amass, nuclei, httpx, naabu, katana, ffuf, gospider, waybackurls, gau, dnsx, etc.
-- **Python tools**: sublist3r, linkfinder, cloud_enum, subdomainizer
-- **Ruby tools**: cewl
-- **Other**: massdns (compiled from source)
+**Requirements:** Go 1.21+, Git, Linux
 
 ## Quick Start
 
 ```bash
-# 1. Setup tools (first time only)
+# Install tools (first time)
 chaathan setup
 
-# 2. Configure API keys (optional but recommended)
-chaathan config set api_keys.github ghp_xxxxxxxxxxxx
+# Run full recon
+chaathan scan -d target.com
 
-# 3. Run full recon on a domain
-chaathan wildcard -d example.com
+# Check what's installed
+chaathan tools check
 
-# 4. View results
-chaathan scans show 1
-chaathan query vulns 1
+# View results
+chaathan status
+chaathan query vulns 1 --severity critical
 chaathan query subdomains 1 --live
 
-# 5. Generate report
+# Generate report
 chaathan report generate 1 --format html
-
-# 6. When done with target, cleanup database
-chaathan delete target example.com
 ```
 
-## Commands Overview
+## The 17-Step Workflow
 
-| Command | Description |
+```bash
+chaathan scan -d target.com
+```
+
+| Step | Tool(s) | What It Does | Skip Flag |
+|------|---------|-------------|-----------|
+| 1 | Subfinder, Assetfinder, Sublist3r | Passive subdomain enumeration | — |
+| 2 | Waybackurls, GAU | Historical URL discovery | — |
+| 3 | Amass | Active DNS brute-force | `--skip-amass` |
+| 4 | github-subdomains | GitHub scraping for subdomains | needs `--github-token` |
+| 5 | Uncover | Shodan/Censys/Fofa passive dorking | `--skip-uncover` |
+| 6 | DNSx | Consolidation + DNS resolution | — |
+| 7 | Alterx → DNSx | Smart subdomain permutation | — |
+| 8 | Httpx | HTTP probing + tech detection | — |
+| 9 | tlsx | TLS cert analysis + SAN extraction | `--skip-tlsx` |
+| 10 | Naabu | Port scanning (all subdomains) | `--skip-naabu` |
+| 11 | Katana, GoSpider | Web crawling | `--skip-crawl` |
+| 12 | LinkFinder | JavaScript endpoint extraction | — |
+| 13 | CeWL | Custom wordlist generation | — |
+| 14 | ffuf | Directory fuzzing | needs `--wordlist` |
+| 15 | Nuclei | Template-based vuln scanning | `--skip-nuclei` |
+| 16 | Subjack | Subdomain takeover detection | `--skip-subjack` |
+| 17 | Dalfox | XSS scanning on parameterized URLs | `--skip-dalfox` |
+
+**Fast scan** (skip heavy tools):
+```bash
+chaathan scan -d target.com --skip-amass --skip-naabu --skip-nuclei
+```
+
+**Resume interrupted scan:**
+```bash
+chaathan scan -d target.com --resume <scan_id>
+```
+
+## Commands
+
+| Command | What It Does |
 |---------|-------------|
-| `chaathan wildcard -d <domain>` | Run full recon workflow |
-| `chaathan setup` | Install all dependency tools |
+| `chaathan scan -d <domain>` | Run the 17-step recon workflow |
+| `chaathan status` | Dashboard — recent scans, progress, stats |
+| `chaathan tools list` | List all 24 tools with categories |
+| `chaathan tools check` | Check which tools are installed |
+| `chaathan diff <id1> <id2>` | Compare two scans — find new assets/vulns |
 | `chaathan scans list` | List all past scans |
-| `chaathan scans show <id>` | Show scan details |
-| `chaathan query subdomains <id>` | Query subdomains |
+| `chaathan scans show <id>` | Show scan details and statistics |
+| `chaathan query subdomains <id>` | Query discovered subdomains |
 | `chaathan query vulns <id>` | Query vulnerabilities |
 | `chaathan query ports <id>` | Query open ports |
 | `chaathan query urls <id>` | Query discovered URLs |
 | `chaathan query endpoints <id>` | Query API endpoints |
-| `chaathan report generate <id>` | Generate report |
+| `chaathan report generate <id>` | Generate report (md/html/json/text) |
 | `chaathan export <id>` | Export results to text files |
-| `chaathan delete target <domain>` | Delete target data |
-| `chaathan delete list` | List all targets in DB |
-| `chaathan config show` | Show configuration |
-| `chaathan config set <key> <value>` | Set config value |
+| `chaathan delete target <domain>` | Delete all data for a target |
+| `chaathan delete scan <id>` | Delete a specific scan |
+| `chaathan delete old <days>` | Delete scans older than N days |
+| `chaathan config show` | Show current configuration |
+| `chaathan config edit` | Edit config in your editor |
+| `chaathan setup` | Install all external tools |
 
----
-
-## Detailed Usage
-
-### Wildcard Workflow
-
-Full subdomain enumeration and vulnerability scanning:
-
-```bash
-# Basic usage
-chaathan wildcard -d target.com
-
-# With all options
-chaathan wildcard -d target.com \
-  --skip-amass \
-  --skip-nuclei \
-  --wordlist /path/to/wordlist.txt \
-  --github-token ghp_xxxx \
-  --verbose
-
-# Fast scan (skip slow tools)
-chaathan wildcard -d target.com --skip-amass --skip-nuclei
-```
-
-**Workflow Steps (12 total):**
-
-| Step | Tools | Mode |
-|------|-------|------|
-| 1. Passive Enumeration | Subfinder, Assetfinder, Sublist3r | Parallel |
-| 2. URL Discovery | Waybackurls, GAU | Parallel |
-| 3. Active Enumeration | Amass | Optional |
-| 4. GitHub Recon | github-subdomains | Optional |
-| 5. Consolidation | Merge & deduplicate | Sequential |
-| 6. DNS Resolution | DNSx | Sequential |
-| 7. HTTP Probing | Httpx | Sequential |
-| 8. Port Scanning | Naabu | Sequential |
-| 9. Web Crawling | Katana, GoSpider | Parallel |
-| 10. JS Analysis | LinkFinder | Sequential |
-| 11. Wordlist Gen | CeWL | Sequential |
-| 12. Dir Fuzzing | ffuf | Optional |
-| 13. Vuln Scanning | Nuclei | Optional |
-
-**Flags:**
-
-| Flag | Description |
-|------|-------------|
-| `-d, --domain` | Target domain (required) |
-| `--skip-amass` | Skip Amass (slow but thorough) |
-| `--skip-nuclei` | Skip Nuclei vulnerability scanning |
-| `-w, --wordlist` | Wordlist for directory fuzzing |
-| `--github-token` | GitHub token for GitHub recon |
-| `--report` | Generate report after scan (default: true) |
-| `-v, --verbose` | Enable verbose output |
-| `-m, --mode` | Execution mode: native or docker |
-
----
-
-### Scan Management
-
-```bash
-# List all scans
-chaathan scans list
-
-# List scans for specific target
-chaathan scans list -t example.com
-
-# Show scan details with statistics
-chaathan scans show 1
-
-# Resume an interrupted scan
-chaathan scans resume 1
-```
-
-**Example output:**
-
-```
-$ chaathan scans list
-ID  TARGET              TYPE      STATUS     STARTED           DURATION
---  ------              ----      ------     -------           --------
-3   example.com         wildcard  completed  2024-01-15 10:30  45m32s
-2   test.org            wildcard  completed  2024-01-14 14:22  38m15s
-1   another.io          wildcard  failed     2024-01-13 09:00  12m45s
-```
-
----
-
-### Query Results
-
-Query and filter results from completed scans:
+## Query Examples
 
 ```bash
 # Subdomains
-chaathan query subdomains 1              # All subdomains
-chaathan query subdomains 1 --live       # Only live subdomains
-chaathan query subdomains 1 --grep api   # Filter by pattern
-chaathan query subdomains 1 --json       # Output as JSON
+chaathan query subdomains 1 --live         # only live ones
+chaathan query subdomains 1 --grep api     # filter by pattern
+chaathan query subdomains 1 --json         # JSON output
 
 # Vulnerabilities
-chaathan query vulns 1                   # All vulnerabilities
-chaathan query vulns 1 --severity critical  # Filter by severity
-chaathan query vulns 1 --json            # Output as JSON
+chaathan query vulns 1 --severity critical # filter by severity
 
-# Ports
-chaathan query ports 1                   # All open ports
-chaathan query ports 1 --json            # Output as JSON
-
-# URLs
-chaathan query urls 1                    # All URLs
-chaathan query urls 1 --json             # Output as JSON
-
-# Endpoints
-chaathan query endpoints 1               # All endpoints
-chaathan query endpoints 1 --json        # Output as JSON
+# Pipe to other tools
+chaathan query subdomains 1 --live > live.txt
+chaathan query urls 1 > urls_for_burp.txt
 ```
 
-**Example output:**
+## Scan Diffing
 
-```
-$ chaathan query vulns 1 --severity critical
-
-[CRITICAL] CVE-2023-1234 - Remote Code Execution
-  Host: api.example.com
-  URL: https://api.example.com/upload
-  Template: CVE-2023-1234
-
-[CRITICAL] SQL Injection
-  Host: admin.example.com
-  URL: https://admin.example.com/login?id=1
-
-=== Summary ===
-  critical: 2
-  high: 5
-  medium: 12
-```
-
----
-
-### Report Generation
-
-Generate reports in multiple formats:
+Compare two scans of the same target to find what changed:
 
 ```bash
-# Markdown report (default)
-chaathan report generate 1
-
-# HTML report (beautiful dark theme)
-chaathan report generate 1 --format html
-
-# JSON report (for programmatic use)
-chaathan report generate 1 --format json
-
-# Text report
-chaathan report generate 1 --format text
-
-# Custom output path
-chaathan report generate 1 --format html -o /path/to/report.html
+chaathan diff 1 2
 ```
 
-Reports are automatically saved to:
-- `~/.chaathan/reports/scan_<id>.md`
-- `<result_dir>/REPORT.md`
+Shows new/removed subdomains, new open ports, new vulnerabilities with severity, and new URLs. Useful for continuous monitoring.
 
----
+## Configuration
 
-### Export to Text Files
-
-All results are automatically exported after each scan. You can also manually export:
+Config lives at `~/.chaathan/config.yaml`:
 
 ```bash
-# Export scan results to text files
-chaathan export 1
-
-# Export to custom directory
-chaathan export 1 -o /path/to/output
-```
-
-**Output files created:**
-
-| File | Description |
-|------|-------------|
-| `final_subdomains.txt` | All discovered subdomains |
-| `live_subdomains.txt` | Only live/responsive subdomains |
-| `live_subdomains_with_ip.txt` | Live subdomains with IP addresses |
-| `open_ports.txt` | Open ports (host:port format) |
-| `open_ports_detailed.txt` | Ports with protocol and service |
-| `hosts_with_ports.txt` | Unique hosts with their open ports |
-| `all_urls.txt` | All discovered URLs |
-| `urls_200.txt` | Only URLs returning 200 OK |
-| `urls_with_status.txt` | URLs with HTTP status codes |
-| `urls_with_titles.txt` | URLs with page titles |
-| `vulnerabilities.txt` | All vulnerabilities summary |
-| `vulnerabilities_detailed.txt` | Full vulnerability details with evidence |
-| `vulnerabilities_critical_high.txt` | Critical/High severity only |
-| `vulnerable_hosts.txt` | Unique hosts with vulnerabilities |
-| `endpoints.txt` | All discovered endpoints |
-| `endpoints_with_methods.txt` | Endpoints with HTTP methods |
-| `endpoints_interesting.txt` | API/admin/interesting endpoints |
-| `SUMMARY.txt` | Overall scan summary |
-| `REPORT.md` | Full Markdown report |
-
----
-
-### Delete Data (Cleanup)
-
-When you're done with a target, clean up the database to save space:
-
-```bash
-# List all targets in database
-chaathan delete list
-
-# Delete all data for a target
-chaathan delete target example.com
-
-# Also delete result files from disk
-chaathan delete target example.com --files
-
-# Delete a specific scan by ID
-chaathan delete scan 5
-
-# Delete scans older than 30 days
-chaathan delete old 30
-```
-
-**Example:**
-
-```
-$ chaathan delete list
-
-=== Targets in Database ===
-example.com                               [3 scans, 1547 subs, 12 vulns]
-test.org                                  [1 scans, 234 subs, 0 vulns]
-another.io                                [2 scans, 892 subs, 5 vulns]
-
-Total: 3 targets
-
-$ chaathan delete target example.com
-[*] Deleting data for: example.com
-[*]   Scans: 3, Subdomains: 1547, Ports: 89, URLs: 2341, Vulns: 12
-[+] Deleted 3 scan(s) for target: example.com
-[*] Reclaiming disk space...
-[+] Cleanup complete for: example.com
-```
-
-**Delete options:**
-
-| Flag | Description |
-|------|-------------|
-| `--files` | Also delete result files from disk |
-| `--vacuum` | Run VACUUM to reclaim disk space (default: true) |
-
----
-
-### Configuration
-
-Manage configuration via CLI:
-
-```bash
-# Show current config
-chaathan config show
-
-# Edit config in your default editor
-chaathan config edit
-
-# Set individual values
+chaathan config edit       # open in editor
+chaathan config show       # view current config
 chaathan config set api_keys.github ghp_xxxxx
-chaathan config set api_keys.shodan xxxxxxxx
-chaathan config set notifications.discord_webhook https://discord.com/api/webhooks/xxx
-chaathan config set notifications.enabled true
-chaathan config set general.verbose true
-
-# Show config file path
-chaathan config path
-
-# Reset to defaults
-chaathan config reset
 ```
 
-**Available config keys:**
-
-| Key | Description |
-|-----|-------------|
-| `api_keys.github` | GitHub token for GitHub recon |
-| `api_keys.shodan` | Shodan API key |
-| `api_keys.securitytrails` | SecurityTrails API key |
-| `api_keys.virustotal` | VirusTotal API key |
-| `api_keys.chaos` | ProjectDiscovery Chaos key |
-| `general.verbose` | Enable verbose logging |
-| `general.mode` | Execution mode (native/docker) |
-| `general.output_dir` | Output directory for scans |
-| `notifications.enabled` | Enable notifications |
-| `notifications.discord_webhook` | Discord webhook URL |
-| `notifications.slack_webhook` | Slack webhook URL |
-| `notifications.telegram_bot_token` | Telegram bot token |
-| `notifications.telegram_chat_id` | Telegram chat ID |
-| `notifications.min_severity` | Minimum severity to notify |
-
----
-
-## Configuration File
-
-Located at `~/.chaathan/config.yaml`:
+Key settings:
 
 ```yaml
 general:
-  output_dir: ~/.chaathan/scans
-  database_path: ~/.chaathan/chaathan.db
-  mode: native
-  verbose: false
-  concurrency: 5
-  wordlists:
-    subdomains: /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt
-    directories: /usr/share/wordlists/seclists/Discovery/Web-Content/common.txt
-
-api_keys:
-  github: ""
-  shodan: ""
-  securitytrails: ""
-  virustotal: ""
-  chaos: ""
+  max_retries: 1          # auto-retry failed tools
+  retry_delay_sec: 3      # seconds between retries
 
 tools:
   subfinder:
     threads: 30
     timeout: 30
-  amass:
-    timeout: 60
-    active: true
-  nuclei:
-    concurrency: 25
-    rate_limit: 150
-    severity:
-      - low
-      - medium
-      - high
-      - critical
-    exclude_tags:
-      - dos
-      - fuzz
-  httpx:
-    threads: 50
-    timeout: 10
-    ports:
-      - "80"
-      - "443"
-      - "8080"
-      - "8443"
   naabu:
     threads: 25
     rate: 1000
     ports: "top-1000"
-  ffuf:
+  nuclei:
+    concurrency: 25
+    rate_limit: 150
+    severity: [low, medium, high, critical]
+    exclude_tags: [dos, fuzz]
+  httpx:
     threads: 50
     timeout: 10
+    ports: ["80", "443", "8080", "8443"]
 
 notifications:
   enabled: false
@@ -460,262 +183,135 @@ notifications:
   slack_webhook: ""
   telegram_bot_token: ""
   telegram_chat_id: ""
-
-scope:
-  in_scope: []
-  out_of_scope: []
-  exclude_ips: []
-
-rate_limits:
-  global_rps: 100
-  nuclei: 150
-  httpx: 100
-  naabu: 1000
-  ffuf: 100
 ```
-
----
 
 ## Notifications
 
-Get real-time alerts for critical/high findings:
-
-### Discord
+Get alerts on Discord/Slack/Telegram when critical findings are discovered:
 
 ```bash
-chaathan config set notifications.discord_webhook https://discord.com/api/webhooks/xxx/yyy
 chaathan config set notifications.enabled true
+chaathan config set notifications.discord_webhook https://discord.com/api/webhooks/xxx/yyy
 chaathan config set notifications.min_severity high
 ```
 
-### Slack
+Subdomain takeover findings trigger immediate notifications.
+
+## Integrated Tools (24)
+
+| Category | Tools |
+|----------|-------|
+| **Subdomain Discovery** | subfinder, assetfinder, sublist3r, amass, alterx |
+| **DNS** | dnsx, shuffledns |
+| **Web Probing** | httpx, tlsx |
+| **Port Scanning** | naabu |
+| **URL Discovery** | waybackurls, gau |
+| **Web Crawling** | katana, gospider |
+| **JS Analysis** | linkfinder |
+| **Fuzzing** | ffuf |
+| **Wordlists** | cewl |
+| **Vuln Scanning** | nuclei, subjack, dalfox |
+| **Passive Recon** | uncover, metabigor, github-subdomains |
+| **Cloud** | cloud_enum |
 
 ```bash
-chaathan config set notifications.slack_webhook https://hooks.slack.com/services/xxx/yyy/zzz
-chaathan config set notifications.enabled true
+chaathan tools check    # see what's installed
+chaathan setup          # install everything
 ```
 
-### Telegram
-
-```bash
-chaathan config set notifications.telegram_bot_token 123456789:ABCdefGHIjklMNOpqrsTUVwxyz
-chaathan config set notifications.telegram_chat_id -123456789
-chaathan config set notifications.enabled true
-```
-
----
-
-## Data Storage
-
-All data is stored in SQLite at `~/.chaathan/chaathan.db`:
-
-| Table | Description |
-|-------|-------------|
-| `scans` | Scan metadata (target, status, timestamps) |
-| `subdomains` | Discovered subdomains with live status and IPs |
-| `ports` | Open ports per host with service info |
-| `urls` | Discovered URLs with status codes and titles |
-| `vulnerabilities` | Nuclei findings with severity and evidence |
-| `endpoints` | API endpoints from crawling/JS analysis |
-
----
-
-## Directory Structure
+## Output Structure
 
 ```
 ~/.chaathan/
-├── config.yaml              # Configuration file
-├── chaathan.db              # SQLite database
-├── scans/                   # Scan results
-│   └── example.com/
+├── config.yaml
+├── chaathan.db               # SQLite — all results
+├── scans/
+│   └── target.com/
 │       ├── subfinder.txt
-│       ├── assetfinder.txt
 │       ├── all_subdomains.txt
-│       ├── live_subdomains.txt
 │       ├── httpx_live.json
 │       ├── naabu_ports.txt
+│       ├── tlsx_certs.json
 │       ├── nuclei_vulns.json
-│       ├── vulnerabilities.txt
+│       ├── subjack_takeovers.txt
+│       ├── dalfox_xss.json
+│       ├── alterx_permutations.txt
+│       ├── uncover.json
 │       ├── SUMMARY.txt
 │       └── REPORT.md
-├── reports/                 # Generated reports
+├── reports/
 │   └── scan_1.md
-└── state/                   # Scan state (for resume)
-    └── scan_1.json
+└── state/
+    └── scan_1.json           # for resume
 ```
 
----
+## Makefile
+
+```bash
+make build          # build binary (stripped, ~11MB)
+make install        # install to /usr/local/bin
+make clean          # remove build artifacts
+make test           # run tests
+make vet            # static analysis
+make setup          # build + install tools
+make tools-check    # check installed tools
+make all            # build + install + setup
+```
+
+## Continuous Monitoring
+
+```bash
+# Daily scan via cron
+0 0 * * * /usr/local/bin/chaathan scan -d target.com
+
+# Weekly diff to spot changes
+chaathan diff <old_scan_id> <new_scan_id>
+
+# Cleanup old data
+0 0 * * 0 /usr/local/bin/chaathan delete old 7
+```
 
 ## Project Structure
 
 ```
-chaathan/
-├── main.go                     # Entry point
-├── go.mod                      # Go modules
-├── README.md                   # This file
-├── cmd/
-│   ├── root.go                 # CLI setup, global flags
-│   ├── wildcard.go             # Wildcard recon workflow
-│   ├── company.go              # Company/org workflow
-│   ├── setup.go                # Tool installation
-│   ├── scans.go                # Scan management
-│   ├── query.go                # Query results
-│   ├── report.go               # Report generation
-│   ├── export.go               # Export to text files
-│   ├── delete.go               # Delete/cleanup data
-│   └── config.go               # Config management
+chaathan-flow/
+├── main.go
+├── Makefile
+├── cli/
+│   ├── root.go              # CLI setup, global flags
+│   ├── wildcard.go          # 17-step recon workflow
+│   ├── company.go           # Company/org workflow
+│   ├── setup.go             # Tool installation
+│   ├── scans.go             # Scan management
+│   ├── query.go             # Query results
+│   ├── report.go            # Report generation
+│   ├── export.go            # Text file export
+│   ├── delete.go            # Data cleanup
+│   ├── config.go            # Config management
+│   ├── status.go            # Status dashboard
+│   ├── tools_cmd.go         # Tools list/check
+│   └── diff.go              # Scan comparison
 ├── pkg/
-│   ├── config/config.go        # YAML config handling
-│   ├── database/database.go    # SQLite operations
-│   ├── logger/logger.go        # Colored console output
-│   ├── notify/notify.go        # Notifications (Discord/Slack/Telegram)
-│   ├── report/report.go        # Report templates
-│   ├── runner/runner.go        # Tool execution (native/docker)
-│   ├── scan/scan.go            # Scan state management
-│   ├── scope/scope.go          # Scope filtering
-│   ├── tools/tools.go          # Tool wrappers
+│   ├── config/config.go     # YAML config
+│   ├── database/database.go # SQLite operations
+│   ├── logger/logger.go     # Colored output
+│   ├── notify/notify.go     # Discord/Slack/Telegram
+│   ├── report/report.go     # Report templates
+│   ├── runner/runner.go     # Tool execution + retry
+│   ├── scan/scan.go         # Scan state + resume
+│   ├── scope/scope.go       # Scope filtering
+│   ├── tools/tools.go       # Tool wrappers (24 tools)
 │   └── utils/
-│       ├── file.go             # File utilities
-│       ├── parser.go           # Tool output parsers
-│       └── export.go           # Text file export
+│       ├── file.go          # File utilities
+│       ├── parser.go        # Output parsers
+│       ├── export.go        # Text export
+│       └── validate.go      # Input validation
 ```
-
----
-
-## Integrated Tools
-
-| Category | Tools |
-|----------|-------|
-| **Passive Enum** | subfinder, assetfinder, sublist3r, gau, waybackurls |
-| **Active Enum** | amass, github-subdomains |
-| **DNS** | dnsx, massdns, shuffledns |
-| **HTTP Probing** | httpx |
-| **Port Scanning** | naabu |
-| **Web Crawling** | katana, gospider |
-| **JS Analysis** | linkfinder |
-| **Fuzzing** | ffuf |
-| **Wordlist Gen** | cewl |
-| **Vuln Scanning** | nuclei |
-| **Cloud** | cloud_enum, metabigor |
-
----
-
-## Comparison with Other Tools
-
-| Feature | Chaathan | ReconFTW | Osmedeus |
-|---------|----------|----------|----------|
-| Single Binary | Yes | No (Bash) | No |
-| SQLite Storage | Yes | No | Yes |
-| Text File Export | Yes | Yes | Yes |
-| Report Generation | Yes | Basic | Yes |
-| Notifications | Yes | No | Yes |
-| Resume Scans | Yes | No | Yes |
-| Config File | YAML | Bash vars | YAML |
-| Learning Curve | Low | Medium | High |
-| Easy Cleanup | Yes | Manual | Manual |
-
----
-
-## Examples
-
-### Full Recon Pipeline
-
-```bash
-# Setup (first time)
-chaathan setup
-
-# Configure GitHub token for better results
-chaathan config set api_keys.github ghp_xxxxxxxxxxxx
-
-# Run full scan
-chaathan wildcard -d bugcrowd-target.com --verbose
-
-# Check results
-chaathan scans show 1
-chaathan query vulns 1 --severity critical
-chaathan query subdomains 1 --live
-
-# Generate HTML report for submission
-chaathan report generate 1 --format html -o report.html
-
-# Cleanup when done
-chaathan delete target bugcrowd-target.com --files
-```
-
-### Quick Scan (Skip Slow Tools)
-
-```bash
-chaathan wildcard -d target.com --skip-amass --skip-nuclei
-```
-
-### Export for Other Tools
-
-```bash
-# Get live subdomains for manual testing
-chaathan query subdomains 1 --live --json > live_subs.json
-
-# Get all URLs for Burp import
-chaathan query urls 1 > urls_for_burp.txt
-
-# Get endpoints for API testing
-chaathan query endpoints 1 > api_endpoints.txt
-```
-
-### Continuous Monitoring
-
-```bash
-# Run daily scan via cron
-0 0 * * * /usr/local/bin/chaathan wildcard -d target.com
-
-# Cleanup old scans weekly
-0 0 * * 0 /usr/local/bin/chaathan delete old 7
-```
-
----
-
-## Troubleshooting
-
-### Tool not found
-
-```bash
-# Reinstall tools
-chaathan setup
-
-# Check if tool is in PATH
-which subfinder
-```
-
-### Database locked
-
-```bash
-# Close any running scans, then:
-chaathan delete old 0  # This runs VACUUM
-```
-
-### Scan interrupted
-
-```bash
-# List resumable scans
-chaathan scans list
-
-# Resume scan
-chaathan scans resume <scan_id>
-```
-
----
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
----
 
 ## License
 
-MIT License - see LICENSE file for details.
-
----
+MIT
 
 ## Author
 
-Created for the bug bounty community. Happy hunting!
+Built by [vishnu303](https://github.com/vishnu303) for the bug bounty community.

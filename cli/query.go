@@ -3,13 +3,15 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/vishnu303/chaathan-flow/pkg/database"
-	"github.com/vishnu303/chaathan-flow/pkg/logger"
 	"os"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
+	"github.com/vishnu303/chaathan-flow/pkg/database"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/utils"
 )
 
 var queryCmd = &cobra.Command{
@@ -82,11 +84,13 @@ func init() {
 }
 
 func runQuerySubdomains(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	var subs []database.Subdomain
-	var err error
 
 	if queryLiveOnly {
 		subs, err = database.GetLiveSubdomains(scanID)
@@ -136,8 +140,11 @@ func runQuerySubdomains(cmd *cobra.Command, args []string) {
 }
 
 func runQueryPorts(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	ports, err := database.GetPorts(scanID)
 	if err != nil {
@@ -167,11 +174,13 @@ func runQueryPorts(cmd *cobra.Command, args []string) {
 }
 
 func runQueryVulns(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	var vulns []database.Vulnerability
-	var err error
 
 	if querySeverity != "" {
 		vulns, err = database.GetVulnerabilitiesBySeverity(scanID, querySeverity)
@@ -218,8 +227,11 @@ func runQueryVulns(cmd *cobra.Command, args []string) {
 }
 
 func runQueryUrls(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	urls, err := database.GetURLs(scanID)
 	if err != nil {
@@ -253,8 +265,11 @@ func runQueryUrls(cmd *cobra.Command, args []string) {
 }
 
 func runQueryEndpoints(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	endpoints, err := database.GetEndpoints(scanID)
 	if err != nil {

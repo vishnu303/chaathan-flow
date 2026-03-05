@@ -2,15 +2,18 @@ package cli
 
 import (
 	"context"
-	"github.com/vishnu303/chaathan-flow/pkg/logger"
-	"github.com/vishnu303/chaathan-flow/pkg/runner"
-	"github.com/vishnu303/chaathan-flow/pkg/tools"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"github.com/vishnu303/chaathan-flow/pkg/config"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/runner"
+	"github.com/vishnu303/chaathan-flow/pkg/tools"
 )
 
 var (
@@ -36,6 +39,12 @@ func init() {
 }
 
 func runCompany(cmd *cobra.Command, args []string) {
+	// Validate input
+	if strings.TrimSpace(targetCompany) == "" {
+		logger.Error("Company name cannot be empty")
+		return
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -56,7 +65,11 @@ func runCompany(cmd *cobra.Command, args []string) {
 	}
 
 	r := runner.New(Mode, Verbose)
-	tb := tools.New(r)
+	var toolsCfg *config.ToolsConfig
+	if Cfg != nil {
+		toolsCfg = &Cfg.Tools
+	}
+	tb := tools.New(r, toolsCfg)
 
 	// Step 1: ASN Discovery
 	logger.Section("Step 1: ASN Discovery")

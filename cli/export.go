@@ -2,13 +2,14 @@ package cli
 
 import (
 	"fmt"
-	"github.com/vishnu303/chaathan-flow/pkg/database"
-	"github.com/vishnu303/chaathan-flow/pkg/logger"
-	"github.com/vishnu303/chaathan-flow/pkg/utils"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/vishnu303/chaathan-flow/pkg/database"
+	"github.com/vishnu303/chaathan-flow/pkg/logger"
+	"github.com/vishnu303/chaathan-flow/pkg/utils"
 )
 
 var exportCmd = &cobra.Command{
@@ -48,8 +49,11 @@ func init() {
 }
 
 func runExport(cmd *cobra.Command, args []string) {
-	var scanID int64
-	fmt.Sscanf(args[0], "%d", &scanID)
+	scanID, err := utils.ParseScanID(args[0])
+	if err != nil {
+		logger.Error("%v", err)
+		return
+	}
 
 	// Get scan info
 	scan, err := database.GetScan(scanID)

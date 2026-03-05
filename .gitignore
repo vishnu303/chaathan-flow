@@ -1,5 +1,8 @@
-# Binary
+# Compiled binaries
 chaathan
+chaathan-flow
+chaathan-test
+main
 
 # OS files
 .DS_Store

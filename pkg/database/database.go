@@ -864,3 +864,37 @@ func VacuumDatabase() error {
 	_, err := DB.Exec("VACUUM")
 	return err
 }
+
+// --- Aggregate Count Functions (for status dashboard) ---
+
+func getCount(query string) (int, error) {
+	if DB == nil {
+		return 0, nil
+	}
+	var count int
+	err := DB.QueryRow(query).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// GetTotalScansCount returns the total number of scans
+func GetTotalScansCount() (int, error) {
+	return getCount("SELECT COUNT(*) FROM scans")
+}
+
+// GetTotalSubdomainsCount returns the total number of unique subdomains across all scans
+func GetTotalSubdomainsCount() (int, error) {
+	return getCount("SELECT COUNT(*) FROM subdomains")
+}
+
+// GetTotalVulnerabilitiesCount returns the total number of vulnerabilities across all scans
+func GetTotalVulnerabilitiesCount() (int, error) {
+	return getCount("SELECT COUNT(*) FROM vulnerabilities")
+}
+
+// GetTotalPortsCount returns the total number of open ports across all scans
+func GetTotalPortsCount() (int, error) {
+	return getCount("SELECT COUNT(*) FROM ports")
+}

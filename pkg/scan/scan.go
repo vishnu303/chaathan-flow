@@ -3,10 +3,11 @@ package scan
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/vishnu303/chaathan-flow/pkg/database"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/vishnu303/chaathan-flow/pkg/database"
 )
 
 // State represents the current state of a scan
@@ -46,15 +47,20 @@ var WildcardSteps = []Step{
 	{Name: "url_discovery", Description: "Historical URL Discovery", Required: false, Tool: "waybackurls,gau"},
 	{Name: "active_enum", Description: "Active Subdomain Enumeration", Required: false, Tool: "amass"},
 	{Name: "github_recon", Description: "GitHub Subdomain Discovery", Required: false, Tool: "github-subdomains"},
+	{Name: "search_engine_recon", Description: "Search Engine Dorking", Required: false, Tool: "uncover"},
 	{Name: "consolidation", Description: "Subdomain Consolidation", Required: true, Tool: ""},
+	{Name: "permutation", Description: "Smart Subdomain Permutation", Required: false, Tool: "alterx,dnsx"},
 	{Name: "dns_resolution", Description: "DNS Resolution", Required: true, Tool: "dnsx"},
 	{Name: "http_probing", Description: "HTTP Probing", Required: true, Tool: "httpx"},
+	{Name: "tls_analysis", Description: "TLS Certificate Analysis", Required: false, Tool: "tlsx"},
 	{Name: "port_scanning", Description: "Port Scanning", Required: false, Tool: "naabu"},
 	{Name: "web_crawling", Description: "Web Crawling", Required: false, Tool: "katana,gospider"},
 	{Name: "js_analysis", Description: "JavaScript Analysis", Required: false, Tool: "linkfinder"},
 	{Name: "wordlist_gen", Description: "Wordlist Generation", Required: false, Tool: "cewl"},
 	{Name: "dir_fuzzing", Description: "Directory Fuzzing", Required: false, Tool: "ffuf"},
 	{Name: "vuln_scanning", Description: "Vulnerability Scanning", Required: false, Tool: "nuclei"},
+	{Name: "takeover_detection", Description: "Subdomain Takeover Detection", Required: false, Tool: "subjack"},
+	{Name: "xss_scanning", Description: "XSS Scanning", Required: false, Tool: "dalfox"},
 }
 
 // Manager handles scan state management
