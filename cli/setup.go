@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,13 +32,6 @@ func init() {
 type installResult struct {
 	name string
 	err  error
-}
-
-type tool struct {
-	name       string
-	url        string
-	skipIf     func() bool
-	installCmd func() error
 }
 
 var goTools = []struct {
@@ -509,8 +501,4 @@ func installMassDNS(stats *installStats) {
 
 	logger.Success("MassDNS installed!")
 	stats.incInstalled()
-}
-
-func joinStrings(s []string) string {
-	return strings.Join(s, " ")
 }
