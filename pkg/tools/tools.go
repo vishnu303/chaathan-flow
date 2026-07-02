@@ -554,34 +554,6 @@ func (t *ToolBox) RunHttpx(ctx context.Context, domainsFile string, outputFile s
 	return err
 }
 
-// RunNaabu port-scans a single host.
-func (t *ToolBox) RunNaabu(ctx context.Context, host string, outputFile string) error {
-	args := []string{
-		"-host", host,
-		"-rate", strconv.Itoa(t.effectiveRate(t.naabuRate())),
-		"-c", strconv.Itoa(t.naabuThreads()),
-		"-timeout", "3", // seconds per probe; prevents hanging on filtered ports
-		"-o", outputFile,
-	}
-	// Use explicit port list if configured, otherwise use -top-ports
-	if ports := t.naabuPorts(); ports != "" {
-		if strings.ToLower(ports) == "top" || strings.ToLower(ports) == "top-100" {
-			args = append(args, "-top-ports", "100")
-		} else if strings.ToLower(ports) == "top-1000" {
-			args = append(args, "-top-ports", "1000")
-		} else if strings.ToLower(ports) == "full" || strings.ToLower(ports) == "-" {
-			args = append(args, "-p", "-")
-		} else {
-			args = append(args, "-p", ports)
-		}
-	} else {
-		args = append(args, "-top-ports", strconv.Itoa(t.naabuTopPorts()))
-	}
-	args = t.appendProxy(args, "-proxy")
-	_, err := t.Runner.Run(ctx, "naabu", args, runner.WithTimeout(t.naabuMaxTimeout()))
-	return err
-}
-
 // RunNaabuList port-scans all hosts from a file (the correct way for recon).
 func (t *ToolBox) RunNaabuList(ctx context.Context, inputFile string, outputFile string) error {
 	args := []string{
@@ -935,67 +907,6 @@ func (t *ToolBox) RunHttpxURLCheck(ctx context.Context, urlsFile string, outputF
 	return err
 }
 
-// RunHttpxFetchJS downloads JS responses into downloadDir using conservative
-// concurrency so the workflow can scan local copies for secrets with low noise.
-func (t *ToolBox) RunHttpxFetchJS(ctx context.Context, urlsFile string, downloadDir string) error {
-	threads := 10
-	timeout := 5
-	if t.Config != nil && t.Config.Httpx.Threads > 0 {
-		threads = t.Config.Httpx.Threads / 5
-		if threads < 5 {
-			threads = 5
-		}
-		if threads > 15 {
-			threads = 15
-		}
-	}
-
-	args := []string{
-		"-l", urlsFile,
-		"-sr",
-		"-srd", downloadDir,
-		"-threads", strconv.Itoa(threads),
-		"-timeout", strconv.Itoa(timeout),
-		"-silent",
-		"-no-fallback",
-	}
-	args = t.appendCommon(args, appendOptions{
-		uaHeader:    true,
-		tlsOpSec:    true,
-		customHFlag: "-H",
-		cookieFlag:  "-cookie",
-		proxyFlag:   "-http-proxy",
-	})
-	_, err := t.Runner.Run(ctx, "httpx", args)
-	return err
-}
-
-// RunNucleiURLs runs nuclei on specific URLs with stricter rate limits.
-// Used for path-specific vulnerability scanning (separate from infra scanning).
-func (t *ToolBox) RunNucleiURLs(ctx context.Context, urlsFile string, outputFile string) error {
-	// Use half the normal rate limit for URL scanning to reduce noise
-	rateLimit := t.nucleiRateLimit() / 2
-	if rateLimit < 25 {
-		rateLimit = 25
-	}
-	rateLimit = t.effectiveRate(rateLimit) // apply global ceiling
-	concurrency := t.nucleiConcurrency() / 2
-	if concurrency < 5 {
-		concurrency = 5
-	}
-
-	s, err := t.GetScanner("nuclei")
-	if err != nil {
-		return err
-	}
-	return s.Scan(ctx, urlsFile, outputFile, ScanOptions{
-		Mode:        "urls",
-		Concurrency: concurrency,
-		RateLimit:   rateLimit,
-		ExcludeTags: t.nucleiExcludeTags(),
-	})
-}
-
 // RunGFPattern filters an input file with a single gf pattern and writes matches.
 //
 // INTENTIONAL RUNNER BYPASS: gf is a local text-filtering utility that reads
@@ -1032,21 +943,6 @@ func (t *ToolBox) RunGFPattern(ctx context.Context, pattern string, inputFile st
 	return writeToFile(outputFile, stdout.String())
 }
 
-// --- GitHub Reconnaissance ---
-
-// RunGithubEndpoints searches GitHub for exposed endpoints/secrets
-func (t *ToolBox) RunGithubEndpoints(ctx context.Context, domain string, githubToken string, outputFile string) error {
-	if githubToken == "" {
-		return fmt.Errorf("github-endpoints requires a GitHub token (set GITHUB_TOKEN env var)")
-	}
-	args := []string{"-d", domain}
-	output, err := t.Runner.Run(ctx, "github-endpoints", args)
-	if err != nil {
-		return err
-	}
-	return writeToFile(outputFile, output)
-}
-
 // RunGithubSubdomains searches GitHub for subdomains
 func (t *ToolBox) RunGithubSubdomains(ctx context.Context, domain string, githubToken string, outputFile string) error {
 	if githubToken == "" {
@@ -1076,20 +972,6 @@ func (t *ToolBox) RunShuffleDNS(ctx context.Context, domain string, wordlist str
 	}
 	// Check for massdns in PATH and use it
 	args = append(args, "-mode", "bruteforce")
-	_, err := t.Runner.Run(ctx, "shuffledns", args)
-	return err
-}
-
-// RunShuffleDNSResolve uses shuffledns to resolve a list of subdomains (resolve mode).
-func (t *ToolBox) RunShuffleDNSResolve(ctx context.Context, inputFile string, resolversFile string, outputFile string) error {
-	args := []string{
-		"-list", inputFile,
-		"-o", outputFile,
-		"-silent",
-	}
-	if resolversFile != "" {
-		args = append(args, "-r", resolversFile)
-	}
 	_, err := t.Runner.Run(ctx, "shuffledns", args)
 	return err
 }
@@ -1138,19 +1020,6 @@ func (t *ToolBox) RunTlsx(ctx context.Context, inputFile string, outputFile stri
 		"-duc",
 		"-c", "50",
 		"-timeout", "5", // seconds per TLS handshake; prevents hanging on blocked hosts
-	}
-	_, err := t.Runner.Run(ctx, "tlsx", args)
-	return err
-}
-
-// RunTlsxHost checks TLS for a single host.
-func (t *ToolBox) RunTlsxHost(ctx context.Context, host string, outputFile string) error {
-	args := []string{
-		"-u", host,
-		"-o", outputFile,
-		"-json",
-		"-silent",
-		"-nc",
 	}
 	_, err := t.Runner.Run(ctx, "tlsx", args)
 	return err

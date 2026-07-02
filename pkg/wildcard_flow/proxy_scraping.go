@@ -34,26 +34,20 @@ func stepProxyScraping(c *Ctx) bool {
 	// ── Skip if --proxy was explicitly set (manual always wins) ──
 	if c.Proxy != "" {
 		logger.StepHeader("Proxy Scraping — skipped (--proxy already set: %s)", c.Proxy)
-		if c.StateMgr != nil {
-			c.StateMgr.MarkStepComplete(c.State, stepName)
-		}
+		c.markStepCompleteIfNoFailure(stepName)
 		return c.cancelled()
 	}
 
 	// ── Skip if --auto-proxy not requested ──────────────────
 	if !c.AutoProxy {
 		logger.StepHeader("Proxy Scraping — skipped (use --auto-proxy to enable)")
-		if c.StateMgr != nil {
-			c.StateMgr.MarkStepComplete(c.State, stepName)
-		}
+		c.markStepCompleteIfNoFailure(stepName)
 		return c.cancelled()
 	}
 
 	c.runProxyScrapingAndRotation()
 
-	if c.StateMgr != nil {
-		c.StateMgr.MarkStepComplete(c.State, stepName)
-	}
+	c.markStepCompleteIfNoFailure(stepName)
 	return c.cancelled()
 }
 

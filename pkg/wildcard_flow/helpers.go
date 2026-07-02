@@ -10,14 +10,11 @@ import (
 	"io"
 	neturl "net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/pkg/logger"
-	"github.com/vishnu303/chaathan/pkg/tools"
 	"github.com/vishnu303/chaathan/utils"
 )
 
@@ -286,81 +283,6 @@ func collectROIMetadataTargetsFromFile(inputFile, outputFile string, perHostLimi
 	return count
 }
 
-
-// collectGFMatches runs the installed gf patterns present in allowlist against
-// inputFile, merges the matches and writes them to outputFile.
-// When scanID > 0, persists each URL-pattern pair in the gf_matches table
-// so that ROI scoring can boost URLs that matched vulnerability patterns.
-func collectGFMatches(ctx context.Context, tb *tools.ToolBox, inputFile, outputFile string, allowlist map[string]bool, scanID int64) int {
-	patterns := installedGFPatterns(allowlist)
-	tmpFiles := make([]string, 0, len(patterns))
-	// Schedule cleanup of all temp files when this function exits,
-	// whether by normal return or panic.
-	defer func() {
-		for _, f := range tmpFiles {
-			os.Remove(f)
-		}
-	}()
-
-	for _, pattern := range patterns {
-		// Bail out early if the context was cancelled (user pressed 's' or Ctrl+C)
-		if ctx.Err() != nil {
-			break
-		}
-		tmpFile := outputFile + "." + pattern
-		if err := tb.RunGFPattern(ctx, pattern, inputFile, tmpFile); err != nil {
-			_ = os.Remove(tmpFile)
-			continue
-		}
-		if utils.FileExists(tmpFile) {
-			// Persist matches to DB for ROI scoring
-			if scanID > 0 {
-				if matchedURLs := loadLineSlice(tmpFile, 0); len(matchedURLs) > 0 {
-					database.AddGFMatches(scanID, matchedURLs, pattern)
-				}
-			}
-			tmpFiles = append(tmpFiles, tmpFile)
-		}
-	}
-
-	if len(tmpFiles) == 0 {
-		writeEmptyFile(outputFile)
-		return 0
-	}
-	if err := utils.MergeAndDeduplicate(tmpFiles, outputFile); err != nil {
-		writeEmptyFile(outputFile)
-		return 0
-	}
-	count, _ := utils.CountFileLines(outputFile)
-	return count
-}
-
-// installedGFPatterns returns the subset of allowlist currently installed in ~/.gf/.
-func installedGFPatterns(allowlist map[string]bool) []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-
-	gfDir := filepath.Join(home, ".gf")
-	entries, err := os.ReadDir(gfDir)
-	if err != nil {
-		return nil
-	}
-
-	patterns := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		name := strings.TrimSuffix(entry.Name(), ".json")
-		if allowlist == nil || allowlist[name] {
-			patterns = append(patterns, name)
-		}
-	}
-	slices.Sort(patterns)
-	return patterns
-}
 
 // writeEmptyFile truncates or creates a file so retry paths do not reuse stale output.
 func writeEmptyFile(path string) {

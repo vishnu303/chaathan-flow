@@ -156,7 +156,7 @@ func stepWebCrawling(c *Ctx) bool {
 
 	if c.SkipCrawl {
 		logger.StepHeader("Step 13: Skipping Web Crawling (--skip-crawl)")
-		c.StateMgr.MarkStepComplete(c.State, "web_crawling")
+		c.markStepCompleteIfNoFailure("web_crawling")
 		return c.cancelled()
 	}
 	writeEmptyFile(c.F.KatanaOut)
@@ -167,7 +167,7 @@ func stepWebCrawling(c *Ctx) bool {
 	liveHostCount, _ := utils.CountFileLines(c.F.HttpxLiveHosts)
 	if liveHostCount == 0 {
 		logger.Warning("No live hosts found — skipping web crawling")
-		c.StateMgr.MarkStepComplete(c.State, "web_crawling")
+		c.markStepCompleteIfNoFailure("web_crawling")
 		return c.cancelled()
 	}
 	logger.FileDebug("web_crawling input: %s (%d live hosts)", c.F.HttpxLiveHosts, liveHostCount)
@@ -465,7 +465,7 @@ func stepParamDiscovery(c *Ctx) bool {
 
 	if c.SkipX8 {
 		logger.StepHeader("Step 16: Skipping x8 (--skip-x8)")
-		c.StateMgr.MarkStepComplete(c.State, "param_discovery")
+		c.markStepCompleteIfNoFailure("param_discovery")
 		return c.cancelled()
 	}
 
@@ -476,7 +476,7 @@ func stepParamDiscovery(c *Ctx) bool {
 	liveHostCount, _ := utils.CountFileLines(c.F.HttpxLiveHosts)
 	if liveHostCount == 0 {
 		logger.Warning("No live hosts found — skipping x8 parameter discovery")
-		c.StateMgr.MarkStepComplete(c.State, "param_discovery")
+		c.markStepCompleteIfNoFailure("param_discovery")
 		return c.cancelled()
 	}
 
@@ -506,7 +506,7 @@ func stepParamDiscovery(c *Ctx) bool {
 
 	if len(x8Targets) == 0 {
 		logger.Warning("No targets found for parameter discovery — skipping x8")
-		c.StateMgr.MarkStepComplete(c.State, "param_discovery")
+		c.markStepCompleteIfNoFailure("param_discovery")
 		return c.cancelled()
 	}
 
@@ -1215,7 +1215,7 @@ func stepJSSecretScan(c *Ctx) bool {
 	jsCount := collectJSURLsFromFile(c.F.AllURLsLive, c.F.JSURLsFile, jsLimit)
 	if jsCount == 0 {
 		logger.Info("  No JavaScript URLs found in live URL set")
-		c.StateMgr.MarkStepComplete(c.State, "js_secret_scan")
+		c.markStepCompleteIfNoFailure("js_secret_scan")
 		return c.cancelled()
 	}
 	logger.Info("  Selected %d JavaScript URL(s) for fetching", jsCount)
@@ -1293,34 +1293,6 @@ func stepJSSecretScan(c *Ctx) bool {
 	return c.cancelled()
 }
 
-// extractHostsFromURLFile reads a URL file and returns unique hostnames.
-func extractHostsFromURLFile(filePath string) []string {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil
-	}
-	defer file.Close()
-
-	seen := make(map[string]bool)
-	var hosts []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		parsed, err := url.Parse(line)
-		if err != nil || parsed.Hostname() == "" {
-			continue
-		}
-		host := strings.ToLower(parsed.Hostname())
-		if !seen[host] {
-			seen[host] = true
-			hosts = append(hosts, host)
-		}
-	}
-	return hosts
-}
 
 // ─────────────────────────────────────────────────────────────
 // Step 17 — Directory Fuzzing (ffuf)
@@ -1336,7 +1308,7 @@ func stepDirFuzzing(c *Ctx) bool {
 	if c.WordlistPath == "" {
 		logger.StepHeader("Step 15: Skipping ffuf (no --wordlist provided)")
 		logger.Info("Provide --wordlist to enable ffuf")
-		c.StateMgr.MarkStepComplete(c.State, "dir_fuzzing")
+		c.markStepCompleteIfNoFailure("dir_fuzzing")
 		return c.cancelled()
 	}
 
@@ -1348,7 +1320,7 @@ func stepDirFuzzing(c *Ctx) bool {
 		logger.Warning("ffuf wordlist not found: %s", c.WordlistPath)
 		logger.Info("  Install seclists (apt install seclists / pacman -S seclists) or provide a valid --wordlist path")
 		logger.FileDebug("ffuf skipped: wordlist does not exist at %s", c.WordlistPath)
-		c.StateMgr.MarkStepComplete(c.State, "dir_fuzzing")
+		c.markStepCompleteIfNoFailure("dir_fuzzing")
 		return c.cancelled()
 	}
 
@@ -1545,57 +1517,6 @@ func isJavaScriptURL(raw string) bool {
 	return strings.HasSuffix(strings.ToLower(raw), ".js")
 }
 
-// concatenateDownloadedFiles merges all files under downloadDir into outputFile.
-func concatenateDownloadedFiles(downloadDir, outputFile string) (int, int64, error) {
-	var files []string
-	err := filepath.Walk(downloadDir, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if info == nil || info.IsDir() {
-			return nil
-		}
-		files = append(files, path)
-		return nil
-	})
-	if err != nil {
-		return 0, 0, err
-	}
-
-	slices.Sort(files)
-	out, err := os.Create(outputFile)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer out.Close()
-
-	var totalBytes int64
-	writtenFiles := 0
-	for _, path := range files {
-		data, err := os.ReadFile(path)
-		if err != nil || len(data) == 0 {
-			os.Remove(path) // also clean up empty files to save space
-			continue
-		}
-		n, err := out.Write(data)
-		if err != nil {
-			return writtenFiles, totalBytes, err
-		}
-		totalBytes += int64(n)
-		if _, err := io.WriteString(out, "\n"); err != nil {
-			return writtenFiles, totalBytes, err
-		}
-		writtenFiles++
-
-		// Destructive merge: immediately delete the original file to keep storage flat
-		os.Remove(path)
-	}
-	
-	// Remove the now-empty download directory completely
-	os.RemoveAll(downloadDir)
-
-	return writtenFiles, totalBytes, nil
-}
 
 // ─────────────────────────────────────────────────────────────
 // convertX8ToURLs — Step 16 helper

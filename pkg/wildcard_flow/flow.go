@@ -115,8 +115,6 @@ type Files struct {
 	AllURLsRaw         string
 	AllURLsLive        string
 	JSURLsFile         string
-	JSDownloadsDir     string
-	JSCombinedFile     string
 	GFJSMatches        string
 	GFSecretsMatches   string
 	GFSecretsFinal     string
@@ -124,9 +122,7 @@ type Files struct {
 	FfufOut            string
 	FfufDiscoveredURLs string
 	NucleiOut          string
-	NucleiURLOut       string
 	NucleiURLTargets   string
-	NucleiGFMatches    string
 	SubjackOut         string
 	ParamURLsFile      string
 	DalfoxOut          string
@@ -176,8 +172,6 @@ func newFiles(dir string) Files {
 		AllURLsRaw:         j("all_urls_raw.txt"),
 		AllURLsLive:        j("all_urls_live.txt"),
 		JSURLsFile:         j("js_urls.txt"),
-		JSDownloadsDir:     j("js_downloads"),
-		JSCombinedFile:     j("js_combined.txt"),
 		GFJSMatches:        j("gf_js_matches.txt"),
 		GFSecretsMatches:   j("gf_secrets_matches.txt"),
 		GFSecretsFinal:     jf("gf_secrets_findings.txt"),
@@ -186,11 +180,9 @@ func newFiles(dir string) Files {
 		FfufDiscoveredURLs: j("ffuf_discovered_urls.txt"),
 		// Nuclei JSON outputs go to final_files/ — they are product files
 		NucleiOut:        jf("nuclei_vulns.json"),
-		NucleiURLOut:     jf("nuclei_url_vulns.json"),
 		DalfoxOut:        jf("dalfox_xss.jsonl"),
 		// Nuclei working files (URL target lists) stay in intermediate_files/
 		NucleiURLTargets: j("nuclei_url_targets.txt"),
-		NucleiGFMatches:  j("nuclei_url_targets_gf.txt"),
 		SubjackOut:       j("subjack_takeovers.txt"),
 		ParamURLsFile:    j("param_urls_live.txt"),
 		HttpxTechOut:     jf("httpx_tech.json"),

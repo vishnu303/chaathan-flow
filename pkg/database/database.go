@@ -10,7 +10,6 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 )
 
@@ -1106,36 +1105,13 @@ func GetTotalPortsCount() (int, error) {
 
 // ─────────────────────────────────────────────────────────────
 // GF Match persistence — stores which URLs matched which gf patterns
+//
+// NOTE: The gf_matches table is currently write-dead (no production code path
+// populates it after the JS/param pipeline moved in-memory/x8). The read side
+// (GetGFMatchesByScan) and ROI scoring still consult it, so it contributes zero
+// signal until a writer is reintroduced. The table and schema are kept for
+// backwards compatibility with existing databases.
 // ─────────────────────────────────────────────────────────────
-
-// AddGFMatches stores gf pattern matches for a batch of URLs. Duplicates are
-// silently ignored via INSERT OR IGNORE on the (scan_id, url, pattern) unique index.
-func AddGFMatches(scanID int64, urls []string, pattern string) error {
-	if len(urls) == 0 {
-		return nil
-	}
-	tx, err := DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO gf_matches (scan_id, url, pattern) VALUES (?, ?, ?)`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, u := range urls {
-		u = strings.TrimSpace(u)
-		if u != "" {
-			if _, err := stmt.Exec(scanID, u, pattern); err != nil {
-				logger.Warning("gf_matches insert failed for %q pattern %q: %v", u, pattern, err)
-			}
-		}
-	}
-	return tx.Commit()
-}
 
 // GetGFMatchesByScan returns all gf pattern matches for a scan, grouped by URL.
 // The returned map keys are raw URLs; the values are slices of pattern names

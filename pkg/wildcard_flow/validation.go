@@ -134,7 +134,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			logger.Info("Use --dns-wordlist to enable DNS brute-force")
 			logger.FileDebug("shuffledns skipped: no --dns-wordlist provided")
 		}
-		c.StateMgr.MarkStepComplete(c.State, "dns_bruteforce")
+		c.markStepCompleteIfNoFailure("dns_bruteforce")
 		return c.cancelled()
 	}
 
@@ -145,7 +145,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 		logger.Warning("DNS wordlist not found: %s", c.DNSWordlistPath)
 		logger.Info("  Install seclists (apt install seclists / pacman -S seclists) or provide a valid --dns-wordlist path")
 		logger.FileDebug("shuffledns skipped: wordlist does not exist at %s", c.DNSWordlistPath)
-		c.StateMgr.MarkStepComplete(c.State, "dns_bruteforce")
+		c.markStepCompleteIfNoFailure("dns_bruteforce")
 		return c.cancelled()
 	}
 
@@ -154,7 +154,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 		logger.Warning("Resolvers file not found: %s", c.ResolversPath)
 		logger.Info("  Provide a valid --resolvers file path")
 		logger.FileDebug("shuffledns skipped: resolvers file does not exist at %s", c.ResolversPath)
-		c.StateMgr.MarkStepComplete(c.State, "dns_bruteforce")
+		c.markStepCompleteIfNoFailure("dns_bruteforce")
 		return c.cancelled()
 	}
 
@@ -446,7 +446,7 @@ func stepPortScanning(c *Ctx) bool {
 
 	if c.SkipNaabu {
 		logger.StepHeader("Step 9: Skipping Naabu (--skip-naabu)")
-		c.StateMgr.MarkStepComplete(c.State, "port_scanning")
+		c.markStepCompleteIfNoFailure("port_scanning")
 	} else {
 		writeEmptyFile(c.F.NaabuOut)
 		logger.SubStep("Running Naabu on all discovered subdomains...")

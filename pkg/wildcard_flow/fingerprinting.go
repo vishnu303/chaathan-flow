@@ -28,7 +28,7 @@ func stepFingerprinting(c *Ctx) bool {
 
 	if c.SkipFingerprint {
 		logger.StepHeader("Step 23: Skipping Fingerprinting (--skip-fingerprint)")
-		c.StateMgr.MarkStepComplete(c.State, "tech_waf_fingerprinting")
+		c.markStepCompleteIfNoFailure("tech_waf_fingerprinting")
 		return c.cancelled()
 	}
 
@@ -94,7 +94,7 @@ func stepFingerprinting(c *Ctx) bool {
 	// 3. Log detailed findings summary
 	logFingerprintSummary(c)
 
-	c.StateMgr.MarkStepComplete(c.State, "tech_waf_fingerprinting")
+	c.markStepCompleteIfNoFailure("tech_waf_fingerprinting")
 	return c.cancelled()
 }
 
