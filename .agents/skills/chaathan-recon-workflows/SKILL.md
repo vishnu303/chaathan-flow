@@ -41,10 +41,11 @@ Phase 5: Fingerprinting (Step 23)      ──► Output: WAF/Tech JSON
 ### Phase 0 — Proxy Scraping (`proxy_scraping.go`)
 - **Step 1: `proxy_scraping`** (mubeng, proxy-scraper-checker):
   - Automatically triggered if `--auto-proxy` is set and `--proxy` is not.
+  - Runs **once at scan start** (Step 1 only) — the proxy pool is not re-scraped or re-validated between later phases.
   - `proxy-scraper-checker` scrapes 100+ public proxy feeds and validates each against `https://<target-domain>` (10-minute default timeout).
   - Valid proxies are sorted by speed and written to `proxy_pool.txt`.
   - `mubeng` starts as a background rotating proxy process on `127.0.0.1:<random-port>`.
-  - Updates `c.Proxy` and `c.Cfg.General.Proxy` so all subsequent tool execution commands route their traffic through the rotating proxy.
+  - Updates `c.Proxy` and `c.Cfg.General.Proxy` so all subsequent tool execution commands route their traffic through the rotating proxy for the rest of the scan.
   - `finalizeScan()` kills the mubeng process group.
 
 ### Phase 1 — Asset Discovery (`asset_discovery.go`)

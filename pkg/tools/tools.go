@@ -504,7 +504,9 @@ func (t *ToolBox) RunAmass(ctx context.Context, domain string, outputFile string
 }
 
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
-	args := []string{domain, "--providers", "wayback", "--subs", "--o", outputFile}
+	// Use the long --output form: some flag libraries reject "--o" as an
+	// ambiguous/invalid abbreviation, which would silently produce an empty file.
+	args := []string{domain, "--providers", "wayback", "--subs", "--output", outputFile}
 	args = t.appendProxy(args, "--proxy")
 	_, err := t.Runner.Run(ctx, "gau", args)
 	return err

@@ -71,7 +71,7 @@ var WildcardSteps = []Step{
 	{Name: "web_crawling", Description: "Web Crawling", Required: false, Tool: "katana,gospider"},
 	{Name: "js_analysis", Description: "JavaScript Analysis (GoLinkFinder)", Required: false, Tool: "GoLinkFinder"},
 	{Name: "dir_fuzzing", Description: "Directory Fuzzing", Required: false, Tool: "ffuf"},
-	{Name: "param_discovery", Description: "HTTP Parameter Discovery", Required: false, Tool: "arjun"},
+	{Name: "param_discovery", Description: "HTTP Parameter Discovery", Required: false, Tool: "x8"},
 	{Name: "url_consolidation", Description: "URL Consolidation & Live Check", Required: false, Tool: "httpx"},
 	{Name: "js_secret_scan", Description: "JS File Secret Scan (gf)", Required: false, Tool: "httpx,gf"},
 	// Phase 4 — Vulnerability Scanning

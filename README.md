@@ -224,7 +224,7 @@ Allows you to audit deeply nested authenticated application zones (private APIs,
 ### 🕴️ Complete Anonymization & Routing
 - **User-Agent Rotation:** Enabled natively by default (`ua_rotation: true` in config). Chaathan dynamically swaps standard command-line user-agent headers for authentic, rotating desktop and mobile browser signatures (Chrome, Firefox, Safari) on every request, evading signature-based blocking.
 - **Proxy Cascading:** Pipe all underlying scanning traffic through an external gateway. Pass SOCKS5 (e.g., Tor) or HTTP (e.g., Burp Suite) configurations to route execution, audit logs, or debugging sessions.
-- **Automated Proxy Rotation (`--auto-proxy`):** Automatically scrapes and validates free proxies from public sources against the target domain, then starts `mubeng` as a local rotating proxy server. Every outgoing request from every tool uses a different exit IP address — no manual proxy configuration needed. Dead proxies are automatically removed from the pool.
+- **Automated Proxy Rotation (`--auto-proxy`):** Scrapes and validates free proxies once at scan start (Step 1), then starts `mubeng` as a local rotating proxy server for the remainder of the scan. Every outgoing request from every tool uses a different exit IP address — no manual proxy configuration needed.
 
 ---
 
