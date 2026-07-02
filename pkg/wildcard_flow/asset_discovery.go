@@ -13,6 +13,7 @@ package wildcard_flow
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/vishnu303/chaathan/pkg/logger"
@@ -34,6 +35,9 @@ func stepPassiveEnum(c *Ctx) bool {
 	writeEmptyFile(c.F.Sublist3rOut)
 
 	var passiveSkipped bool
+	var subfinderOK, assetfinderOK, sublist3rOK bool
+	var resultMu sync.Mutex
+
 	err := runWithSkip(c, "passive enum", func(sCtx context.Context) error {
 		var wg sync.WaitGroup
 		wg.Add(3)
@@ -47,6 +51,9 @@ func stepPassiveEnum(c *Ctx) bool {
 					logger.Error("Subfinder failed: %v", err)
 				}
 			} else {
+				resultMu.Lock()
+				subfinderOK = true
+				resultMu.Unlock()
 				logger.SubStep("[Done] Subfinder")
 			}
 		}()
@@ -60,6 +67,9 @@ func stepPassiveEnum(c *Ctx) bool {
 					logger.Error("Assetfinder failed: %v", err)
 				}
 			} else {
+				resultMu.Lock()
+				assetfinderOK = true
+				resultMu.Unlock()
 				logger.SubStep("[Done] Assetfinder")
 			}
 		}()
@@ -74,6 +84,9 @@ func stepPassiveEnum(c *Ctx) bool {
 				}
 				logger.FileDebug("sublist3r failed: %v", err)
 			} else {
+				resultMu.Lock()
+				sublist3rOK = true
+				resultMu.Unlock()
 				logger.SubStep("[Done] Sublist3r")
 			}
 		}()
@@ -104,7 +117,15 @@ func stepPassiveEnum(c *Ctx) bool {
 		}
 	}
 
-	c.StateMgr.MarkStepComplete(c.State, "passive_enum")
+	subfinderCount, _ := utils.CountFileLines(c.F.SubfinderOut)
+	assetfinderCount, _ := utils.CountFileLines(c.F.AssetfinderOut)
+	sublist3rCount, _ := utils.CountFileLines(c.F.Sublist3rOut)
+
+	if passiveSkipped || subfinderOK || assetfinderOK || sublist3rOK || subfinderCount > 0 || assetfinderCount > 0 || sublist3rCount > 0 {
+		c.markStepCompleteIfNoFailure("passive_enum")
+	} else {
+		c.StateMgr.MarkStepFailed(c.State, "passive_enum", fmt.Errorf("all passive enumeration tools failed"))
+	}
 	return c.cancelled()
 }
 

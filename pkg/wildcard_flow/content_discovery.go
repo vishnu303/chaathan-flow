@@ -1389,7 +1389,6 @@ func stepDirFuzzing(c *Ctx) bool {
 			targetURL += "FUZZ"
 
 			tmpFfufOut := filepath.Join(filepath.Dir(c.F.FfufOut), fmt.Sprintf("ffuf_tmp_%d.json", rand.IntN(1000000)))
-			defer os.Remove(tmpFfufOut)
 
 			logger.FileDebug("ffuf input: target=%s wordlist=%s out=%s", targetURL, c.WordlistPath, tmpFfufOut)
 			if err := c.Tb.RunFfufWithFUZZ(sCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
@@ -1404,7 +1403,10 @@ func stepDirFuzzing(c *Ctx) bool {
 						resultsMu.Unlock()
 					}
 				}
+			} else if err != nil && sCtx.Err() == nil {
+				logger.Warning("ffuf failed on host %s: %v", targetURL, err)
 			}
+			os.Remove(tmpFfufOut)
 		}
 		return nil
 	}); err != nil {
