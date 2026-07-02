@@ -280,7 +280,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 
 	if c.SkipTlsx {
 		logger.StepHeader("Step 11: Skipping tlsx (--skip-tlsx)")
-		c.StateMgr.MarkStepComplete(c.State, "tls_analysis")
+		c.markStepCompleteIfNoFailure("tls_analysis")
 	} else {
 		writeEmptyFile(c.F.TlsxOut)
 		logger.SubStep("Running tlsx — extracting SANs and checking cert issues...")
@@ -366,9 +366,18 @@ func stepTLSAnalysis(c *Ctx) bool {
 							}
 							fSan.Close()
 
-							// Run httpx on the new SAN subs
-							if err := c.Tb.RunHttpx(c.GoCtx, sanSubsInputFile, sanHttpxOutFile); err == nil {
-								// Parse httpx results into database
+							// Run httpx on the new SAN subs. Wrapped in runWithSkip so
+							// the user can interrupt a slow SAN re-probe with the 's' key.
+							reprobeSkipped := false
+							if err := runWithSkip(c, "httpx (SAN re-probe)", func(sCtx context.Context) error {
+								return c.Tb.RunHttpx(sCtx, sanSubsInputFile, sanHttpxOutFile)
+							}); err == ErrToolSkipped {
+								reprobeSkipped = true
+							}
+
+							// Process whatever output httpx produced — partial output may
+							// exist even when the run was skipped before completion.
+							if utils.FileExists(sanHttpxOutFile) {
 								if _, err := utils.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
 									logger.Warning("Failed to parse SAN httpx output: %v", err)
 								}
@@ -376,7 +385,11 @@ func stepTLSAnalysis(c *Ctx) bool {
 								// Extract live hosts
 								sanLiveCount := collectLiveHostTargetsFromHttpx(sanHttpxOutFile, sanHttpxLiveFile)
 								if sanLiveCount > 0 {
-									logger.Info("  Found %d live hosts from SAN subdomains", sanLiveCount)
+									reprobeLabel := ""
+									if reprobeSkipped {
+										reprobeLabel = " (partial)"
+									}
+									logger.Info("  Found %d live hosts from SAN subdomains%s", sanLiveCount, reprobeLabel)
 									// Merge live hosts back
 									_ = utils.MergeAndDeduplicate([]string{c.F.HttpxLiveHosts, sanHttpxLiveFile}, c.F.HttpxLiveHosts)
 								}
