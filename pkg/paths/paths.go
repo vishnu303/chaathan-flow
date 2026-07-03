@@ -33,6 +33,11 @@ func Init() error {
 			return
 		}
 		chaathanHome = filepath.Join(home, ".chaathan")
+		
+		// Guarantee home directory exists
+		if err := os.MkdirAll(chaathanHome, 0755); err != nil {
+			initErr = fmt.Errorf("cannot create home directory: %w", err)
+		}
 	})
 	return initErr
 }

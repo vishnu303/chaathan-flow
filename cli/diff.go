@@ -111,8 +111,14 @@ func runDiff(cmd *cobra.Command, args []string) {
 // ─────────────────────────────────────────────────────────────
 
 func diffSubdomains(oldID, newID int64) {
-	oldSubs, _ := database.GetSubdomains(oldID)
-	newSubs, _ := database.GetSubdomains(newID)
+	oldSubs, err := database.GetSubdomains(oldID)
+	if err != nil {
+		logger.Warning("Failed to get subdomains for scan #%d: %v", oldID, err)
+	}
+	newSubs, err := database.GetSubdomains(newID)
+	if err != nil {
+		logger.Warning("Failed to get subdomains for scan #%d: %v", newID, err)
+	}
 
 	d := diffSets(oldSubs, newSubs, func(s database.Subdomain) string { return s.Domain })
 
@@ -142,8 +148,14 @@ func diffSubdomains(oldID, newID int64) {
 }
 
 func diffPorts(oldID, newID int64) {
-	oldPorts, _ := database.GetPorts(oldID)
-	newPorts, _ := database.GetPorts(newID)
+	oldPorts, err := database.GetPorts(oldID)
+	if err != nil {
+		logger.Warning("Failed to get ports for scan #%d: %v", oldID, err)
+	}
+	newPorts, err := database.GetPorts(newID)
+	if err != nil {
+		logger.Warning("Failed to get ports for scan #%d: %v", newID, err)
+	}
 
 	type portKey struct {
 		Host string
@@ -171,8 +183,14 @@ func diffPorts(oldID, newID int64) {
 }
 
 func diffVulns(oldID, newID int64) {
-	oldVulns, _ := database.GetVulnerabilities(oldID)
-	newVulns, _ := database.GetVulnerabilities(newID)
+	oldVulns, err := database.GetVulnerabilities(oldID)
+	if err != nil {
+		logger.Warning("Failed to get vulnerabilities for scan #%d: %v", oldID, err)
+	}
+	newVulns, err := database.GetVulnerabilities(newID)
+	if err != nil {
+		logger.Warning("Failed to get vulnerabilities for scan #%d: %v", newID, err)
+	}
 
 	type vulnKey struct {
 		Host       string
@@ -200,8 +218,14 @@ func diffVulns(oldID, newID int64) {
 }
 
 func diffURLs(oldID, newID int64) {
-	oldURLs, _ := database.GetURLs(oldID)
-	newURLs, _ := database.GetURLs(newID)
+	oldURLs, err := database.GetURLs(oldID)
+	if err != nil {
+		logger.Warning("Failed to get URLs for scan #%d: %v", oldID, err)
+	}
+	newURLs, err := database.GetURLs(newID)
+	if err != nil {
+		logger.Warning("Failed to get URLs for scan #%d: %v", newID, err)
+	}
 
 	d := diffSets(oldURLs, newURLs, func(u database.URL) string { return u.URL })
 

@@ -12,6 +12,7 @@ import (
 	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
+	"github.com/vishnu303/chaathan/pkg/tools"
 	"github.com/vishnu303/chaathan/pkg/update"
 )
 
@@ -41,10 +42,10 @@ var rootCmd = &cobra.Command{
  | |____| | | | (_| | (_| | |_| | | | (_| | | | |
   \_____|_| |_|\__,_|\__,_|\__|_| |_|\__,_|_| |_|
 
-  Automated bug bounty recon — 28 tools, 2 workflows, 1 binary.
+  Automated bug bounty recon — 27 tools, 2 workflows, 1 binary.
 
 Workflows:
-  wildcard  22-step domain recon & vulnerability assessment
+  wildcard  23-step domain recon & vulnerability assessment
   company   3-step org discovery (ASN, root domains, cloud assets)
 
 Key capabilities:
@@ -65,7 +66,7 @@ Modes:
 
 Getting started:
   chaathan setup                     Install all tools
-  chaathan wildcard -d target.com    Run full 22-step recon
+  chaathan wildcard -d target.com    Run full 23-step recon
   chaathan company -n "Company Inc"  Run company discovery
   chaathan status                    View scan dashboard
   chaathan query vulns 1             Query vulnerabilities
@@ -115,6 +116,12 @@ func initializeApp(cmd *cobra.Command, args []string) {
 		Mode = Cfg.General.Mode
 	}
 
+	// Validate mode
+	if Mode != "native" && Mode != "docker" {
+		logger.Error("Invalid mode '%s'. Must be 'native' or 'docker'.", Mode)
+		os.Exit(1)
+	}
+
 	// Initialize database
 	dbPath := Cfg.General.DatabasePath
 	if dbPath == "" {
@@ -148,7 +155,7 @@ var versionCmd = &cobra.Command{
 		fmt.Printf("%s%sChaathan%s %s\n", logger.BrightCyan, logger.Bold, logger.Reset, Version)
 		fmt.Printf("%sBuilt: %s%s\n", logger.Dim, BuildTime, logger.Reset)
 		fmt.Printf("%sPentesting Recon Framework%s\n", logger.Dim, logger.Reset)
-		fmt.Printf("%s28 tools • 22-step wildcard • 3-step company%s\n", logger.Dim, logger.Reset)
+		fmt.Printf("%s%d tools • 23-step wildcard • 3-step company%s\n", logger.Dim, len(tools.AllTools), logger.Reset)
 		fmt.Printf("%shttps://github.com/vishnu303/chaathan%s\n", logger.Dim, logger.Reset)
 
 		fmt.Printf("\n%sChecking for updates...%s\n", logger.Dim, logger.Reset)

@@ -316,8 +316,13 @@ func Run(cfg RunConfig) error {
 		"skip_fingerprint":   cfg.SkipFingerprint,
 		"wordlist":           cfg.WordlistPath,
 		"dns_wordlist":       cfg.DNSWordlistPath,
+		"resolvers":          cfg.ResolversPath,
 		"github":             cfg.GitHubToken != "",
 		"auto_proxy":         cfg.AutoProxy,
+		"save_log":           cfg.SaveLog,
+		"custom_cookie":      cfg.CustomCookie,
+		"custom_headers":     cfg.CustomHeaders,
+		"custom_token":       cfg.CustomToken,
 	})
 
 	dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))

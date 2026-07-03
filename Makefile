@@ -75,17 +75,17 @@ uninstall: ## Remove the chaathan binary from the system path
 clean: ## Remove compiled binaries and temporary build artifacts
 	@echo "Cleaning..."
 	@rm -f $(BINARY_NAME) chaathan-flow chaathan-test main
-	@go clean
+	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) clean
 	@echo "✅ Clean"
 
 test: ## Run the Go unit test suite
 	@echo "Running tests..."
-	@go test ./... -v -count=1
+	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) test ./... -v -count=1
 	@echo "✅ Tests passed"
 
 vet: ## Run static code analysis with go vet
 	@echo "Running go vet..."
-	@go vet ./...
+	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) vet ./...
 	@echo "✅ No issues found"
 
 lint: ## Run code linting audits with golangci-lint

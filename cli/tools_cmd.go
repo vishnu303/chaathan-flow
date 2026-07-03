@@ -53,6 +53,7 @@ var categoryStyles = map[string]categoryMeta{
 	"Recon":    {"🔭", logger.Blue},
 	"Cloud":    {"☁️", logger.BrightCyan},
 	"Util":     {"🔧", logger.Gray},
+	"Proxy":    {"🔄", logger.BrightYellow},
 }
 
 // ── Tools List ───────────────────────────────────────────────────────────────

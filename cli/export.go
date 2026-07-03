@@ -147,8 +147,12 @@ func runExport(cmd *cobra.Command, args []string) {
 	files, _ := os.ReadDir(outputDir)
 	for _, f := range files {
 		if !f.IsDir() {
-			info, _ := f.Info()
-			logger.SubStep("%s (%d bytes)", f.Name(), info.Size())
+			info, err := f.Info()
+			if err != nil {
+				logger.SubStep("%s", f.Name())
+			} else {
+				logger.SubStep("%s (%d bytes)", f.Name(), info.Size())
+			}
 		}
 	}
 }

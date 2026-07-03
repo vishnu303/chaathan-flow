@@ -42,7 +42,7 @@ type Step struct {
 }
 
 // WildcardSteps defines the steps in the wildcard workflow.
-// Order matches the 5-phase execution sequence in pkg/wildcard_flow/flow.go:
+// Order matches the 6-phase execution sequence in pkg/wildcard_flow/flow.go:
 //
 //	Phase 1 (Asset Discovery):   passive_enum, active_enum, github_recon, search_engine_recon, js_subdomain_discovery
 //	Phase 2 (Validation):        dns_resolution, dns_bruteforce, port_scanning, http_probing, tls_analysis
