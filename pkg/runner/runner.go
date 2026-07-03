@@ -93,7 +93,12 @@ func retryRun(ctx context.Context, command string, maxRetries int, retryDelay ti
 			}
 			logger.Warning("[Retry %d/%d] %s failed: %v — retrying in %s...",
 				attempt, maxRetries, command, err, delay)
-			time.Sleep(delay)
+			
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return "", fmt.Errorf("cancelled: %w", lastErr)
+			}
 		}
 	}
 
@@ -352,6 +357,8 @@ var dockerImages = map[string]dockerImageInfo{
 	"massdns":       {"alpine", false}, // compiled from source
 	"anew":          {"alpine", false}, // tiny Go binary — unlikely to need Docker
 	"gf":            {"alpine", false}, // tiny Go binary — unlikely to need Docker
+	"x8":            {"alpine", false}, // Rust binary — no official Docker image
+	"mubeng":        {"alpine", false}, // Go binary — no official Docker image
 }
 
 func getDockerImage(tool string) string {
