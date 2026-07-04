@@ -369,7 +369,11 @@ func Run(cfg RunConfig) error {
 		logger.Info("Resuming scan #%d (%.1f%% complete, %d/%d steps done)",
 			scanID, scanState.Progress(), len(scanState.CompletedSteps), scanState.TotalSteps)
 	} else {
-		scanState, _ = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
+		var err error
+		scanState, err = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
+		if err != nil {
+			return fmt.Errorf("cannot create scan state: %w", err)
+		}
 	}
 
 	// ── Runner, ToolBox & Notifier ──────────────────────────

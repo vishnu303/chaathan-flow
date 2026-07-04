@@ -124,7 +124,7 @@ func stepPassiveEnum(c *Ctx) bool {
 	if passiveSkipped || subfinderOK || assetfinderOK || sublist3rOK || subfinderCount > 0 || assetfinderCount > 0 || sublist3rCount > 0 {
 		c.markStepCompleteIfNoFailure("passive_enum")
 	} else {
-		c.StateMgr.MarkStepFailed(c.State, "passive_enum", fmt.Errorf("all passive enumeration tools failed"))
+		c.markStepFailedSafe("passive_enum", fmt.Errorf("all passive enumeration tools failed"))
 	}
 	return c.cancelled()
 }
@@ -143,7 +143,7 @@ func stepActiveEnum(c *Ctx) bool {
 	if c.SkipAmass {
 		logger.StepHeader("Step 3: Skipping Amass (--skip-amass)")
 		logger.FileDebug("amass skipped via --skip-amass flag")
-		c.StateMgr.MarkStepComplete(c.State, "active_enum")
+		c.markStepCompleteSafe("active_enum")
 		return c.cancelled()
 	}
 
@@ -159,7 +159,7 @@ func stepActiveEnum(c *Ctx) bool {
 			amassSkipped = true
 		} else {
 			logger.Error("Amass failed: %v", err)
-			c.StateMgr.MarkStepFailed(c.State, "active_enum", err)
+			c.markStepFailedSafe("active_enum", err)
 		}
 	}
 
@@ -197,7 +197,7 @@ func stepGitHubRecon(c *Ctx) bool {
 		logger.StepHeader("Step 4: Skipping GitHub Recon (no token provided)")
 		logger.Warning("Set GITHUB_TOKEN env var or use --github-token for GitHub recon")
 		logger.FileDebug("github_recon skipped: no token provided")
-		c.StateMgr.MarkStepComplete(c.State, "github_recon")
+		c.markStepCompleteSafe("github_recon")
 		return c.cancelled()
 	}
 
@@ -212,7 +212,7 @@ func stepGitHubRecon(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			githubSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "github_recon", err)
+			c.markStepFailedSafe("github_recon", err)
 			logger.Warning("GitHub subdomains failed: %v", err)
 		}
 	} else {
@@ -251,7 +251,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 
 	if c.SkipUncover {
 		logger.StepHeader("Step 5: Skipping Uncover (--skip-uncover)")
-		c.StateMgr.MarkStepComplete(c.State, "search_engine_recon")
+		c.markStepCompleteSafe("search_engine_recon")
 		return c.cancelled()
 	}
 
@@ -266,7 +266,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			uncoverSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "search_engine_recon", err)
+			c.markStepFailedSafe("search_engine_recon", err)
 			logger.Warning("Uncover failed: %v (check API keys in config)", err)
 		}
 	}
@@ -308,7 +308,7 @@ func stepJSSubdomains(c *Ctx) bool {
 
 	if c.SkipHakrawler {
 		logger.StepHeader("Step 6: Skipping Hakrawler (--skip-hakrawler)")
-		c.StateMgr.MarkStepComplete(c.State, "js_subdomain_discovery")
+		c.markStepCompleteSafe("js_subdomain_discovery")
 		return c.cancelled()
 	}
 
@@ -322,7 +322,7 @@ func stepJSSubdomains(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			hakrawlerSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "js_subdomain_discovery", err)
+			c.markStepFailedSafe("js_subdomain_discovery", err)
 			logger.Warning("Hakrawler failed: %v", err)
 		}
 	}

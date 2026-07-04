@@ -18,6 +18,15 @@ import (
 	"github.com/vishnu303/chaathan/utils"
 )
 
+const (
+	jsAnalysisHostCap   = 50
+	ffufHostCap         = 25
+	paramDiscoveryCap   = 150
+	metadataHostCap     = 250
+	jsSecretMaxMatches  = 100
+	jsFileMaxBytes      = 10 * 1024 * 1024
+)
+
 var jsGFPatterns = map[string]bool{
 	"domxss":   true,
 	"execs":    true,
@@ -71,6 +80,22 @@ func (c *Ctx) markStepCompleteIfNoFailure(stepName string) {
 	if !hasFailure {
 		c.StateMgr.MarkStepComplete(c.State, stepName)
 	}
+}
+
+// markStepFailedSafe marks a step failed only when state tracking is active.
+func (c *Ctx) markStepFailedSafe(stepName string, stepErr error) {
+	if c.StateMgr == nil || c.State == nil || stepErr == nil {
+		return
+	}
+	_ = c.StateMgr.MarkStepFailed(c.State, stepName, stepErr)
+}
+
+// markStepCompleteSafe marks a step complete only when state tracking is active.
+func (c *Ctx) markStepCompleteSafe(stepName string) {
+	if c.StateMgr == nil || c.State == nil {
+		return
+	}
+	c.StateMgr.MarkStepComplete(c.State, stepName)
 }
 
 // runWithSkip executes fn in a goroutine and monitors the skip channel.
@@ -476,7 +501,7 @@ func hasStaticExtension(rawURL string) bool {
 // to the same key.
 func pathKey(rawURL string) string {
 	parsed, err := neturl.Parse(rawURL)
-	if err != nil {
+	if err != nil || (parsed.Scheme == "" && parsed.Host == "") {
 		return rawURL
 	}
 	return strings.ToLower(parsed.Scheme + "://" + parsed.Host + parsed.Path)

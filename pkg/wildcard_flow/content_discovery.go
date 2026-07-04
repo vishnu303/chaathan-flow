@@ -15,6 +15,7 @@ package wildcard_flow
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -136,9 +137,9 @@ func stepURLDiscovery(c *Ctx) bool {
 	waybackCount, _ := utils.CountFileLines(c.F.WaybackOut)
 	gauCount, _ := utils.CountFileLines(c.F.GauOut)
 	if urlDiscoverySkipped || waybackOK || gauOK || waybackCount > 0 || gauCount > 0 {
-		c.StateMgr.MarkStepComplete(c.State, "url_discovery")
+		c.markStepCompleteSafe("url_discovery")
 	} else {
-		c.StateMgr.MarkStepFailed(c.State, "url_discovery", fmt.Errorf("both Waybackurls and GAU failed"))
+		c.markStepFailedSafe("url_discovery", fmt.Errorf("both Waybackurls and GAU failed"))
 	}
 	return c.cancelled()
 }
@@ -253,9 +254,9 @@ func stepWebCrawling(c *Ctx) bool {
 	katanaCount, _ := utils.CountFileLines(c.F.KatanaOut)
 	gospiderCount, _ := utils.CountFileLines(c.F.GospiderOut)
 	if crawlSkipped || katanaOK || gospiderOK || katanaCount > 0 || gospiderCount > 0 {
-		c.StateMgr.MarkStepComplete(c.State, "web_crawling")
+		c.markStepCompleteSafe("web_crawling")
 	} else {
-		c.StateMgr.MarkStepFailed(c.State, "web_crawling", fmt.Errorf("both Katana and GoSpider failed"))
+		c.markStepFailedSafe("web_crawling", fmt.Errorf("both Katana and GoSpider failed"))
 	}
 	return c.cancelled()
 }
@@ -361,7 +362,7 @@ func stepJSAnalysis(c *Ctx) bool {
 
 	var golinkfinderSkipped bool
 	if err := runWithSkip(c, "GoLinkFinder", func(sCtx context.Context) error {
-		liveHosts := loadLineSlice(c.F.HttpxLiveHosts, 50)
+		liveHosts := loadLineSlice(c.F.HttpxLiveHosts, jsAnalysisHostCap)
 		if len(liveHosts) == 0 {
 			liveHosts = []string{"https://" + c.Domain}
 		}
@@ -383,7 +384,7 @@ func stepJSAnalysis(c *Ctx) bool {
 			select {
 			case <-sCtx.Done():
 				loopErr = sCtx.Err()
-				break
+				// The outer loop checks loopErr and breaks.
 			default:
 			}
 			if loopErr != nil {
@@ -425,7 +426,7 @@ func stepJSAnalysis(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			golinkfinderSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "js_analysis", err)
+			c.markStepFailedSafe("js_analysis", err)
 			logger.Warning("GoLinkFinder failed: %v", err)
 		}
 	}
@@ -517,7 +518,7 @@ func stepParamDiscovery(c *Ctx) bool {
 		}
 		fIn.Close()
 	} else {
-		c.StateMgr.MarkStepFailed(c.State, "param_discovery", err)
+		c.markStepFailedSafe("param_discovery", err)
 		logger.Error("Failed to prepare x8 input: %v", err)
 		return c.cancelled()
 	}
@@ -544,7 +545,7 @@ func stepParamDiscovery(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			x8Skipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "param_discovery", err)
+			c.markStepFailedSafe("param_discovery", err)
 			logger.Warning("x8 failed: %v", err)
 		}
 	}
@@ -685,7 +686,7 @@ func stepURLConsolidation(c *Ctx) bool {
 	logger.SubStep("Merging URLs from %d sources...", len(sources))
 	logger.FileDebug("url_consolidation sources: %v", sources)
 	if err := utils.MergeAndDeduplicate(sources, c.F.AllURLsRaw); err != nil {
-		c.StateMgr.MarkStepFailed(c.State, "url_consolidation", err)
+		c.markStepFailedSafe("url_consolidation", err)
 		logger.Warning("URL merge failed: %v", err)
 		return c.cancelled()
 	}
@@ -710,7 +711,7 @@ func stepURLConsolidation(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			urlCheckSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "url_consolidation", err)
+			c.markStepFailedSafe("url_consolidation", err)
 			logger.Warning("URL live-check failed: %v", err)
 		}
 		// Fallback: use raw URLs if live-check fails/is skipped and no
@@ -741,10 +742,10 @@ func stepURLConsolidation(c *Ctx) bool {
 
 	// ROI metadata enrichment
 	if c.ScanID > 0 && utils.FileExists(c.F.AllURLsLive) {
-		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 3, 150)
+		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 3, paramDiscoveryCap)
 		if metaTargetCount > 0 {
 			logger.SubStep("Collecting lightweight metadata for %d high-value URLs...", metaTargetCount)
-			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, 150)
+			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, paramDiscoveryCap)
 			if count, err := metadata.CollectURLMetadata(c.ScanID, metaTargets, c.Proxy); err != nil {
 				logger.Warning("URL metadata enrichment failed: %v", err)
 			} else if count > 0 {
@@ -1058,7 +1059,7 @@ func runInMemoryJSSecretScan(ctx context.Context, c *Ctx, urls []string, jsPatte
 				}
 
 				// Max 10MB per file to protect memory
-				body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+				body, err := io.ReadAll(io.LimitReader(resp.Body, jsFileMaxBytes))
 				resp.Body.Close()
 				if err != nil {
 					continue
@@ -1068,18 +1069,20 @@ func runInMemoryJSSecretScan(ctx context.Context, c *Ctx, urls []string, jsPatte
 				totalBytes += int64(len(body))
 				mu.Unlock()
 
-				lines := strings.Split(string(body), "\n")
+				scanner := bufio.NewScanner(bytes.NewReader(body))
+				buf := make([]byte, 0, 64*1024)
+				scanner.Buffer(buf, jsFileMaxBytes)
 				var localJSMatches []string
 				var localSecretMatches []string
 				foundSecret := false
 				matchCount := 0
-				maxMatches := 100
+				maxMatches := jsSecretMaxMatches
 
-				for _, line := range lines {
+				for scanner.Scan() {
 					if matchCount >= maxMatches {
 						break
 					}
-					lineTrimmed := strings.TrimSpace(line)
+					lineTrimmed := strings.TrimSpace(scanner.Text())
 					if lineTrimmed == "" {
 						continue
 					}
@@ -1248,13 +1251,13 @@ func stepJSSecretScan(c *Ctx) bool {
 			scanSkipped = true
 			logger.Info("  JS scanning skipped by user")
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "js_secret_scan", scanErr)
+			c.markStepFailedSafe("js_secret_scan", scanErr)
 			logger.Warning("JS scanning failed: %v", scanErr)
 		}
 	}
 
 	if err := utils.MergeAndDeduplicate(existingFiles(c.F.GFJSMatches, c.F.GFSecretsMatches), c.F.GFSecretsFinal); err != nil {
-		c.StateMgr.MarkStepFailed(c.State, "js_secret_scan", err)
+		c.markStepFailedSafe("js_secret_scan", err)
 		logger.Warning("Failed to merge JS secret findings: %v", err)
 		writeEmptyFile(c.F.GFSecretsFinal)
 	}
@@ -1283,10 +1286,9 @@ func stepJSSecretScan(c *Ctx) bool {
 	}
 
 	if totalFindings > 0 {
-		if content, err := os.ReadFile(c.F.GFSecretsFinal); err == nil {
-			header := fmt.Sprintf("// Scan Metadata | JS Combined File Size: %.4f GB\n", float64(combinedBytes)/(1024*1024*1024))
-			_ = os.WriteFile(c.F.GFSecretsFinal, append([]byte(header), content...), 0644)
-		}
+		metadataPath := filepath.Join(filepath.Dir(c.F.GFSecretsFinal), "gf_secrets_metadata.txt")
+		header := fmt.Sprintf("// Scan Metadata | JS Combined File Size: %.4f GB\n", float64(combinedBytes)/(1024*1024*1024))
+		_ = os.WriteFile(metadataPath, []byte(header), 0644)
 	}
 
 	c.markStepCompleteIfNoFailure("js_secret_scan")
@@ -1324,7 +1326,7 @@ func stepDirFuzzing(c *Ctx) bool {
 		return c.cancelled()
 	}
 
-	liveHosts := loadLineSlice(c.F.HttpxLiveHosts, 25)
+	liveHosts := loadLineSlice(c.F.HttpxLiveHosts, ffufHostCap)
 	if len(liveHosts) == 0 {
 		// Fallback to root domain
 		liveHosts = []string{"https://" + c.Domain}
@@ -1385,7 +1387,7 @@ func stepDirFuzzing(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			ffufSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "dir_fuzzing", err)
+			c.markStepFailedSafe("dir_fuzzing", err)
 			logger.Warning("ffuf failed: %v", err)
 		}
 	} else {

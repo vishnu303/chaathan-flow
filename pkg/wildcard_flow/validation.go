@@ -26,7 +26,7 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────
-// Step 6 — Consolidation & DNS Resolution
+// Step 7 — Consolidation & DNS Resolution
 // ─────────────────────────────────────────────────────────────
 
 // stepDNSConsolidation merges all passive sources and resolves them with DNSx.
@@ -48,7 +48,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 	)
 	logger.FileDebug("dns_consolidation: %d passive source files available (subfinder, assetfinder, sublist3r, amass, github, hakrawler, uncover_hosts)", len(passiveSources))
 	if err := utils.MergeAndDeduplicate(passiveSources, c.F.ConsolidatedSubs); err != nil {
-		c.StateMgr.MarkStepFailed(c.State, "dns_resolution", err)
+		c.markStepFailedSafe("dns_resolution", err)
 		logger.Error("Failed to consolidate: %v", err)
 		return c.cancelled()
 	}
@@ -88,7 +88,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			dnsxSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "dns_resolution", err)
+			c.markStepFailedSafe("dns_resolution", err)
 			logger.Error("DNSx failed: %v", err)
 		}
 	}
@@ -115,7 +115,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 7 — DNS Brute-force (ShuffleDNS)
+// Step 8 — DNS Brute-force (ShuffleDNS)
 // ─────────────────────────────────────────────────────────────
 
 // stepDNSBruteforce runs ShuffleDNS when a dns-wordlist is provided.
@@ -169,7 +169,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			shufflednsSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "dns_bruteforce", err)
+			c.markStepFailedSafe("dns_bruteforce", err)
 			logger.Warning("ShuffleDNS failed: %v", err)
 		}
 	} else {
@@ -204,7 +204,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 8 — Live Web Server Probing (Httpx)
+// Step 10 — Live Web Server Probing (Httpx)
 // ─────────────────────────────────────────────────────────────
 
 // stepHTTPProbing probes all consolidated subdomains with Httpx.
@@ -222,7 +222,7 @@ func stepHTTPProbing(c *Ctx) bool {
 		sources = append(sources, c.F.NaabuOut)
 	}
 	if err := utils.MergeAndDeduplicate(sources, c.F.HttpxInput); err != nil {
-		c.StateMgr.MarkStepFailed(c.State, "http_probing", err)
+		c.markStepFailedSafe("http_probing", err)
 		logger.Error("Failed to prepare Httpx input: %v", err)
 		return c.cancelled()
 	}
@@ -238,7 +238,7 @@ func stepHTTPProbing(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			httpxSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "http_probing", err)
+			c.markStepFailedSafe("http_probing", err)
 			logger.Error("Httpx failed: %v", err)
 		}
 	}
@@ -268,7 +268,7 @@ func stepHTTPProbing(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 9 — TLS Certificate Analysis (tlsx) + host metadata
+// Step 11 — TLS Certificate Analysis (tlsx) + host metadata
 // ─────────────────────────────────────────────────────────────
 
 // stepTLSAnalysis examines TLS certificates and enriches host metadata.
@@ -294,7 +294,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 			if err == ErrToolSkipped {
 				tlsxSkipped = true
 			} else {
-				c.StateMgr.MarkStepFailed(c.State, "tls_analysis", err)
+				c.markStepFailedSafe("tls_analysis", err)
 				logger.Warning("tlsx failed: %v", err)
 			}
 		}
@@ -426,7 +426,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 		hostTargetCount := collectLiveHostTargetsFromHttpx(c.F.HttpxOut, c.F.HttpxLiveHosts)
 		if hostTargetCount > 0 {
 			logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
-			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, 250)
+			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, metadataHostCap)
 			if count, err := metadata.CollectHostMetadata(c.ScanID, hostTargets, c.Proxy); err != nil {
 				logger.Warning("Host metadata enrichment failed: %v", err)
 			} else if count > 0 {
@@ -447,7 +447,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 10 — Port Scanning (Naabu)
+// Step 9 — Port Scanning (Naabu)
 // ─────────────────────────────────────────────────────────────
 
 // stepPortScanning runs Naabu against all discovered subdomains.
@@ -473,7 +473,7 @@ func stepPortScanning(c *Ctx) bool {
 			if err == ErrToolSkipped {
 				naabuSkipped = true
 			} else {
-				c.StateMgr.MarkStepFailed(c.State, "port_scanning", err)
+				c.markStepFailedSafe("port_scanning", err)
 				logger.Error("Naabu failed: %v", err)
 			}
 		}
