@@ -156,14 +156,14 @@ All files in [database/](file:///c:/Users/vishn/Desktop/chaathan/pkg/database/).
 | 3 | [roi.go](file:///c:/Users/vishn/Desktop/chaathan/pkg/database/roi.go) | ROI ranking algorithm, scoring queries, priority calculations |
 
 **Checks:**
-- [ ] All SQL uses parameterized queries (no string concatenation → SQL injection)
-- [ ] `CREATE TABLE IF NOT EXISTS` used consistently
-- [ ] Proper transaction blocks (`BEGIN`/`COMMIT`/`ROLLBACK`)
-- [ ] SQLite WAL mode or busy timeout configured (prevent locking)
-- [ ] Schema migrations are backwards-compatible
-- [ ] `database.Close()` properly invoked (checked in `main.go`)
-- [ ] NULL handling in queries (no panics on nil scans)
-- [ ] Indexes on frequently queried columns
+- [x] All SQL uses parameterized queries (no string concatenation → SQL injection)
+- [x] `CREATE TABLE IF NOT EXISTS` used consistently
+- [x] Proper transaction blocks (`BEGIN`/`COMMIT`/`ROLLBACK`)
+- [x] SQLite WAL mode or busy timeout configured (prevent locking)
+- [x] Schema migrations are backwards-compatible
+- [x] `database.Close()` properly invoked (checked in `main.go`)
+- [x] NULL handling in queries (no panics on nil scans)
+- [x] Indexes on frequently queried columns
 
 ---
 
@@ -175,11 +175,11 @@ All files in [database/](file:///c:/Users/vishn/Desktop/chaathan/pkg/database/).
 | 2 | [export.go](file:///c:/Users/vishn/Desktop/chaathan/utils/export.go) | File export helpers, format conversion |
 
 **Checks:**
-- [ ] HTML templates properly escape user-controlled data (XSS prevention)
-- [ ] JSON output is valid and complete for all data shapes
-- [ ] Markdown formatting handles edge cases (empty data, special chars)
-- [ ] File write operations check/create directories
-- [ ] Export paths use `pkg/paths` (no hardcoded paths)
+- [x] HTML templates properly escape user-controlled data (XSS prevention)
+- [x] JSON output is valid and complete for all data shapes
+- [x] Markdown formatting handles edge cases (empty data, special chars)
+- [x] File write operations check/create directories
+- [x] Export paths use `pkg/paths` (no hardcoded paths)
 
 ---
 
@@ -191,11 +191,11 @@ All files in [database/](file:///c:/Users/vishn/Desktop/chaathan/pkg/database/).
 | 2 | [paths.go](file:///c:/Users/vishn/Desktop/chaathan/pkg/paths/paths.go) | `~/.chaathan` directory structure, path construction |
 
 **Checks:**
-- [ ] Config file missing → graceful fallback to defaults
-- [ ] Config YAML parsing errors produce clear error messages
-- [ ] Paths created with `os.MkdirAll` (not assumed to exist)
-- [ ] No hardcoded home directory paths
-- [ ] Rate limit defaults are sane (not zero, not unbounded)
+- [x] Config file missing → graceful fallback to defaults
+- [x] Config YAML parsing errors produce clear error messages
+- [x] Paths created with `os.MkdirAll` (not assumed to exist)
+- [x] No hardcoded home directory paths
+- [x] Rate limit defaults are sane (not zero, not unbounded)
 
 ---
 

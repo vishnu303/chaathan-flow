@@ -25,15 +25,15 @@ func Init() error {
 	initOnce.Do(func() {
 		if envHome := os.Getenv("CHAATHAN_HOME"); envHome != "" {
 			chaathanHome = filepath.Clean(envHome)
-			return
+		} else {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				initErr = fmt.Errorf("cannot determine home directory: %w", err)
+				return
+			}
+			chaathanHome = filepath.Join(home, ".chaathan")
 		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			initErr = fmt.Errorf("cannot determine home directory: %w", err)
-			return
-		}
-		chaathanHome = filepath.Join(home, ".chaathan")
-		
+
 		// Guarantee home directory exists
 		if err := os.MkdirAll(chaathanHome, 0755); err != nil {
 			initErr = fmt.Errorf("cannot create home directory: %w", err)
@@ -56,17 +56,17 @@ func ChaathanHome() string {
 	return chaathanHome
 }
 
-// StateDir returns the scan state directory (~/.chaathan/state).
+// StateDir returns the scan state directory (~/.chaathan/state). The caller must ensure this directory exists using os.MkdirAll.
 func StateDir() string {
 	return filepath.Join(ChaathanHome(), "state")
 }
 
-// ScansDir returns the default scans output directory (~/.chaathan/scans).
+// ScansDir returns the default scans output directory (~/.chaathan/scans). The caller must ensure this directory exists using os.MkdirAll.
 func ScansDir() string {
 	return filepath.Join(ChaathanHome(), "scans")
 }
 
-// ReportsDir returns the reports directory (~/.chaathan/reports).
+// ReportsDir returns the reports directory (~/.chaathan/reports). The caller must ensure this directory exists using os.MkdirAll.
 func ReportsDir() string {
 	return filepath.Join(ChaathanHome(), "reports")
 }
@@ -81,7 +81,7 @@ func ConfigPath() string {
 	return filepath.Join(ChaathanHome(), "config.yaml")
 }
 
-// LogsDir returns the scan log directory (~/.chaathan/logs).
+// LogsDir returns the scan log directory (~/.chaathan/logs). The caller must ensure this directory exists using os.MkdirAll.
 func LogsDir() string {
 	return filepath.Join(ChaathanHome(), "logs")
 }

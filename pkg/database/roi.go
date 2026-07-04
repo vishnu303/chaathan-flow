@@ -66,9 +66,14 @@ type mergedMetadata struct {
 	ParamCount          int
 }
 
+// TODO(roi-scaling): GetRankedURLs loads the full scan into memory;
+// for >100k-URL scans this should be rewritten to stream via rows.Next() and score incrementally.
 // GetRankedURLs computes ROI scores from persisted scan data without requiring
 // extra storage, so existing scans can be ranked immediately.
 func GetRankedURLs(scanID int64, limit int) ([]URLROI, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	urls, err := GetURLs(scanID)
 	if err != nil {
 		return nil, err

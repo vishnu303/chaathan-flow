@@ -113,3 +113,68 @@ func TestDatabaseOperations(t *testing.T) {
 		t.Errorf("failed to upsert URL metadata: %v", err)
 	}
 }
+
+func TestNullStringMetadataReads(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_nulls.db")
+
+	err := database.Initialize(dbPath)
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+	defer database.Close()
+
+	scanID := int64(12345)
+	hosts := []string{"target-null.com"}
+	err = database.MarkHostsJSSecrets(scanID, hosts)
+	if err != nil {
+		t.Fatalf("failed to insert partial host metadata: %v", err)
+	}
+
+	metas, err := database.GetHostMetadata(scanID)
+	if err != nil {
+		t.Fatalf("failed to get host metadata with nulls: %v", err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("expected 1 host metadata record, got %d", len(metas))
+	}
+	if metas[0].Host != "target-null.com" {
+		t.Errorf("expected host 'target-null.com', got %q", metas[0].Host)
+	}
+	if metas[0].BaseURL != "" {
+		t.Errorf("expected empty BaseURL for NULL value, got %q", metas[0].BaseURL)
+	}
+	if metas[0].HeadersJSON != "" {
+		t.Errorf("expected empty HeadersJSON for NULL value, got %q", metas[0].HeadersJSON)
+	}
+
+	_, err = database.DB.Exec("INSERT INTO url_metadata (scan_id, url, host, headers_json) VALUES (?, ?, ?, NULL)", scanID, "http://target-null.com/path", "target-null.com")
+	if err != nil {
+		t.Fatalf("failed to insert partial url metadata: %v", err)
+	}
+
+	urlMetas, err := database.GetURLMetadata(scanID)
+	if err != nil {
+		t.Fatalf("failed to get url metadata with nulls: %v", err)
+	}
+	if len(urlMetas) != 1 {
+		t.Fatalf("expected 1 url metadata record, got %d", len(urlMetas))
+	}
+	if urlMetas[0].HeadersJSON != "" {
+		t.Errorf("expected empty HeadersJSON for NULL value, got %q", urlMetas[0].HeadersJSON)
+	}
+}
+
+func TestNilDBGuard(t *testing.T) {
+	database.Close()
+	oldDB := database.DB
+	database.DB = nil
+	defer func() {
+		database.DB = oldDB
+	}()
+
+	_, err := database.CreateScan("test.com", "wildcard", "", "")
+	if err != database.ErrDBNotInitialized {
+		t.Errorf("expected ErrDBNotInitialized, got %v", err)
+	}
+}

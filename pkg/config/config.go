@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 )
 
@@ -261,11 +262,178 @@ type ProxyScrapingConfig struct {
 // Global config instance
 var Cfg *Config
 
+var expectedKeys = map[string]interface{}{
+	"": map[string]interface{}{
+		"general":       "GeneralConfig",
+		"api_keys":      "APIKeysConfig",
+		"tools":         "ToolsConfig",
+		"notifications": "NotificationConfig",
+		"scope":         "ScopeConfig",
+		"rate_limits":   "RateLimitConfig",
+	},
+	"general": map[string]interface{}{
+		"mode":            "string",
+		"verbose":         "bool",
+		"max_retries":     "int",
+		"retry_delay_sec": "int",
+		"ua_rotation":     "bool",
+		"user_agent":      "string",
+		"proxy":           "string",
+	},
+	"api_keys": map[string]interface{}{
+		"shodan":        "string",
+		"censys":        "string",
+		"censys_id":     "string",
+		"censys_secret": "string",
+		"fofa":          "string",
+		"github":        "string",
+		"securitytrails": "string",
+		"virustotal":    "string",
+		"chaos":         "string",
+	},
+	"tools": map[string]interface{}{
+		"subfinder": "SubfinderConfig",
+		"amass":     "AmassConfig",
+		"nuclei":    "NucleiConfig",
+		"httpx":     "HttpxConfig",
+		"naabu":     "NaabuConfig",
+		"ffuf":      "FfufConfig",
+		"dalfox":    "DalfoxConfig",
+		"katana":    "KatanaConfig",
+		"gospider":  "GoSpiderConfig",
+	},
+	"tools.subfinder": map[string]interface{}{
+		"threads": "int",
+		"timeout": "int",
+	},
+	"tools.amass": map[string]interface{}{
+		"timeout": "int",
+	},
+	"tools.nuclei": map[string]interface{}{
+		"concurrency":     "int",
+		"rate_limit":      "int",
+		"exclude_tags":    "slice",
+		"severity":        "slice",
+		"disable_oob":     "bool",
+		"max_timeout_min": "int",
+		"dast_aggression": "string",
+	},
+	"tools.httpx": map[string]interface{}{
+		"threads":          "int",
+		"timeout":          "int",
+		"ports":            "slice",
+		"follow_redirects": "bool",
+	},
+	"tools.naabu": map[string]interface{}{
+		"threads": "int",
+		"rate":    "int",
+		"ports":   "string",
+		"timeout": "int",
+	},
+	"tools.ffuf": map[string]interface{}{
+		"threads":         "int",
+		"timeout":         "int",
+		"match_codes":     "slice",
+		"max_timeout_min": "int",
+	},
+	"tools.dalfox": map[string]interface{}{
+		"max_urls":         "int",
+		"skip_third_party": "bool",
+	},
+	"tools.katana": map[string]interface{}{
+		"timeout": "int",
+	},
+	"tools.gospider": map[string]interface{}{
+		"timeout": "int",
+	},
+	"notifications": map[string]interface{}{
+		"discord":       "DiscordConfig",
+		"slack":         "SlackConfig",
+		"telegram":      "TelegramConfig",
+		"enabled":       "bool",
+		"step_complete": "bool",
+		"min_severity":  "string",
+	},
+	"notifications.discord": map[string]interface{}{
+		"enabled":     "bool",
+		"webhook_url": "string",
+	},
+	"notifications.slack": map[string]interface{}{
+		"enabled":     "bool",
+		"webhook_url": "string",
+	},
+	"notifications.telegram": map[string]interface{}{
+		"enabled":   "bool",
+		"bot_token": "string",
+		"chat_id":   "string",
+	},
+	"scope": map[string]interface{}{
+		"in_scope":     "slice",
+		"out_of_scope": "slice",
+		"exclude_ips":  "slice",
+	},
+	"rate_limits": map[string]interface{}{
+		"global_rps": "int",
+	},
+}
+
+func validateYAMLNode(node *yaml.Node, path string) []string {
+	var warnings []string
+	if node.Kind == yaml.DocumentNode {
+		for _, content := range node.Content {
+			warnings = append(warnings, validateYAMLNode(content, path)...)
+		}
+		return warnings
+	}
+
+	if node.Kind == yaml.MappingNode {
+		expected, exists := expectedKeys[path]
+		if !exists {
+			return warnings
+		}
+		expectedMap, ok := expected.(map[string]interface{})
+		if !ok {
+			return warnings
+		}
+
+		for i := 0; i < len(node.Content); i += 2 {
+			keyNode := node.Content[i]
+			valNode := node.Content[i+1]
+			key := keyNode.Value
+
+			_, keyValid := expectedMap[key]
+			if !keyValid {
+				displayPath := key
+				if path != "" {
+					displayPath = path + "." + key
+				}
+				warnings = append(warnings, fmt.Sprintf("unknown config key: %s", displayPath))
+			} else {
+				childPath := key
+				if path != "" {
+					childPath = path + "." + key
+				}
+				warnings = append(warnings, validateYAMLNode(valNode, childPath)...)
+			}
+		}
+	}
+	return warnings
+}
+
 // Load loads configuration from a YAML file
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// First pass: validate YAML keys
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err == nil {
+		warnings := validateYAMLNode(&root, "")
+		for _, w := range warnings {
+			logger.Warning("%s", w)
+		}
 	}
 
 	cfg := &Config{}
@@ -431,6 +599,8 @@ func defaultInt(val *int, def int) {
 func applyDefaults(cfg *Config) {
 	defaultString(&cfg.General.Mode, "native")
 	defaultInt(&cfg.General.JSLimit, 2000)
+	defaultInt(&cfg.General.MaxRetries, 1)
+	defaultInt(&cfg.General.RetryDelaySec, 3)
 	defaultInt(&cfg.Tools.Nuclei.Concurrency, 25)
 	defaultInt(&cfg.Tools.Nuclei.RateLimit, 150)
 	defaultInt(&cfg.Tools.Nuclei.MaxTimeout, 180)
@@ -447,6 +617,7 @@ func applyDefaults(cfg *Config) {
 	defaultInt(&cfg.Tools.Katana.Timeout, 300)
 	defaultInt(&cfg.Tools.GoSpider.Timeout, 300)
 	defaultString(&cfg.Notifications.MinSeverity, "high")
+
 
 	// Proxy scraping defaults
 	defaultInt(&cfg.General.ProxyScraping.TimeoutMin, 10)

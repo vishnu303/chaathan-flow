@@ -101,8 +101,13 @@ func initializeApp(cmd *cobra.Command, args []string) {
 	var err error
 	Cfg, err = config.LoadOrCreate(cfgPath)
 	if err != nil {
-		logger.Warning("Failed to load config: %v", err)
-		Cfg = config.DefaultConfig()
+		if os.IsNotExist(err) {
+			logger.Warning("Config file not found, using defaults: %v", err)
+			Cfg = config.DefaultConfig()
+		} else {
+			logger.Error("Fatal: failed to load or parse configuration: %v", err)
+			os.Exit(1)
+		}
 	}
 
 	// Apply config values if not overridden by flags
