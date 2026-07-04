@@ -15,7 +15,7 @@ type ToolInfo struct {
 	Name        string // binary name (e.g. "subfinder")
 	Category    string // display group (e.g. "Enum", "DNS", "Vuln")
 	Description string // one-line purpose
-	Required    bool   // blocks scan execution if missing
+	Required    bool   // Required = blocks chaathan setup success if missing; does NOT mean every scan uses it (most have --skip-* flags)
 	InstallURL  string // `go install` URL — empty for non-Go tools
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +35,7 @@ type RunOptions struct {
 	Dir     string
 	Env     []string
 	Timeout time.Duration // per-tool timeout (0 = use context timeout)
+	Stdin   func() io.Reader
 }
 
 type Option func(*RunOptions)
@@ -55,6 +57,26 @@ func WithTimeout(d time.Duration) Option {
 func WithEnv(env ...string) Option {
 	return func(o *RunOptions) {
 		o.Env = append(o.Env, env...)
+	}
+}
+
+// WithStdin buffers the contents of the given reader once and returns a factory that produces a fresh reader from that buffer on every attempt.
+func WithStdin(r io.Reader) Option {
+	var buf []byte
+	if r != nil {
+		buf, _ = io.ReadAll(r)
+	}
+	return func(o *RunOptions) {
+		o.Stdin = func() io.Reader {
+			return bytes.NewReader(buf)
+		}
+	}
+}
+
+// WithStdinFactory configures a custom reader factory function for stdin, enabling true re-readability.
+func WithStdinFactory(fn func() io.Reader) Option {
+	return func(o *RunOptions) {
+		o.Stdin = fn
 	}
 }
 
@@ -156,6 +178,10 @@ func (r *NativeRunner) runOnce(ctx context.Context, command string, args []strin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	if options.Stdin != nil {
+		cmd.Stdin = options.Stdin()
+	}
+
 	err := startAndWait(ctx, cmd)
 	if err != nil {
 		// Distinguish user-skipped tools from real errors in log file
@@ -248,6 +274,10 @@ func (r *DockerRunner) runOnce(ctx context.Context, command string, args []strin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
+	if options.Stdin != nil {
+		cmd.Stdin = options.Stdin()
+	}
 
 	err := startAndWait(ctx, cmd)
 	if err != nil {

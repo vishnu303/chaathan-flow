@@ -140,7 +140,7 @@ All files in [tools/](file:///c:/Users/vishn/Desktop/chaathan/pkg/tools/).
 - [ ] Arguments properly escaped/sanitized
 - [ ] Stderr/stdout handled correctly for each tool
 - [ ] Tool check functions verify actual binary existence (not just `which`)
-- [ ] Version parsing logic handles edge cases (missing version, malformed output)
+- [ ] Binary existence check verification handles missing binaries gracefully
 - [ ] No duplicate tool logic between wrappers and workflow steps
 
 ---

@@ -170,6 +170,8 @@ type NaabuConfig struct {
 	Threads int    `yaml:"threads"` // concurrent scanning threads (default: 25)
 	Rate    int    `yaml:"rate"`    // packets per second (default: 1000)
 	Ports   string `yaml:"ports"`   // port spec: "top-1000", "80,443,8080", or range (default: top-1000)
+	// Timeout represents the maximum runtime in minutes for Naabu.
+	// For backwards compatibility, it is kept as "Timeout" rather than "MaxTimeout".
 	Timeout int    `yaml:"timeout"` // max runtime in minutes for Naabu (default: 240)
 }
 
@@ -181,10 +183,14 @@ type FfufConfig struct {
 }
 
 type KatanaConfig struct {
+	// Timeout represents the maximum runtime in minutes for Katana.
+	// For backwards compatibility, it is kept as "Timeout" rather than "MaxTimeout".
 	Timeout int `yaml:"timeout"` // max runtime in minutes for Katana (default: 300)
 }
 
 type GoSpiderConfig struct {
+	// Timeout represents the maximum runtime in minutes for GoSpider.
+	// For backwards compatibility, it is kept as "Timeout" rather than "MaxTimeout".
 	Timeout int `yaml:"timeout"` // max runtime in minutes for GoSpider (default: 300)
 }
 
