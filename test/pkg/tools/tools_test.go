@@ -167,3 +167,35 @@ func TestDalfoxUA(t *testing.T) {
 		t.Error("expected native --user-agent argument in Dalfox command")
 	}
 }
+
+func TestRunAmassIntel(t *testing.T) {
+	dr := &DummyRunner{}
+	tb := tools.New(dr)
+
+	// Attach amass config
+	tb.Config = &config.ToolsConfig{
+		Amass: config.AmassConfig{
+			Timeout: 45,
+		},
+	}
+
+	ctx := context.Background()
+	err := tb.RunAmassIntel(ctx, "company_name", "root_domains.txt")
+	if err != nil {
+		t.Fatalf("unexpected error running RunAmassIntel: %v", err)
+	}
+
+	if dr.LastCmd != "amass" {
+		t.Errorf("expected command 'amass', got %q", dr.LastCmd)
+	}
+
+	// Verify arguments: intel, -whois, -d, company_name, -o, root_domains.txt, -timeout, 45
+	argsJoined := strings.Join(dr.LastArgs, " ")
+	expectedArgs := []string{"intel", "-whois", "-d company_name", "-o root_domains.txt", "-timeout 45"}
+	for _, expected := range expectedArgs {
+		if !strings.Contains(argsJoined, expected) {
+			t.Errorf("expected arguments to contain %q, got %q", expected, argsJoined)
+		}
+	}
+}
+

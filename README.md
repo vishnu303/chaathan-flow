@@ -56,6 +56,8 @@ make clean          # Cleans up local compilation and build artifacts
 | **Execution Logging** | `chaathan wildcard -d target.com --log` |
 | **Company Discovery** | `chaathan company -n "Acme Corporation"` |
 | **Company Discovery** *(Fast)* | `chaathan company -n "Acme Corporation" --skip-metabigor` |
+| **Company Discovery** *(With Logging)* | `chaathan company -n "Acme Corporation" --log` |
+
 
 ### 3. Database Queries & Filtering
 

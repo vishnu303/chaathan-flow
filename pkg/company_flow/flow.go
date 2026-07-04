@@ -22,7 +22,6 @@ import (
 	"github.com/vishnu303/chaathan/pkg/notify"
 	"github.com/vishnu303/chaathan/pkg/orchestrate"
 	"github.com/vishnu303/chaathan/pkg/paths"
-	"github.com/vishnu303/chaathan/pkg/runner"
 	"github.com/vishnu303/chaathan/pkg/scan"
 	"github.com/vishnu303/chaathan/pkg/tools"
 	"github.com/vishnu303/chaathan/utils"
@@ -43,6 +42,7 @@ type RunConfig struct {
 	SkipMetabigor  bool
 	SkipAmassIntel bool
 	SkipCloudEnum  bool
+	SaveLog        bool
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -58,8 +58,7 @@ type Ctx struct {
 	ResultDir string
 	StartTime time.Time
 
-	// Tool runner (steps may use r.Run directly for custom args)
-	R  runner.Runner
+	// Tool toolbox
 	Tb *tools.ToolBox
 
 	// State tracking (F18)
@@ -83,6 +82,9 @@ type Ctx struct {
 
 	// Full config (needed for amass timeout, tool overrides)
 	Cfg *config.Config
+
+	// File logging (L5)
+	LogFilePath string
 }
 
 // cancelled returns true when the parent context has been cancelled.
@@ -105,11 +107,19 @@ func Run(cfg RunConfig) error {
 	orchestrate.HandleSignals(goCtx, cancel)
 
 	// ── Database record ──────────────────────────────────────
+	effectiveProxy := ""
+	effectiveRateLimit := 0
+	if cfg.Cfg != nil {
+		effectiveProxy = cfg.Cfg.General.Proxy
+		effectiveRateLimit = cfg.Cfg.RateLimits.GlobalRPS
+	}
 	configJSON, _ := json.Marshal(map[string]interface{}{
 		"target":           cfg.Company,
 		"skip_metabigor":   cfg.SkipMetabigor,
 		"skip_amass_intel": cfg.SkipAmassIntel,
 		"skip_cloud_enum":  cfg.SkipCloudEnum,
+		"proxy":            effectiveProxy,
+		"rate_limit":       effectiveRateLimit,
 	})
 
 	dbScan, err := database.CreateScan(cfg.Company, "company", cfg.ResultDir, string(configJSON))
@@ -121,12 +131,31 @@ func Run(cfg RunConfig) error {
 		scanID = dbScan.ID
 	}
 
+	// ── File logging ──────────────────────────────────────
+	var logFilePath string
+	if cfg.SaveLog {
+		timestamp := startTime.Format("20060102_150405")
+		logFileName := fmt.Sprintf("%s_%d_%s.log", cfg.Company, scanID, timestamp)
+		logFilePath = filepath.Join(paths.LogsDir(), logFileName)
+		if err := logger.InitFileLog(logFilePath); err != nil {
+			logger.Warning("Could not open log file: %v", err)
+			logFilePath = ""
+		} else {
+			logger.WriteLogHeader(cfg.Company, scanID, logFilePath)
+			logger.Info("Scan log: %s", logFilePath)
+			defer logger.CloseFileLog()
+		}
+	}
+
 	// ── Scan header & state ──────────────────────────────────
 	logger.ScanHeader("Company", cfg.Company, scanID)
 	logger.InitScanUI(len(scan.CompanySteps))
 
 	stateMgr := scan.NewManager(paths.StateDir())
-	scanState, _ := stateMgr.CreateState(scanID, cfg.Company, "company", cfg.ResultDir, len(scan.CompanySteps), configJSON)
+	scanState, err := stateMgr.CreateState(scanID, cfg.Company, "company", cfg.ResultDir, len(scan.CompanySteps), configJSON)
+	if err != nil {
+		return fmt.Errorf("cannot create scan state: %w", err)
+	}
 
 	// ── Runner, ToolBox & Notifier ──────────────────────────
 	infra := orchestrate.NewInfra(cfg.Mode, cfg.Verbose, cfg.Cfg)
@@ -140,7 +169,6 @@ func Run(cfg RunConfig) error {
 		Company:            cfg.Company,
 		ResultDir:          cfg.ResultDir,
 		StartTime:          startTime,
-		R:                  infra.Runner,
 		Tb:                 infra.ToolBox,
 		StateMgr:           stateMgr,
 		State:              scanState,
@@ -150,6 +178,7 @@ func Run(cfg RunConfig) error {
 		SkipAmassIntel:     cfg.SkipAmassIntel,
 		SkipCloudEnum:      cfg.SkipCloudEnum,
 		Cfg:                cfg.Cfg,
+		LogFilePath:        logFilePath,
 	}
 
 	// Wire notification logging (FileDebug no-ops if --log is inactive)
@@ -159,15 +188,15 @@ func Run(cfg RunConfig) error {
 
 	// ── Execute steps ────────────────────────────────────────
 
-	if executeStep(c, 1, "metabigor", "ASN & Network Range Discovery (Metabigor)", stepMetabigor) {
+	if executeStep(c, "metabigor", stepMetabigor) {
 		finalizeScan(c, "cancelled")
 		return nil
 	}
-	if executeStep(c, 2, "amass_intel", "Root Domain Discovery (Amass Intel)", stepAmassIntel) {
+	if executeStep(c, "amass_intel", stepAmassIntel) {
 		finalizeScan(c, "cancelled")
 		return nil
 	}
-	if executeStep(c, 3, "cloud_enum", "Cloud Enumeration (Cloud Enum)", stepCloudEnum) {
+	if executeStep(c, "cloud_enum", stepCloudEnum) {
 		finalizeScan(c, "cancelled")
 		return nil
 	}
@@ -176,28 +205,39 @@ func Run(cfg RunConfig) error {
 	return nil
 }
 
-func executeStep(c *Ctx, stepNumber int, stepName, stepDescription string, fn func(*Ctx) (bool, error)) bool {
+// executeStep runs a company step function. Unlike wildcard_flow's
+// resume-aware template, company steps use a simple (cancelled, error)
+// contract with manual counter increments. Resume is intentionally not
+// supported for company scans — see cli/scans.go resumeScanByID().
+func executeStep(c *Ctx, stepName string, fn func(*Ctx) (bool, error)) bool {
+	stepNumber, stepDescription := companyStepMeta(stepName)
 	completedBefore := c.Completed
 	cancelled, err := fn(c)
 
-	// Track state for dashboard display (F18)
 	if c.Completed > completedBefore {
 		// Step succeeded — mark in scan state
 		if c.State != nil && c.StateMgr != nil {
 			c.StateMgr.MarkStepComplete(c.State, stepName)
 		}
 		notifyStepCompletion(c, stepNumber, stepName, stepDescription)
-	} else if c.Failed > (c.Total - c.Completed - 1) {
+	} else if err != nil {
 		// Step failed — mark in scan state
 		if c.State != nil && c.StateMgr != nil {
-			if err == nil {
-				err = fmt.Errorf("step failed")
-			}
 			c.StateMgr.MarkStepFailed(c.State, stepName, err)
 		}
 	}
 
 	return cancelled
+}
+
+// companyStepMeta returns (1-based number, description) for a company step name.
+func companyStepMeta(stepName string) (int, string) {
+	for i, s := range scan.CompanySteps {
+		if s.Name == stepName {
+			return i + 1, s.Description
+		}
+	}
+	return 0, stepName
 }
 
 func notifyStepCompletion(c *Ctx, stepNumber int, stepName, stepDescription string) {
@@ -261,8 +301,14 @@ func finalizeScan(c *Ctx, status string) {
 	}
 
 	// Build stats map
+	completedCount := c.Completed
+	totalCount := c.Total
+	if c.State != nil {
+		completedCount = len(c.State.CompletedSteps)
+		totalCount = c.State.TotalSteps
+	}
 	stats := map[string]string{
-		"Steps completed": fmt.Sprintf("%d/%d", c.Completed, c.Total),
+		"Steps completed": fmt.Sprintf("%d/%d", completedCount, totalCount),
 	}
 	if c.Failed > 0 {
 		stats["Failed"] = fmt.Sprintf("%d", c.Failed)
@@ -299,10 +345,14 @@ func finalizeScan(c *Ctx, status string) {
 	}
 
 	if c.ScanID > 0 {
-		logger.NextSteps([]string{
+		hints := []string{
 			fmt.Sprintf("chaathan scans show %d    # View scan details", c.ScanID),
 			"chaathan wildcard -d <discovered-domain>  # Run full recon on discovered domains",
-		})
+		}
+		if c.LogFilePath != "" {
+			hints = append([]string{fmt.Sprintf("cat %s  # full scan log", c.LogFilePath)}, hints...)
+		}
+		logger.NextSteps(hints)
 	}
 }
 

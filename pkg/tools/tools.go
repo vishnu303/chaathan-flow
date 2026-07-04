@@ -503,6 +503,17 @@ func (t *ToolBox) RunAmass(ctx context.Context, domain string, outputFile string
 	return err
 }
 
+// RunAmassIntel runs `amass intel -whois` to discover root domains owned by an org.
+func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile string) error {
+	args := []string{"intel", "-whois", "-d", org, "-o", outputFile}
+	if t.Config != nil && t.Config.Amass.Timeout > 0 {
+		args = append(args, "-timeout", strconv.Itoa(t.Config.Amass.Timeout))
+	}
+	_, err := t.Runner.Run(ctx, "amass", args)
+	return err
+}
+
+
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
 	// Use the long --output form: some flag libraries reject "--o" as an
 	// ambiguous/invalid abbreviation, which would silently produce an empty file.
