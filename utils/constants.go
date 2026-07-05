@@ -1,6 +1,7 @@
 package utils
 
 // JunkDomains are 3rd-party domains that should never be scanned.
+// This slice is read-only; do not mutate.
 var JunkDomains = []string{
 	"googleapis.com",
 	"gstatic.com",
@@ -47,6 +48,7 @@ var JunkDomains = []string{
 }
 
 // StaticExtensions are file extensions that cannot have injection points.
+// This slice is read-only; do not mutate.
 var StaticExtensions = []string{
 	".js",
 	".css",
@@ -76,6 +78,7 @@ var StaticExtensions = []string{
 }
 
 // HighValueMarkers are path markers identifying high-value/sensitive components.
+// This slice is read-only; do not mutate.
 var HighValueMarkers = []string{
 	"/admin",
 	"/login",
@@ -109,6 +112,7 @@ var HighValueMarkers = []string{
 }
 
 // InterestingParameters are parameter names that often contain security vulnerabilities.
+// This slice is read-only; do not mutate.
 var InterestingParameters = []string{
 	"url",
 	"uri",
@@ -132,6 +136,7 @@ var InterestingParameters = []string{
 }
 
 // InterestingEndpointsPatterns are path substrings used to identify high-value or sensitive API endpoints.
+// This slice is read-only; do not mutate.
 var InterestingEndpointsPatterns = []string{
 	"/api/", "/v1/", "/v2/", "/v3/",
 	"/admin", "/login", "/auth",
@@ -141,5 +146,14 @@ var InterestingEndpointsPatterns = []string{
 	"/debug", "/test",
 	".json", ".xml",
 	"/swagger", "/docs",
+}
+
+// JunkDomainsSet returns a read-only set (map) of JunkDomains for O(1) lookup.
+func JunkDomainsSet() map[string]bool {
+	set := make(map[string]bool, len(JunkDomains))
+	for _, domain := range JunkDomains {
+		set[domain] = true
+	}
+	return set
 }
 

@@ -10,21 +10,61 @@ import (
 	"github.com/vishnu303/chaathan/pkg/database"
 )
 
+// ExportFilenames is the single source of truth for exported files
+var ExportFilenames = []string{
+	"final_subdomains.txt",
+	"live_subdomains.txt",
+	"open_ports.txt",
+	"all_urls.txt",
+	"urls_200.txt",
+	"vulnerabilities.txt",
+	"vulnerabilities_critical_high.txt",
+	"endpoints.txt",
+	"endpoints_interesting.txt",
+	"gf_secrets_findings.txt",
+	"nuclei_vulns.json",
+	"nuclei_url_vulns.json",
+	"dalfox_xss.jsonl",
+}
+
 // NOTE: keep in sync with pkg/wildcard_flow output filenames
 var exportManifest = []struct{ File, Desc string }{
-	{"final_subdomains.txt", "All discovered subdomains"},
-	{"live_subdomains.txt", "Live/responsive subdomains (with IP)"},
-	{"open_ports.txt", "Open ports (host:port proto/service)"},
-	{"all_urls.txt", "All discovered URLs with status codes"},
-	{"urls_200.txt", "URLs returning HTTP 200 OK"},
-	{"vulnerabilities.txt", "All vulnerabilities (detailed)"},
-	{"vulnerabilities_critical_high.txt", "Critical/High severity vulns only"},
-	{"endpoints.txt", "All discovered endpoints (with method)"},
-	{"endpoints_interesting.txt", "Interesting endpoints (API, admin, etc.)"},
-	{"gf_secrets_findings.txt", "JS secret and JS sink matches from downloaded JS"},
-	{"nuclei_vulns.json", "Nuclei infra scan raw output"},
-	{"nuclei_url_vulns.json", "Nuclei URL scan raw output"},
-	{"dalfox_xss.jsonl", "Dalfox XSS scan structured JSONL output"},
+	{ExportFilenames[0], "All discovered subdomains"},
+	{ExportFilenames[1], "Live/responsive subdomains (with IP)"},
+	{ExportFilenames[2], "Open ports (host:port proto/service)"},
+	{ExportFilenames[3], "All discovered URLs with status codes"},
+	{ExportFilenames[4], "URLs returning HTTP 200 OK"},
+	{ExportFilenames[5], "All vulnerabilities (detailed)"},
+	{ExportFilenames[6], "Critical/High severity vulns only"},
+	{ExportFilenames[7], "All discovered endpoints (with method)"},
+	{ExportFilenames[8], "Interesting endpoints (API, admin, etc.)"},
+	{ExportFilenames[9], "JS secret and JS sink matches from downloaded JS"},
+	{ExportFilenames[10], "Nuclei infra scan raw output"},
+	{ExportFilenames[11], "Nuclei URL scan raw output"},
+	{ExportFilenames[12], "Dalfox XSS scan structured JSONL output"},
+}
+
+// writeAndSync writes all lines to the given file, flushes the buffer, and runs Sync()
+func writeAndSync(filePath string, lines []string) error {
+	f, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	w := bufio.NewWriter(f)
+	for _, line := range lines {
+		if _, err := w.WriteString(line + "\n"); err != nil {
+			return err
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	
+	// f.Sync() is best-effort, ignore EINVAL on pipes/devices
+	_ = f.Sync()
+	return nil
 }
 
 // ExportResults exports all scan results to text files in the result directory
@@ -73,20 +113,12 @@ func ExportSubdomains(scanID int64, resultDir string) error {
 		return err
 	}
 
-	path := filepath.Join(resultDir, "final_subdomains.txt")
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
+	path := filepath.Join(resultDir, ExportFilenames[0])
+	var lines []string
 	for _, s := range subs {
-		if _, err := fmt.Fprintln(w, s.Domain); err != nil {
-			return err
-		}
+		lines = append(lines, s.Domain)
 	}
-	return w.Flush()
+	return writeAndSync(path, lines)
 }
 
 // ExportLiveSubdomains exports only live subdomains.
@@ -97,26 +129,16 @@ func ExportLiveSubdomains(scanID int64, resultDir string) error {
 		return err
 	}
 
-	path := filepath.Join(resultDir, "live_subdomains.txt")
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
+	path := filepath.Join(resultDir, ExportFilenames[1])
+	var lines []string
 	for _, s := range subs {
-		var err error
 		if s.IPAddress != "" {
-			_, err = fmt.Fprintf(w, "%s,%s\n", s.Domain, s.IPAddress)
+			lines = append(lines, fmt.Sprintf("%s,%s", s.Domain, s.IPAddress))
 		} else {
-			_, err = fmt.Fprintln(w, s.Domain)
-		}
-		if err != nil {
-			return err
+			lines = append(lines, s.Domain)
 		}
 	}
-	return w.Flush()
+	return writeAndSync(path, lines)
 }
 
 // ExportPorts exports open ports.
@@ -127,24 +149,16 @@ func ExportPorts(scanID int64, resultDir string) error {
 		return err
 	}
 
-	path := filepath.Join(resultDir, "open_ports.txt")
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
+	path := filepath.Join(resultDir, ExportFilenames[2])
+	var lines []string
 	for _, p := range ports {
 		service := p.Service
 		if service == "" {
 			service = "unknown"
 		}
-		if _, err := fmt.Fprintf(w, "%s:%d (%s/%s)\n", p.Host, p.Port, p.Protocol, service); err != nil {
-			return err
-		}
+		lines = append(lines, fmt.Sprintf("%s:%d (%s/%s)", p.Host, p.Port, p.Protocol, service))
 	}
-	return w.Flush()
+	return writeAndSync(path, lines)
 }
 
 // ExportURLs exports discovered URLs.
@@ -157,46 +171,28 @@ func ExportURLs(scanID int64, resultDir string) error {
 	}
 
 	// All URLs with status
-	path := filepath.Join(resultDir, "all_urls.txt")
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
+	path := filepath.Join(resultDir, ExportFilenames[3])
+	var lines []string
 	for _, u := range urls {
-		var err error
 		if u.StatusCode > 0 {
-			_, err = fmt.Fprintf(w, "[%d] %s\n", u.StatusCode, u.URL)
+			lines = append(lines, fmt.Sprintf("[%d] %s", u.StatusCode, u.URL))
 		} else {
-			_, err = fmt.Fprintln(w, u.URL)
-		}
-		if err != nil {
-			return err
+			lines = append(lines, u.URL)
 		}
 	}
-	if err := w.Flush(); err != nil {
+	if err := writeAndSync(path, lines); err != nil {
 		return err
 	}
 
 	// 200 OK URLs only
-	path200 := filepath.Join(resultDir, "urls_200.txt")
-	f200, err := os.Create(path200)
-	if err != nil {
-		return err
-	}
-	defer f200.Close()
-
-	w200 := bufio.NewWriter(f200)
+	path200 := filepath.Join(resultDir, ExportFilenames[4])
+	var lines200 []string
 	for _, u := range urls {
 		if u.StatusCode == 200 {
-			if _, err := fmt.Fprintln(w200, u.URL); err != nil {
-				return err
-			}
+			lines200 = append(lines200, u.URL)
 		}
 	}
-	return w200.Flush()
+	return writeAndSync(path200, lines200)
 }
 
 // ExportVulnerabilities exports vulnerabilities.
@@ -209,83 +205,46 @@ func ExportVulnerabilities(scanID int64, resultDir string) error {
 	}
 
 	// All vulns — detailed blocks
-	path := filepath.Join(resultDir, "vulnerabilities.txt")
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
+	path := filepath.Join(resultDir, ExportFilenames[5])
+	var lines []string
 	for _, v := range vulns {
-		if _, err := fmt.Fprintf(w, "================================================================================\n"); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "[%s] %s\n", strings.ToUpper(v.Severity), v.Name); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "================================================================================\n"); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "Host:     %s\n", v.Host); err != nil {
-			return err
-		}
+		lines = append(lines, "================================================================================")
+		lines = append(lines, fmt.Sprintf("[%s] %s", strings.ToUpper(v.Severity), v.Name))
+		lines = append(lines, "================================================================================")
+		lines = append(lines, fmt.Sprintf("Host:     %s", v.Host))
 		if v.URL != "" {
-			if _, err := fmt.Fprintf(w, "URL:      %s\n", v.URL); err != nil {
-				return err
-			}
+			lines = append(lines, fmt.Sprintf("URL:      %s", v.URL))
 		}
 		if v.TemplateID != "" {
-			if _, err := fmt.Fprintf(w, "Template: %s\n", v.TemplateID); err != nil {
-				return err
-			}
+			lines = append(lines, fmt.Sprintf("Template: %s", v.TemplateID))
 		}
 		if v.Description != "" {
-			if _, err := fmt.Fprintf(w, "Description:\n%s\n", v.Description); err != nil {
-				return err
-			}
+			lines = append(lines, fmt.Sprintf("Description:\n%s", v.Description))
 		}
 		if v.Evidence != "" {
-			if _, err := fmt.Fprintf(w, "Evidence:\n%s\n", v.Evidence); err != nil {
-				return err
-			}
+			lines = append(lines, fmt.Sprintf("Evidence:\n%s", v.Evidence))
 		}
-		if _, err := fmt.Fprintln(w); err != nil {
-			return err
-		}
+		lines = append(lines, "")
 	}
-	if err := w.Flush(); err != nil {
+	if err := writeAndSync(path, lines); err != nil {
 		return err
 	}
 
 	// Critical and High only — compact
-	pathCritical := filepath.Join(resultDir, "vulnerabilities_critical_high.txt")
-	fCritical, err := os.Create(pathCritical)
-	if err != nil {
-		return err
-	}
-	defer fCritical.Close()
-
-	wCritical := bufio.NewWriter(fCritical)
+	pathCritical := filepath.Join(resultDir, ExportFilenames[6])
+	var linesCritical []string
 	for _, v := range vulns {
-		if v.Severity == "critical" || v.Severity == "high" {
-			if _, err := fmt.Fprintf(wCritical, "[%s] %s\n", strings.ToUpper(v.Severity), v.Name); err != nil {
-				return err
-			}
-			if _, err := fmt.Fprintf(wCritical, "  Host: %s\n", v.Host); err != nil {
-				return err
-			}
+		// Perform case-insensitive check by matching lowercased severity values
+		if strings.EqualFold(v.Severity, "critical") || strings.EqualFold(v.Severity, "high") {
+			linesCritical = append(linesCritical, fmt.Sprintf("[%s] %s", strings.ToUpper(v.Severity), v.Name))
+			linesCritical = append(linesCritical, fmt.Sprintf("  Host: %s", v.Host))
 			if v.URL != "" {
-				if _, err := fmt.Fprintf(wCritical, "  URL:  %s\n", v.URL); err != nil {
-					return err
-				}
+				linesCritical = append(linesCritical, fmt.Sprintf("  URL:  %s", v.URL))
 			}
-			if _, err := fmt.Fprintln(wCritical); err != nil {
-				return err
-			}
+			linesCritical = append(linesCritical, "")
 		}
 	}
-	return wCritical.Flush()
+	return writeAndSync(pathCritical, linesCritical)
 }
 
 // ExportEndpoints exports API endpoints.
@@ -298,56 +257,36 @@ func ExportEndpoints(scanID int64, resultDir string) error {
 	}
 
 	// All endpoints with method
-	path := filepath.Join(resultDir, "endpoints.txt")
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	w := bufio.NewWriter(f)
+	path := filepath.Join(resultDir, ExportFilenames[7])
+	var lines []string
 	for _, e := range endpoints {
-		var err error
 		if e.Method != "" {
-			_, err = fmt.Fprintf(w, "%s %s\n", e.Method, e.URL)
+			lines = append(lines, fmt.Sprintf("%s %s", e.Method, e.URL))
 		} else {
-			_, err = fmt.Fprintln(w, e.URL)
-		}
-		if err != nil {
-			return err
+			lines = append(lines, e.URL)
 		}
 	}
-	if err := w.Flush(); err != nil {
+	if err := writeAndSync(path, lines); err != nil {
 		return err
 	}
 
 	// Interesting endpoints (API, admin, etc.) using package patterns
-	pathInteresting := filepath.Join(resultDir, "endpoints_interesting.txt")
-	fInteresting, err := os.Create(pathInteresting)
-	if err != nil {
-		return err
-	}
-	defer fInteresting.Close()
-
-	wInteresting := bufio.NewWriter(fInteresting)
+	pathInteresting := filepath.Join(resultDir, ExportFilenames[8])
+	var linesInteresting []string
 	for _, e := range endpoints {
 		urlLower := strings.ToLower(e.URL)
 		for _, pattern := range InterestingEndpointsPatterns {
 			if strings.Contains(urlLower, pattern) {
-				var err error
 				if e.Method != "" {
-					_, err = fmt.Fprintf(wInteresting, "%s %s\n", e.Method, e.URL)
+					linesInteresting = append(linesInteresting, fmt.Sprintf("%s %s", e.Method, e.URL))
 				} else {
-					_, err = fmt.Fprintln(wInteresting, e.URL)
-				}
-				if err != nil {
-					return err
+					linesInteresting = append(linesInteresting, e.URL)
 				}
 				break
 			}
 		}
 	}
-	return wInteresting.Flush()
+	return writeAndSync(pathInteresting, linesInteresting)
 }
 
 // ExportSummary creates a summary text file
@@ -358,114 +297,56 @@ func ExportSummary(scanID int64, resultDir string, target string) error {
 	}
 
 	path := filepath.Join(resultDir, "SUMMARY.txt")
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	var lines []string
 
-	w := bufio.NewWriter(f)
+	lines = append(lines, "================================================================================")
+	lines = append(lines, "                        CHAATHAN SCAN SUMMARY")
+	lines = append(lines, "================================================================================")
+	lines = append(lines, fmt.Sprintf("\nTarget: %s", target))
+	lines = append(lines, fmt.Sprintf("Scan ID: %d\n", scanID))
 
-	if _, err := fmt.Fprintln(w, "================================================================================"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "                        CHAATHAN SCAN SUMMARY"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "================================================================================"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "\nTarget: %s\n", target); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "Scan ID: %d\n\n", scanID); err != nil {
-		return err
-	}
+	lines = append(lines, "STATISTICS")
+	lines = append(lines, "----------")
+	lines = append(lines, fmt.Sprintf("Total Subdomains:    %d", stats.TotalSubdomains))
+	lines = append(lines, fmt.Sprintf("Live Subdomains:     %d", stats.LiveSubdomains))
+	lines = append(lines, fmt.Sprintf("Open Ports:          %d", stats.TotalPorts))
+	lines = append(lines, fmt.Sprintf("URLs Discovered:     %d", stats.TotalURLs))
+	lines = append(lines, fmt.Sprintf("Endpoints Found:     %d", stats.TotalEndpoints))
 
-	if _, err := fmt.Fprintln(w, "STATISTICS"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "----------"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "Total Subdomains:    %d\n", stats.TotalSubdomains); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "Live Subdomains:     %d\n", stats.LiveSubdomains); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "Open Ports:          %d\n", stats.TotalPorts); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "URLs Discovered:     %d\n", stats.TotalURLs); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "Endpoints Found:     %d\n", stats.TotalEndpoints); err != nil {
-		return err
-	}
-
-	if _, err := fmt.Fprintln(w, "\nVULNERABILITIES"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "---------------"); err != nil {
-		return err
-	}
+	lines = append(lines, "\nVULNERABILITIES")
+	lines = append(lines, "---------------")
 	totalVulns := 0
 	severities := []string{"critical", "high", "medium", "low", "info"}
+	
+	// Refactor ExportSummary's double-pass into a single pass with a dedup guard (printed map).
+	printed := make(map[string]bool)
 	for _, sev := range severities {
 		if count, ok := stats.Vulnerabilities[sev]; ok {
-			if _, err := fmt.Fprintf(w, "%-10s: %d\n", strings.ToUpper(sev), count); err != nil {
-				return err
-			}
+			lines = append(lines, fmt.Sprintf("%-10s: %d", strings.ToUpper(sev), count))
 			totalVulns += count
+			printed[sev] = true
 		}
 	}
 	for sev, count := range stats.Vulnerabilities {
-		isStandard := false
-		for _, s := range severities {
-			if s == sev {
-				isStandard = true
-				break
-			}
-		}
-		if !isStandard {
-			if _, err := fmt.Fprintf(w, "%-10s: %d\n", strings.ToUpper(sev), count); err != nil {
-				return err
-			}
+		if !printed[sev] {
+			lines = append(lines, fmt.Sprintf("%-10s: %d", strings.ToUpper(sev), count))
 			totalVulns += count
+			printed[sev] = true
 		}
 	}
-	if _, err := fmt.Fprintf(w, "%-10s: %d\n", "TOTAL", totalVulns); err != nil {
-		return err
-	}
+	lines = append(lines, fmt.Sprintf("%-10s: %d", "TOTAL", totalVulns))
 
-	if _, err := fmt.Fprintln(w, "\nOUTPUT FILES  (all files are inside final_files/)"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "------------"); err != nil {
-		return err
-	}
+	lines = append(lines, "\nOUTPUT FILES  (all files are inside final_files/)")
+	lines = append(lines, "------------")
 	for _, entry := range exportManifest {
-		if _, err := fmt.Fprintf(w, "%-34s - %s\n", entry.File, entry.Desc); err != nil {
-			return err
-		}
+		lines = append(lines, fmt.Sprintf("%-34s - %s", entry.File, entry.Desc))
 	}
-	if _, err := fmt.Fprintln(w, ""); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "Raw tool outputs are in intermediate_files/ (subfinder, gau, httpx, etc.)"); err != nil {
-		return err
-	}
+	lines = append(lines, "")
+	lines = append(lines, "Raw tool outputs are in intermediate_files/ (subfinder, gau, httpx, etc.)")
 
-	if _, err := fmt.Fprintln(w, "\n================================================================================"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "Generated by Chaathan - https://github.com/vishnu303/chaathan"); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintln(w, "================================================================================"); err != nil {
-		return err
-	}
+	lines = append(lines, "\n================================================================================")
+	lines = append(lines, "Generated by Chaathan - https://github.com/vishnu303/chaathan")
+	lines = append(lines, "================================================================================")
 
-	return w.Flush()
+	return writeAndSync(path, lines)
 }
