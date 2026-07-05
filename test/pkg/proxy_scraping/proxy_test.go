@@ -27,7 +27,6 @@ func TestRunHarvest_NoMubengErrorOrCancel(t *testing.T) {
 	cancel() // Cancel context immediately to test fast bail-out or failure
 
 	cfg := proxy_scraping.HarvestConfig{
-		Domain:     "target.com",
 		TimeoutMin: 1,
 		OutputDir:  t.TempDir(),
 	}

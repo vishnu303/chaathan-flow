@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -48,7 +49,8 @@ func StartRotator(ctx context.Context, cfg RotatorConfig) (*Rotator, error) {
 
 	// Find a free port
 	listenAddr := cfg.ListenAddr
-	if listenAddr == "" || listenAddr == "127.0.0.1:0" {
+	isDynamicPort := listenAddr == "" || listenAddr == "127.0.0.1:0"
+	if isDynamicPort {
 		port, err := findFreePort()
 		if err != nil {
 			return nil, fmt.Errorf("cannot find free port: %w", err)
@@ -82,17 +84,25 @@ func StartRotator(ctx context.Context, cfg RotatorConfig) (*Rotator, error) {
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	// Redirect mubeng stdout/stderr to /dev/null (it logs to terminal otherwise)
-	// In verbose mode, let it write to stdout
+	var logFile *os.File
 	if !cfg.Verbose {
-		cmd.Stdout = nil
-		cmd.Stderr = nil
+		logPath := filepath.Join(filepath.Dir(cfg.ProxyListFile), "mubeng.log")
+		var createErr error
+		logFile, createErr = os.Create(logPath)
+		if createErr == nil {
+			cmd.Stdout = logFile
+			cmd.Stderr = logFile
+		}
 	} else {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
+	cmd.Stdin = nil
 
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			logFile.Close()
+		}
 		return nil, fmt.Errorf("failed to start mubeng: %w", err)
 	}
 
@@ -100,7 +110,60 @@ func StartRotator(ctx context.Context, cfg RotatorConfig) (*Rotator, error) {
 	if err := waitForPort(listenAddr, 5*time.Second); err != nil {
 		// Kill if it didn't start properly
 		killProcessGroup(cmd)
-		return nil, fmt.Errorf("mubeng did not start listening on %s: %w", listenAddr, err)
+		if logFile != nil {
+			logFile.Close()
+			logFile = nil
+		}
+
+		// TOCTOU mitigation: retry once with a fresh port (M2)
+		if isDynamicPort {
+			logger.FileDebug("mubeng failed to bind to port on %s: %v. Retrying once with a new port...", listenAddr, err)
+			port, freshErr := findFreePort()
+			if freshErr != nil {
+				return nil, fmt.Errorf("cannot find second free port: %w", freshErr)
+			}
+			listenAddr = fmt.Sprintf("127.0.0.1:%d", port)
+
+			// Rebuild arguments and cmd for new port
+			args[3] = listenAddr
+			cmd = exec.CommandContext(ctx, binPath, args...)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+			if !cfg.Verbose {
+				logPath := filepath.Join(filepath.Dir(cfg.ProxyListFile), "mubeng.log")
+				var createErr error
+				logFile, createErr = os.Create(logPath)
+				if createErr == nil {
+					cmd.Stdout = logFile
+					cmd.Stderr = logFile
+				}
+			} else {
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+			}
+			cmd.Stdin = nil
+
+			if errStart := cmd.Start(); errStart != nil {
+				if logFile != nil {
+					logFile.Close()
+				}
+				return nil, fmt.Errorf("failed to start mubeng on retry: %w", errStart)
+			}
+
+			if errWait := waitForPort(listenAddr, 5*time.Second); errWait != nil {
+				killProcessGroup(cmd)
+				if logFile != nil {
+					logFile.Close()
+				}
+				return nil, fmt.Errorf("mubeng did not start listening on retry %s: %w", listenAddr, errWait)
+			}
+		} else {
+			return nil, fmt.Errorf("mubeng did not start listening on %s: %w", listenAddr, err)
+		}
+	}
+
+	if logFile != nil {
+		logFile.Close()
 	}
 
 	proxyURL := "http://" + listenAddr

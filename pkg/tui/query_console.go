@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/logger"
 )
 
 // QueryConsole state and components structure
@@ -31,6 +33,20 @@ type QueryConsole struct {
 	urls       []database.URL
 	endpoints  []database.Endpoint
 	roi        []database.URLROI
+
+	// Total counts before truncation
+	subdomainsTotalCount int
+	portsTotalCount      int
+	vulnsTotalCount      int
+	urlsTotalCount       int
+	endpointsTotalCount  int
+	roiTotalCount        int
+
+	// Cache for technology strings
+	techCache map[string]string
+
+	// Debounce timer for filtering
+	filterTimer *time.Timer
 
 	// Filtered data displayed in current tables
 	filteredSubdomains []database.Subdomain
@@ -134,7 +150,16 @@ func StartQueryConsole(presetScanID int64) error {
 
 	q.FilterInput.SetChangedFunc(func(text string) {
 		q.FilterText = text
-		q.populateTable(q.ActiveTab)
+
+		if q.filterTimer != nil {
+			q.filterTimer.Stop()
+		}
+
+		q.filterTimer = time.AfterFunc(60*time.Millisecond, func() {
+			q.App.QueueUpdateDraw(func() {
+				q.populateTable(q.ActiveTab)
+			})
+		})
 	})
 
 	// 6. Footer Help Bar
@@ -363,12 +388,76 @@ func (q *QueryConsole) switchTab(tabIdx int) {
 func (q *QueryConsole) loadScanData(scanID int64) {
 	q.ScanID = scanID
 
-	q.subdomains, _ = database.GetLiveSubdomains(scanID)
-	q.ports, _ = database.GetPorts(scanID)
-	q.vulns, _ = database.GetVulnerabilities(scanID)
-	q.urls, _ = database.GetURLs(scanID)
-	q.endpoints, _ = database.GetEndpoints(scanID)
-	q.roi, _ = database.GetRankedURLs(scanID, 0)
+	var err error
+	rawSubs, err := database.GetLiveSubdomains(scanID)
+	if err != nil {
+		logger.FileDebug("GetLiveSubdomains error: %v", err)
+	}
+	rawPorts, err := database.GetPorts(scanID)
+	if err != nil {
+		logger.FileDebug("GetPorts error: %v", err)
+	}
+	rawVulns, err := database.GetVulnerabilities(scanID)
+	if err != nil {
+		logger.FileDebug("GetVulnerabilities error: %v", err)
+	}
+	rawUrls, err := database.GetURLs(scanID)
+	if err != nil {
+		logger.FileDebug("GetURLs error: %v", err)
+	}
+	rawEndpoints, err := database.GetEndpoints(scanID)
+	if err != nil {
+		logger.FileDebug("GetEndpoints error: %v", err)
+	}
+	rawRoi, err := database.GetRankedURLs(scanID, 5000)
+	if err != nil {
+		logger.FileDebug("GetRankedURLs error: %v", err)
+	}
+
+	// Store total counts
+	q.subdomainsTotalCount = len(rawSubs)
+	q.portsTotalCount = len(rawPorts)
+	q.vulnsTotalCount = len(rawVulns)
+	q.urlsTotalCount = len(rawUrls)
+	q.endpointsTotalCount = len(rawEndpoints)
+	q.roiTotalCount = len(rawRoi)
+
+	// Truncate to 5000 rows max in memory for TUI
+	if len(rawSubs) > 5000 {
+		rawSubs = rawSubs[:5000]
+	}
+	if len(rawPorts) > 5000 {
+		rawPorts = rawPorts[:5000]
+	}
+	if len(rawVulns) > 5000 {
+		rawVulns = rawVulns[:5000]
+	}
+	if len(rawUrls) > 5000 {
+		rawUrls = rawUrls[:5000]
+	}
+	if len(rawEndpoints) > 5000 {
+		rawEndpoints = rawEndpoints[:5000]
+	}
+
+	q.subdomains = rawSubs
+	q.ports = rawPorts
+	q.vulns = rawVulns
+	q.urls = rawUrls
+	q.endpoints = rawEndpoints
+	q.roi = rawRoi
+
+	// Build tech stack cache (L4)
+	q.techCache = make(map[string]string)
+	for _, u := range rawUrls {
+		var techStr string
+		var techs []string
+		if err := json.Unmarshal([]byte(u.Tech), &techs); err == nil {
+			techStr = strings.Join(techs, ", ")
+		} else {
+			techStr = u.Tech
+		}
+		q.techCache[u.URL] = techStr
+	}
 
 	q.FilterInput.SetText("")
 	q.FilterText = ""
@@ -543,13 +632,7 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 			table.SetCell(rowIdx, 2, tview.NewTableCell(" "+u.URL).SetTextColor(tcell.ColorWhite))
 			table.SetCell(rowIdx, 3, tview.NewTableCell(" "+u.Title).SetTextColor(tcell.GetColor(ColorBlue)))
 
-			var techStr string
-			var techs []string
-			if err := json.Unmarshal([]byte(u.Tech), &techs); err == nil {
-				techStr = strings.Join(techs, ", ")
-			} else {
-				techStr = u.Tech
-			}
+			techStr := q.techCache[u.URL]
 			table.SetCell(rowIdx, 4, tview.NewTableCell(" "+techStr).SetTextColor(tcell.GetColor(ColorGreen)))
 			rowIdx++
 		}
@@ -662,6 +745,44 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 		table.Select(0, 0)
 	}
 	table.ScrollToBeginning()
+
+	// Update footer text with truncation warnings (M2)
+	var footerMsg string
+	var total, shown int
+
+	switch tabIndex {
+	case 0:
+		total = q.subdomainsTotalCount
+		shown = len(q.subdomains)
+	case 1:
+		total = q.portsTotalCount
+		shown = len(q.ports)
+	case 2:
+		total = q.vulnsTotalCount
+		shown = len(q.vulns)
+	case 3:
+		total = q.urlsTotalCount
+		shown = len(q.urls)
+	case 4:
+		total = q.endpointsTotalCount
+		shown = len(q.endpoints)
+	case 5:
+		total = q.roiTotalCount
+		shown = len(q.roi)
+	}
+
+	isTruncated := total > shown
+	helpKeys := fmt.Sprintf(
+		" [%s]Tab[-] Focus Panel  |  [%s]1-6[-] Switch Tabs  |  [%s]/[-] Search  |  [%s]Esc[-] Unfocus  |  [%s]R[-] Reload  |  [%s]Q/Ctrl+C[-] Exit",
+		ColorActive, ColorActive, ColorActive, ColorActive, ColorActive, ColorActive,
+	)
+
+	if isTruncated {
+		footerMsg = fmt.Sprintf("%s  |  [#f38ba8::b]⚠️ WARNING: Truncated - showing first %d of %d items[-]", helpKeys, shown, total)
+	} else {
+		footerMsg = helpKeys
+	}
+	q.FooterText.SetText(footerMsg)
 }
 
 // showDetailsPopup opens detailed overlay modal cards

@@ -10,13 +10,58 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/term"
 )
 
 // ── File-log tee ─────────────────────────────────────────────────────────────
 
+type logWriter interface {
+	io.WriteCloser
+	Sync() error
+}
+
+type sizeTrackingWriter struct {
+	w            *os.File
+	bytesWritten int64
+	warned100MB  bool
+	stopped500MB bool
+}
+
+func (s *sizeTrackingWriter) Write(p []byte) (n int, err error) {
+	if s.bytesWritten >= 500*1024*1024 {
+		if !s.stopped500MB {
+			s.stopped500MB = true
+			ts := time.Now().Format("15:04:05")
+			_, _ = s.w.Write([]byte(fmt.Sprintf("[%s] DEBUG Log file size exceeded 500MB. Mirroring stopped.\n", ts)))
+		}
+		return len(p), nil
+	}
+
+	n, err = s.w.Write(p)
+	s.bytesWritten += int64(n)
+
+	if s.bytesWritten >= 100*1024*1024 && !s.warned100MB {
+		s.warned100MB = true
+		ts := time.Now().Format("15:04:05")
+		_, _ = s.w.Write([]byte(fmt.Sprintf("[%s] DEBUG [WARN] Log file size has exceeded 100MB.\n", ts)))
+	}
+
+	return n, err
+}
+
+func (s *sizeTrackingWriter) Close() error {
+	return s.w.Close()
+}
+
+func (s *sizeTrackingWriter) Sync() error {
+	return s.w.Sync()
+}
+
 var (
 	logFileMu sync.Mutex
-	logFile   *os.File
+	logFile   logWriter
 )
 
 // ansiRE strips ANSI escape sequences so log files are readable plain text.
@@ -29,6 +74,7 @@ func InitFileLog(path string) error {
 	logFileMu.Lock()
 	defer logFileMu.Unlock()
 	if logFile != nil {
+		_ = logFile.Sync()
 		logFile.Close()
 		logFile = nil
 	}
@@ -40,7 +86,7 @@ func InitFileLog(path string) error {
 	if err != nil {
 		return fmt.Errorf("cannot open log file %q: %w", path, err)
 	}
-	logFile = f
+	logFile = &sizeTrackingWriter{w: f}
 	return nil
 }
 
@@ -49,15 +95,29 @@ func CloseFileLog() {
 	logFileMu.Lock()
 	defer logFileMu.Unlock()
 	if logFile != nil {
+		_ = logFile.Sync()
 		logFile.Close()
 		logFile = nil
 	}
 }
 
+var (
+	isTTYOnce sync.Once
+	isTTY     bool
+)
+
 // logWrite writes to stdout and, if a log file is open, to the file with
 // ANSI codes stripped and a [HH:MM:SS] timestamp prefixed to each non-empty line.
 func logWrite(w io.Writer, s string) {
-	fmt.Fprint(w, s)
+	isTTYOnce.Do(func() {
+		isTTY = term.IsTerminal(int(os.Stdout.Fd()))
+	})
+
+	out := s
+	if w == os.Stdout && !isTTY {
+		out = ansiRE.ReplaceAllString(s, "")
+	}
+	fmt.Fprint(w, out)
 
 	// Prepare the formatted string outside the critical section to minimize lock hold time.
 	clean := ansiRE.ReplaceAllString(s, "")
@@ -129,8 +189,9 @@ func LogToolFailure(tool, command, stderr string, exitErr error) {
 	}
 	if stderr != "" {
 		lines := strings.Split(strings.TrimSpace(stderr), "\n")
+		totalLines := len(lines)
 		const maxStderrLines = 30
-		truncated := len(lines) > maxStderrLines
+		truncated := totalLines > maxStderrLines
 		if truncated {
 			lines = lines[:maxStderrLines]
 		}
@@ -139,7 +200,7 @@ func LogToolFailure(tool, command, stderr string, exitErr error) {
 			fmt.Fprintf(logFile, "[%s]     %s\n", ts, line)
 		}
 		if truncated {
-			fmt.Fprintf(logFile, "[%s]     ... (%d more lines truncated)\n", ts, len(strings.Split(strings.TrimSpace(stderr), "\n"))-maxStderrLines)
+			fmt.Fprintf(logFile, "[%s]     ... (%d more lines truncated)\n", ts, totalLines-maxStderrLines)
 		}
 	}
 	fmt.Fprintf(logFile, "\n")
@@ -211,6 +272,7 @@ const (
 // ── Scan step tracking ──────────────────────────────────────────────────────
 
 var (
+	scanUIMu       sync.Mutex
 	currentStep    int
 	totalSteps     int
 	scanStartTime  time.Time
@@ -219,6 +281,8 @@ var (
 
 // InitScanUI initializes the scan UI with the total number of steps.
 func InitScanUI(total int) {
+	scanUIMu.Lock()
+	defer scanUIMu.Unlock()
 	currentStep = 0
 	totalSteps = total
 	scanStartTime = time.Now()
@@ -281,9 +345,7 @@ func StepHeader(format string, args ...any) {
 		prefix = "Proxy Scraping"
 	}
 
-	// Only increment the step counter if we are transitioning to a new step.
-	// This prevents duplicate incrementing when skip/fallback notices are printed
-	// for the currently active step.
+	scanUIMu.Lock()
 	if prefix == "" || prefix != lastStepPrefix {
 		currentStep++
 		if prefix != "" {
@@ -291,14 +353,19 @@ func StepHeader(format string, args ...any) {
 		}
 	}
 
+	current := currentStep
+	total := totalSteps
+	start := scanStartTime
+	scanUIMu.Unlock()
+
 	elapsed := ""
-	if !scanStartTime.IsZero() {
-		elapsed = fmt.Sprintf(" %s%s%s", Dim, fmtElapsed(time.Since(scanStartTime)), Reset)
+	if !start.IsZero() {
+		elapsed = fmt.Sprintf(" %s%s%s", Dim, fmtElapsed(time.Since(start)), Reset)
 	}
 
 	stepIndicator := ""
-	if totalSteps > 0 {
-		stepIndicator = fmt.Sprintf("%s[%d/%d]%s ", Dim, currentStep, totalSteps, Reset)
+	if total > 0 {
+		stepIndicator = fmt.Sprintf("%s[%d/%d]%s ", Dim, current, total, Reset)
 	}
 
 	logWrite(os.Stdout, fmt.Sprintf("\n  %s┌─%s %s%s%s%s%s%s\n", Cyan, Reset, stepIndicator, BrightCyan+Bold, msg, Reset, elapsed, ""))
@@ -311,13 +378,32 @@ func ScanHeader(scanType string, target string, scanID int64) {
 
 	logWrite(os.Stdout, "\n")
 	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, line, Reset))
-	// '  ' (2) + '🔍 ' (3) + 46 + ' ' (1) = 52
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  🔍 %s%-46s%s %s│%s\n", Cyan+Bold, Reset, White+Bold, scanType+" Scan", Reset, Cyan+Bold, Reset))
-	// '  ' (2) + '🎯 ' (3) + 'Target:' (7) + ' ' (1) + 38 + ' ' (1) = 52
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s🎯 Target:%s %-38s %s│%s\n", Cyan+Bold, Reset, Dim, Reset, target, Cyan+Bold, Reset))
+	
+	scanTypeRunes := utf8.RuneCountInString(scanType + " Scan")
+	padScanType := 46 - scanTypeRunes
+	if padScanType < 0 {
+		padScanType = 0
+	}
+	scanTypeStr := scanType + " Scan" + strings.Repeat(" ", padScanType)
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  🔍 %s%s%s %s│%s\n", Cyan+Bold, Reset, White+Bold, scanTypeStr, Reset, Cyan+Bold, Reset))
+
+	targetRunes := utf8.RuneCountInString(target)
+	padTarget := 38 - targetRunes
+	if padTarget < 0 {
+		padTarget = 0
+	}
+	targetStr := target + strings.Repeat(" ", padTarget)
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s🎯 Target:%s %s %s│%s\n", Cyan+Bold, Reset, Dim, Reset, targetStr, Cyan+Bold, Reset))
+
 	if scanID > 0 {
-		// '  ' (2) + '🆔 ' (3) + 'Scan ID:' (8) + ' ' (1) + 37 + ' ' (1) = 52
-		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s🆔 Scan ID:%s %-37d %s│%s\n", Cyan+Bold, Reset, Dim, Reset, scanID, Cyan+Bold, Reset))
+		scanIDStr := fmt.Sprintf("%d", scanID)
+		scanIDRunes := utf8.RuneCountInString(scanIDStr)
+		padScanID := 37 - scanIDRunes
+		if padScanID < 0 {
+			padScanID = 0
+		}
+		scanIDText := scanIDStr + strings.Repeat(" ", padScanID)
+		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s🆔 Scan ID:%s %s %s│%s\n", Cyan+Bold, Reset, Dim, Reset, scanIDText, Cyan+Bold, Reset))
 	}
 	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, line, Reset))
 	logWrite(os.Stdout, "\n")
@@ -356,7 +442,7 @@ func ScanSummary(status string, target string, scanID int64, duration time.Durat
 	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, line, Reset))
 
 	statusStr := capitalize(status)
-	pad1 := w - 2 - 1 - 6 - len(statusStr) // '  ' (2), statusIcon (1), ' Scan ' (6)
+	pad1 := w - 2 - 1 - 6 - utf8.RuneCountInString(statusStr) // '  ' (2), statusIcon (1), ' Scan ' (6)
 	if pad1 < 0 {
 		pad1 = 0
 	}
@@ -365,14 +451,14 @@ func ScanSummary(status string, target string, scanID int64, duration time.Durat
 		White+Bold, statusStr, Reset,
 		strings.Repeat(" ", pad1), Cyan+Bold, Reset))
 
-	pad2 := w - 5 - len(target)
+	pad2 := w - 5 - utf8.RuneCountInString(target)
 	if pad2 < 0 {
 		pad2 = 0
 	}
 	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s🎯 %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, target, Reset, strings.Repeat(" ", pad2), Cyan+Bold, Reset))
 
 	durStr := FmtDuration(duration)
-	pad3 := w - 6 - len(durStr) // '  ' (2) + '⏱  ' (4)
+	pad3 := w - 6 - utf8.RuneCountInString(durStr) // '  ' (2) + '⏱  ' (4)
 	if pad3 < 0 {
 		pad3 = 0
 	}
@@ -381,8 +467,7 @@ func ScanSummary(status string, target string, scanID int64, duration time.Durat
 	if len(stats) > 0 {
 		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, strings.Repeat("╌", w-2), Reset, Cyan+Bold, Reset))
 		for label, value := range stats {
-			// '  ' (2) + len(label) + 1 + len(value)
-			used := 2 + len(label) + 1 + len(value)
+			used := 2 + utf8.RuneCountInString(label) + 1 + utf8.RuneCountInString(value)
 			padding := w - used
 			if padding < 1 {
 				padding = 1

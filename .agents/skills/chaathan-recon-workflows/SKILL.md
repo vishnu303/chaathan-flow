@@ -94,6 +94,11 @@ To process huge URL lists (100k+ inputs) without crashing VPS systems:
 - Support `--cookie`, `--header` (`-H`), and `--token` (sends Bearer token headers) flags.
 - Configured globally inside `RunConfig` $\rightarrow$ injected into the command parameters formulating functions inside `pkg/tools/` for Httpx, Katana, ffuf, Nuclei, and Dalfox.
 
+### 3. Scope Rules & Constraints
+- **Optional Nature**: Scope configuration is strictly optional. If no scope config is defined, the scan operates in permissive mode (everything is in-scope, all ports are allowed, no IP exclusions).
+- **Default Anchoring**: User-provided scope patterns are automatically anchored as `^(?:PATTERN)$` (unless they already start with `^` or end with `$`) to prevent substring-bypass injection (e.g. `example.com` matching `evil-example.com`).
+- **IP Target Filtering**: Bare-IP targets are denied if `in_scope` patterns are defined but the target domain is empty. If no `in_scope` patterns are configured, bare-IP targets are permitted.
+
 ---
 
 ## Checklist for Modifying Scan Steps

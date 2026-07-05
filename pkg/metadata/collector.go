@@ -3,6 +3,7 @@ package metadata
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"strings"
@@ -16,6 +17,9 @@ import (
 
 const (
 	defaultConcurrency = 4
+	// maxBodyBytes limits the response body reading to 64KB.
+	// Note: Any form or input fields located past the first 64KB
+	// of the HTML response will not be analyzed or counted.
 	maxBodyBytes       = 65536
 )
 
@@ -111,9 +115,16 @@ func CollectURLMetadata(scanID int64, urls []string, proxy string) (int, error) 
 
 func collectSignals(urls []string, proxy string) []httpSignal {
 	transport := &http.Transport{
-		TLSClientConfig:     utils.ModernBrowserTLSConfig(),
-		MaxIdleConns:        16,
-		MaxIdleConnsPerHost: 2,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSClientConfig:       utils.ModernBrowserTLSConfig(),
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 6 * time.Second,
+		IdleConnTimeout:       30 * time.Second,
+		MaxIdleConns:          16,
+		MaxIdleConnsPerHost:   2,
 	}
 	if proxy != "" {
 		if proxyURL, err := neturl.Parse(proxy); err == nil {
@@ -126,7 +137,7 @@ func collectSignals(urls []string, proxy string) []httpSignal {
 	}
 
 	jobs := make(chan string)
-	results := make(chan httpSignal, len(urls))
+	results := make(chan httpSignal, defaultConcurrency*4)
 	var wg sync.WaitGroup
 
 	for range defaultConcurrency {
@@ -156,7 +167,7 @@ func collectSignals(urls []string, proxy string) []httpSignal {
 		close(results)
 	}()
 
-	collected := make([]httpSignal, 0, len(urls))
+	var collected []httpSignal
 	for result := range results {
 		collected = append(collected, result)
 	}
@@ -199,13 +210,18 @@ func fetchSignal(client *http.Client, rawURL string) (httpSignal, bool) {
 	headersJSON, _ := json.Marshal(headers)
 
 	lowerBody := strings.ToLower(string(body))
-	loginSurface := strings.Contains(lowerBody, "password") ||
+	hasFormOrPasswordInput := strings.Contains(lowerBody, "<form") ||
+		strings.Contains(lowerBody, `type="password"`) ||
+		strings.Contains(lowerBody, `type='password'`) ||
+		strings.Contains(lowerBody, `type=password`)
+
+	loginSurface := hasFormOrPasswordInput && (strings.Contains(lowerBody, "password") ||
 		strings.Contains(lowerBody, "sign in") ||
 		strings.Contains(lowerBody, "signin") ||
 		strings.Contains(lowerBody, "log in") ||
 		strings.Contains(lowerBody, "login") ||
 		strings.Contains(lowerBody, "forgot password") ||
-		strings.Contains(lowerBody, "oauth")
+		strings.Contains(lowerBody, "oauth"))
 
 	hasCSP := resp.Header.Get("Content-Security-Policy") != ""
 	hasCacheHeaders := resp.Header.Get("Cache-Control") != "" ||

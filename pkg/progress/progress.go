@@ -15,6 +15,7 @@ const (
 	Reset   = logger.Reset
 	Bold    = logger.Bold
 	Dim     = logger.Dim
+	// L6: progress color constants are aliased directly from logger.Red to maintain single source of truth.
 	Red     = logger.Red
 	Green   = logger.Green
 	Yellow  = logger.Yellow
@@ -57,8 +58,9 @@ func ItemOK(name string) {
 // ItemFail prints a red ✗ status line.
 func ItemFail(name string, detail string) {
 	if detail != "" {
-		if len(detail) > 40 {
-			detail = detail[:37] + "..."
+		runes := []rune(detail)
+		if len(runes) > 40 {
+			detail = string(runes[:37]) + "..."
 		}
 		fmt.Printf("    %s✗%s %s  %s%s%s\n", Red, Reset, name, Red+Dim, detail, Reset)
 	} else {
@@ -104,7 +106,9 @@ func Tip(msg string) {
 }
 
 // ── Tracker ──────────────────────────────────────────────────────────────────
-// Thread-safe progress tracker with a live spinner for parallel installations.
+// Thread-safe progress tracker with a live spinner.
+// Contract: Safe for sequential Start/Complete/Fail; the only concurrency
+// is the internal render goroutine.
 
 type Tracker struct {
 	mu sync.Mutex
@@ -120,6 +124,16 @@ type Tracker struct {
 
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
+}
+
+func (t *Tracker) writefLocked(format string, args ...any) {
+	fmt.Printf(format, args...)
+}
+
+func (t *Tracker) writef(format string, args ...any) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.writefLocked(format, args...)
 }
 
 // NewTracker creates a new tracker for `total` items to install.
@@ -142,7 +156,7 @@ func (t *Tracker) RunSpinner() {
 		for {
 			select {
 			case <-t.stopCh:
-				fmt.Printf("\r%s", ClearLn) // erase spinner line
+				t.writef("\r%s", ClearLn) // erase spinner line
 				return
 			case <-ticker.C:
 				t.render()
@@ -192,7 +206,7 @@ func (t *Tracker) render() {
 		}
 	}
 
-	fmt.Printf("\r%s    %s%s%s %s [%s%d%s/%d] %s %s%s%s",
+	t.writefLocked("\r%s    %s%s%s %s [%s%d%s/%d] %s %s%s%s",
 		ClearLn,
 		Cyan, frame, Reset,
 		bar,
@@ -222,8 +236,8 @@ func (t *Tracker) Complete(name string) {
 	}
 	t.completed++
 
-	fmt.Printf("\r%s", ClearLn)
-	fmt.Printf("    %s✓%s %-30s %s%s%s\n", Green, Reset, name, Dim, fmtShort(dur), Reset)
+	t.writefLocked("\r%s", ClearLn)
+	t.writefLocked("    %s✓%s %-30s %s%s%s\n", Green, Reset, name, Dim, fmtShort(dur), Reset)
 }
 
 // Fail marks a tool as failed. Prints a ✗ line.
@@ -236,13 +250,14 @@ func (t *Tracker) Fail(name string, errMsg string) {
 	_ = ok
 	t.failed++
 
+	runes := []rune(errMsg)
 	short := errMsg
-	if len(short) > 35 {
-		short = short[:32] + "..."
+	if len(runes) > 35 {
+		short = string(runes[:32]) + "..."
 	}
 
-	fmt.Printf("\r%s", ClearLn)
-	fmt.Printf("    %s✗%s %-30s %s%s%s\n", Red, Reset, name, Red+Dim, short, Reset)
+	t.writefLocked("\r%s", ClearLn)
+	t.writefLocked("    %s✗%s %-30s %s%s%s\n", Red, Reset, name, Red+Dim, short, Reset)
 }
 
 // Skip records a skipped item (already installed).
