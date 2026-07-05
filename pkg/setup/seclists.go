@@ -50,6 +50,12 @@ func installSecListsSection(ctx *SetupContext) (installed, skipped, failed int) 
 	// For force updates, remove the existing local directory first
 	if ctx.IsForceUpdate() {
 		_ = os.RemoveAll(localPath)
+		// Warn if system-wide copies exist (M7)
+		for _, path := range []string{archPath, debianPath} {
+			if info, err := os.Stat(path); err == nil && info.IsDir() {
+				progress.ItemInfo(fmt.Sprintf("Warning: System SecLists copy at %s is left untouched by update. Run apt/pacman update to update it.", path))
+			}
+		}
 	}
 
 	err := ctx.RunCommand("seclists (clone)", "git", "clone", "--depth", "1",

@@ -3,7 +3,9 @@ package setup
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,22 +172,36 @@ func isPrereqInstalled(binary, dpkgPkg, pacmanQPkg string, distro distroFamily) 
 	return false
 }
 
-// runSysCmd runs a system command with inherited stdio.
+// runSysCmd runs a system command, redirecting to SetupLogger and terminal live (M5).
 func runSysCmd(ctx *SetupContext, name string, args ...string) error {
 	if ctx.Logger != nil {
 		ctx.Logger.Write("Running system command: %s %s", name, strings.Join(args, " "))
 	}
 	cmd := exec.Command(name, args...)
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+
+	setPGID(cmd) // M1: Setpgid true
+
 	err := cmd.Run()
 	if ctx.Logger != nil {
+		ctx.Logger.Write("--- [system_cmd: %s] ---", name)
+		ctx.Logger.Write("Command: %s", cmd.String())
+		if stdout.Len() > 0 {
+			ctx.Logger.Write("STDOUT:\n%s", stdout.String())
+		}
+		if stderr.Len() > 0 {
+			ctx.Logger.Write("STDERR:\n%s", stderr.String())
+		}
 		if err != nil {
 			ctx.Logger.Write("System command failed: %v", err)
 		} else {
 			ctx.Logger.Write("System command completed successfully")
 		}
+		ctx.Logger.Write("")
 	}
 	return err
 }
@@ -238,10 +254,10 @@ func ensurePathSetup() {
 	localBin := filepath.Join(home, ".local", "bin")
 	goBin := filepath.Join(home, "go", "bin")
 
-	if !strings.Contains(currentPath, localBin) {
+	if !pathListContains(currentPath, localBin) {
 		currentPath = localBin + string(os.PathListSeparator) + currentPath
 	}
-	if !strings.Contains(currentPath, goBin) {
+	if !pathListContains(currentPath, goBin) {
 		currentPath = goBin + string(os.PathListSeparator) + currentPath
 	}
 	_ = os.Setenv("PATH", currentPath)

@@ -6,9 +6,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 
 	"github.com/vishnu303/chaathan/pkg/progress"
 )
+
+// moduleRegex validates Python module identifiers to prevent command injection or malformed paths.
+var moduleRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+func isValidPythonModule(module string) bool {
+	return moduleRegex.MatchString(module)
+}
 
 // pyTools defines the Python-based security tools installed via pip.
 var pyTools = []struct {
@@ -20,6 +28,9 @@ var pyTools = []struct {
 	{"cloud_enum", "git+https://github.com/initstring/cloud_enum.git", "cloud_enum.py", "cloud_enum"},
 	{"sublist3r", "sublist3r", "sublist3r", "sublist3r"},
 }
+
+// sublist3rPinArgs specifies the pip arguments used to pin urllib3 and requests for sublist3r compatibility.
+var sublist3rPinArgs = []string{"install", "--break-system-packages", "requests", "urllib3<2"}
 
 // installPythonToolsSection checks and installs Python-based tools sequentially.
 func installPythonToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
@@ -34,6 +45,10 @@ func installPythonToolsSection(ctx *SetupContext) (installed, skipped, failed in
 	var toInstall []pyTool
 	skippedCount := 0
 	for _, t := range pyTools {
+		if !isValidPythonModule(t.module) {
+			progress.ItemFail(t.name, fmt.Sprintf("invalid module identifier: %s", t.module))
+			continue
+		}
 		if !ctx.IsForceUpdate() && pythonToolInstalled(t.name, t.cmdName, t.module) {
 			_ = ensurePythonToolShim(t.name, t.module)
 			skippedCount++
@@ -67,15 +82,12 @@ func installPythonToolsSection(ctx *SetupContext) (installed, skipped, failed in
 		}
 
 		// sublist3r depends on requests/urllib3, but urllib3 v2.x dropped
-		// urllib3.packages.six.moves, which it relies on. A constraint in the
-		// install command above is insufficient when urllib3 v2 is already globally
-		// installed — pip won't downgrade an already-satisfied dependency. Force a
-		// separate reinstall to guarantee the working 1.26.x series is on disk.
+		// urllib3.packages.six.moves, which it relies on.
+		// Force urllib3<2 to guarantee the working 1.26.x series is on disk.
 		if t.name == "sublist3r" {
-			pinArgs := []string{"install", "--break-system-packages", "--upgrade", "requests", "urllib3"}
-			pinErr := ctx.RunCommand(t.name+" (urllib3/requests upgrade)", pip, pinArgs...)
+			pinErr := ctx.RunCommand(t.name+" (urllib3/requests pin)", pip, sublist3rPinArgs...)
 			if pinErr != nil {
-				tracker.Fail(t.name, "upgrade requests/urllib3 failed: "+pinErr.Error())
+				tracker.Fail(t.name, "pin requests/urllib3 failed: "+pinErr.Error())
 				continue
 			}
 		}
@@ -113,7 +125,7 @@ func pythonToolInstalled(name, cmdName, module string) bool {
 			return true
 		}
 	}
-	if module != "" && pythonModuleInstalled(module) {
+	if module != "" && isValidPythonModule(module) && pythonModuleInstalled(module) {
 		return true
 	}
 	return false
@@ -121,7 +133,7 @@ func pythonToolInstalled(name, cmdName, module string) bool {
 
 // pythonModuleInstalled checks if a python module is importable.
 func pythonModuleInstalled(module string) bool {
-	if module == "" {
+	if module == "" || !isValidPythonModule(module) {
 		return false
 	}
 	return exec.Command("python3", "-c", "import "+module).Run() == nil
@@ -131,6 +143,9 @@ func pythonModuleInstalled(module string) bool {
 func ensurePythonToolShim(name, module string) error {
 	if name == "" || module == "" {
 		return nil
+	}
+	if !isValidPythonModule(module) {
+		return fmt.Errorf("invalid module identifier: %s", module)
 	}
 	if _, err := exec.LookPath(name); err == nil {
 		return nil

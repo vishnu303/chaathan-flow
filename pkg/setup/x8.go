@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/vishnu303/chaathan/pkg/progress"
 )
@@ -42,44 +43,60 @@ func installX8Section(ctx *SetupContext) (installed, skipped, failed int) {
 		return 0, 0, 1
 	}
 
+	// L8: Single tracker for the entire installation attempt
+	tracker := progress.NewTracker(1)
+	tracker.RunSpinner()
+	tracker.Start("installing x8")
+
 	// Try downloading precompiled binary first if on Linux AMD64
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		tracker := progress.NewTracker(1)
-		tracker.RunSpinner()
-		tracker.Start("downloading precompiled x8")
-
 		downloadURL := "https://github.com/Sh1Yo/x8/releases/download/v4.3.0/x86_64-linux-x8.gz"
 		err := downloadAndDecompressGzip(downloadURL, dst)
 		if err == nil {
-			tracker.Complete("downloading precompiled x8")
+			// Warn that we did not perform checksum verification but did a size sanity check (H5)
+			if ctx.Logger != nil {
+				ctx.Logger.Write("Warning: No checksum verification asset available for x8, performing size sanity check instead")
+			}
+			// Size sanity check (H5)
+			if info, statErr := os.Stat(dst); statErr != nil {
+				_ = os.Remove(dst) // clean up (L9)
+				tracker.Fail("installing x8", "failed to stat downloaded x8 binary: "+statErr.Error())
+				tracker.StopSpinner()
+				return 0, 0, 1
+			} else if info.Size() < 500000 { // Check that file is at least 500 KB
+				_ = os.Remove(dst) // clean up (L9)
+				tracker.Fail("installing x8", fmt.Sprintf("downloaded x8 binary size is too small: %d bytes", info.Size()))
+				tracker.StopSpinner()
+				return 0, 0, 1
+			}
+
+			tracker.Complete("installing x8")
 			tracker.StopSpinner()
 			return 1, 0, 0
 		}
 
-		tracker.Fail("downloading precompiled x8", err.Error()+"; falling back to Cargo build")
-		tracker.StopSpinner()
+		if ctx.Logger != nil {
+			ctx.Logger.Write("Precompiled x8 download failed: %v; falling back to Cargo build", err)
+		}
 	}
 
 	// Fallback to Cargo install
-	tracker := progress.NewTracker(1)
-	tracker.RunSpinner()
-	tracker.Start("cargo install x8")
-
-	err = ctx.RunCommand("x8", "cargo", "install", "x8", "--root", localDir)
+	err = ctx.RunCommand("x8 (cargo install)", "cargo", "install", "x8", "--root", localDir)
 	if err != nil {
-		tracker.Fail("cargo install x8", err.Error())
+		tracker.Fail("installing x8", err.Error())
 		tracker.StopSpinner()
 		return 0, 0, 1
 	}
 
-	tracker.Complete("cargo install x8")
+	tracker.Complete("installing x8")
 	tracker.StopSpinner()
 	return 1, 0, 0
 }
 
 // downloadAndDecompressGzip downloads a gzipped file and extracts it to destination.
 func downloadAndDecompressGzip(url, dst string) error {
-	resp, err := http.Get(url)
+	client := setupHTTPClient(5 * time.Minute)
+	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
@@ -95,12 +112,17 @@ func downloadAndDecompressGzip(url, dst string) error {
 	}
 	defer gr.Close()
 
+	// L9: make sure to clean up partial file on write error
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
 	_, err = io.Copy(out, gr)
-	return err
+	out.Close() // close explicitly before handling error / removing
+	if err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return nil
 }

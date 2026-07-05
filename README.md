@@ -151,7 +151,8 @@ chaathan diff <previous_id> <latest_id>
 Chaathan is packaged as a single static binary. It acts as an orchestration engine, launching and managing 27 third-party security utilities.
 
 > [!IMPORTANT]  
-> **Host Requirements:** Linux operating system (tested extensively on Ubuntu, Arch, and CachyOS). Go 1.26 or greater and Git must be pre-installed on the host system.
+> **Host Requirements:** Linux operating system (tested extensively on Ubuntu, Arch, and CachyOS) on AMD64, ARM64, or 386 architectures. Git must be pre-installed.
+> Go 1.26 or greater is required; if missing or outdated, the setup script automatically installs and configures it under `~/.local/go` (requiring no sudo or root privileges).
 > All external scanning engines (such as Amass, Nuclei, Httpx, Dalfox) are dynamically compiled and verified during the `make all` bootstrap process (syntax detailed in the Command Center).
 
 ---
