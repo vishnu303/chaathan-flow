@@ -56,6 +56,11 @@ func installSecListsSection(ctx *SetupContext) (installed, skipped, failed int) 
 				progress.ItemInfo(fmt.Sprintf("Warning: System SecLists copy at %s is left untouched by update. Run apt/pacman update to update it.", path))
 			}
 		}
+	} else {
+		// Clean up any incomplete/broken previous clones in localPath so git clone can succeed
+		if _, err := os.Stat(localPath); err == nil {
+			_ = os.RemoveAll(localPath)
+		}
 	}
 
 	err := ctx.RunCommand("seclists (clone)", "git", "clone", "--depth", "1",

@@ -685,10 +685,10 @@ func resolveSeclistsBase() string {
 	archPath := "/usr/share/seclists"
 	debianPath := "/usr/share/wordlists/seclists"
 
-	if info, err := os.Stat(localPath); err == nil && info.IsDir() {
+	if info, err := os.Stat(filepath.Join(localPath, "Discovery")); err == nil && info.IsDir() {
 		return localPath
 	}
-	if info, err := os.Stat(archPath); err == nil && info.IsDir() {
+	if info, err := os.Stat(filepath.Join(archPath, "Discovery")); err == nil && info.IsDir() {
 		return archPath
 	}
 	return debianPath
