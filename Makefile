@@ -78,9 +78,9 @@ clean: ## Remove compiled binaries and temporary build artifacts
 	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) clean
 	@echo "✅ Clean"
 
-test: ## Run the Go unit test suite
+test: ## Run the Go unit test suite with race detection and coverage
 	@echo "Running tests..."
-	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) test ./... -v -count=1
+	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) test -race -count=1 -coverpkg=github.com/vishnu303/chaathan/pkg/...,github.com/vishnu303/chaathan/utils/... -coverprofile=coverage.out ./...
 	@echo "✅ Tests passed"
 
 vet: ## Run static code analysis with go vet

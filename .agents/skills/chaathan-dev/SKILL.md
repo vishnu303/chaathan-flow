@@ -108,6 +108,7 @@ func stepExampleTool(c *Ctx) bool {
    - Transfer these variables to `RunConfig` in the `Run` call.
    - Access config parameters within step files via the embedded `Ctx` (e.g., `c.SkipAmass`).
 5. **Logs Redirection:** If `--log` is supplied, logs are written to `~/.chaathan/logs/<domain>_<scanID>_<timestamp>.log`. Ensure any custom logs redirect through `logger.Info` or `logger.Write` to mirror them correctly.
+6. **Test Locations:** All test files (`*_test.go`) and test support/mock utilities must reside strictly within the `test/` folder hierarchy. No tests are allowed to remain in the `pkg/` or `utils/` production packages.
 
 ---
 
@@ -117,8 +118,8 @@ Run all tests, lints, and builds inside the WSL environment if developing on a W
 
 ### WSL Test Pipeline:
 ```bash
-# Verify unit tests
-wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./..."
+# Verify unit tests with race detector and coverage package mapping
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test -race -count=1 -coverpkg=github.com/vishnu303/chaathan/pkg/...,github.com/vishnu303/chaathan/utils/... -coverprofile=coverage.out ./..."
 
 # Run static checks
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go vet ./..."

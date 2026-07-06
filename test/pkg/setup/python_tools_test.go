@@ -1,7 +1,9 @@
-package setup
+package setup_test
 
 import (
 	"testing"
+
+	"github.com/vishnu303/chaathan/pkg/setup"
 )
 
 func TestIsValidPythonModule(t *testing.T) {
@@ -22,29 +24,31 @@ func TestIsValidPythonModule(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isValidPythonModule(tt.module); got != tt.want {
-				t.Errorf("isValidPythonModule(%q) = %v, want %v", tt.module, got, tt.want)
+			if got := setup.IsValidPythonModule(tt.module); got != tt.want {
+				t.Errorf("IsValidPythonModule(%q) = %v, want %v", tt.module, got, tt.want)
 			}
 		})
 	}
 }
 
 func TestSublist3rPinArgs(t *testing.T) {
+	pinArgs := *setup.Sublist3rPinArgs
+
 	// Assert urllib3<2 present
 	foundUrllib3Pin := false
-	for _, arg := range sublist3rPinArgs {
+	for _, arg := range pinArgs {
 		if arg == "urllib3<2" {
 			foundUrllib3Pin = true
 		}
 	}
 	if !foundUrllib3Pin {
-		t.Errorf("expected 'urllib3<2' to be present in sublist3rPinArgs, got %v", sublist3rPinArgs)
+		t.Errorf("expected 'urllib3<2' to be present in Sublist3rPinArgs, got %v", pinArgs)
 	}
 
 	// Assert --upgrade absent
-	for _, arg := range sublist3rPinArgs {
+	for _, arg := range pinArgs {
 		if arg == "--upgrade" {
-			t.Errorf("expected '--upgrade' to be absent from sublist3rPinArgs, but it was found")
+			t.Errorf("expected '--upgrade' to be absent from Sublist3rPinArgs, but it was found")
 		}
 	}
 }

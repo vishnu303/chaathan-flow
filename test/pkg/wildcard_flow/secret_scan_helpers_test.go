@@ -1,8 +1,10 @@
-package wildcard_flow
+package wildcard_flow_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/vishnu303/chaathan/pkg/wildcard_flow"
 )
 
 func TestShannonEntropy(t *testing.T) {
@@ -16,17 +18,17 @@ func TestShannonEntropy(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got := shannonEntropy(tc.input)
+		got := wildcard_flow.ShannonEntropy(tc.input)
 		if got != tc.expected {
-			t.Errorf("shannonEntropy(%q) = %f; want %f", tc.input, got, tc.expected)
+			t.Errorf("ShannonEntropy(%q) = %f; want %f", tc.input, got, tc.expected)
 		}
 	}
 
 	// High entropy string should be > 3.0
 	highEntropy := "aBcD1!eFgH2@iJkL"
-	got := shannonEntropy(highEntropy)
+	got := wildcard_flow.ShannonEntropy(highEntropy)
 	if got < 3.0 {
-		t.Errorf("shannonEntropy(%q) = %f; want > 3.0", highEntropy, got)
+		t.Errorf("ShannonEntropy(%q) = %f; want > 3.0", highEntropy, got)
 	}
 }
 
@@ -47,9 +49,9 @@ func TestIsLikelySecret(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		got := isLikelySecret(tc.pattern, tc.val)
+		got := wildcard_flow.IsLikelySecret(tc.pattern, tc.val)
 		if got != tc.expected {
-			t.Errorf("isLikelySecret(%q, %q) = %t; want %t", tc.pattern, tc.val, got, tc.expected)
+			t.Errorf("IsLikelySecret(%q, %q) = %t; want %t", tc.pattern, tc.val, got, tc.expected)
 		}
 	}
 }
@@ -61,15 +63,15 @@ func TestExtractContext(t *testing.T) {
 	end := start + len(match)
 
 	// Test extraction with context size 10
-	got := extractContext(line, start, end, 10)
+	got := wildcard_flow.ExtractContext(line, start, end, 10)
 	expected := "...then the secret token to match followed..."
 	if got != expected {
-		t.Errorf("extractContext(...) = %q; want %q", got, expected)
+		t.Errorf("ExtractContext(...) = %q; want %q", got, expected)
 	}
 
 	// Test boundary at start
-	gotStart := extractContext(line, 0, 4, 10) // "some"
+	gotStart := wildcard_flow.ExtractContext(line, 0, 4, 10) // "some"
 	if !strings.HasPrefix(gotStart, "some") || strings.HasPrefix(gotStart, "...") {
-		t.Errorf("extractContext(...) for start boundary = %q; did not expect leading ellipsis", gotStart)
+		t.Errorf("ExtractContext(...) for start boundary = %q; did not expect leading ellipsis", gotStart)
 	}
 }

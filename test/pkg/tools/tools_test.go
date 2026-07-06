@@ -9,33 +9,12 @@ import (
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/config"
-	"github.com/vishnu303/chaathan/pkg/runner"
 	"github.com/vishnu303/chaathan/pkg/tools"
+	"github.com/vishnu303/chaathan/test/pkg/runner/runnerfaketest"
 )
 
-type DummyRunner struct {
-	LastCmd  string
-	LastArgs []string
-	LastOpts []runner.Option
-}
-
-func (d *DummyRunner) Run(ctx context.Context, command string, args []string, opts ...runner.Option) (string, error) {
-	d.LastCmd = command
-	d.LastArgs = args
-	d.LastOpts = opts
-	return "dummy output", nil
-}
-
-func (d *DummyRunner) GetOptions() *runner.RunOptions {
-	opts := &runner.RunOptions{}
-	for _, o := range d.LastOpts {
-		o(opts)
-	}
-	return opts
-}
-
 func TestToolBoxOptionsAndHelpers(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 
 	if tb == nil {
@@ -82,7 +61,7 @@ func TestToolBoxOptionsAndHelpers(t *testing.T) {
 }
 
 func TestX8Headers(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 
 	tb.WithCustomAuth("my_cookie_val", []string{"X-My-Header: header_val"})
@@ -122,7 +101,7 @@ func TestX8Headers(t *testing.T) {
 }
 
 func TestGoSpiderUA(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 	tb.WithGeneral(&config.GeneralConfig{UserAgent: "custom_gospider_ua"})
 
@@ -152,7 +131,7 @@ func TestGoSpiderUA(t *testing.T) {
 }
 
 func TestDalfoxUA(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 	tb.WithGeneral(&config.GeneralConfig{UserAgent: "custom_dalfox_ua"})
 
@@ -182,7 +161,7 @@ func TestDalfoxUA(t *testing.T) {
 }
 
 func TestRunAmassIntel(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 
 	// Attach amass config
@@ -213,7 +192,7 @@ func TestRunAmassIntel(t *testing.T) {
 }
 
 func TestRunUncoverEnvVars(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 	tb.APIKeys = &config.APIKeysConfig{
 		Shodan: "shodan_key",
@@ -244,7 +223,7 @@ func TestRunUncoverEnvVars(t *testing.T) {
 }
 
 func TestRunKatanaProxy(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 	tb.WithGeneral(&config.GeneralConfig{Proxy: "http://katana-proxy:8080"})
 
@@ -261,7 +240,7 @@ func TestRunKatanaProxy(t *testing.T) {
 }
 
 func TestRunHakrawlerStdin(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 
 	ctx := context.Background()
@@ -287,7 +266,7 @@ func TestRunHakrawlerStdin(t *testing.T) {
 }
 
 func TestNucleiScanAppendCommon(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 	tb.WithGeneral(&config.GeneralConfig{Proxy: "socks5://127.0.0.1:9050", UserAgent: "nuclei_ua"})
 	tb.WithCustomAuth("cookie_val", []string{"Auth: token"})
@@ -321,7 +300,7 @@ func TestNucleiScanAppendCommon(t *testing.T) {
 }
 
 func TestBuildFfufArgs(t *testing.T) {
-	tb := tools.New(&DummyRunner{})
+	tb := tools.New(&runnerfaketest.DummyRunner{})
 	tb.WithGeneral(&config.GeneralConfig{Proxy: "http://ffuf-proxy"})
 
 	args := tb.RunFfufArgsTestHelper("http://target.com", "wordlist.txt", "out.json")
@@ -349,7 +328,7 @@ func TestRunNaabuListPortParsing(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		dr := &DummyRunner{}
+		dr := &runnerfaketest.DummyRunner{}
 		tb := tools.New(dr)
 		tb.Config = &config.ToolsConfig{
 			Naabu: config.NaabuConfig{
@@ -370,7 +349,7 @@ func TestRunNaabuListPortParsing(t *testing.T) {
 }
 
 func TestAppendCommonMatrix(t *testing.T) {
-	tb := tools.New(&DummyRunner{})
+	tb := tools.New(&runnerfaketest.DummyRunner{})
 	tb.WithGeneral(&config.GeneralConfig{UserAgent: "test_ua", Proxy: "http://proxy"})
 	tb.WithCustomAuth("cookie_val", []string{"X-Test: header_val"})
 
@@ -400,7 +379,7 @@ func TestWriteToFileHarden(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	targetPath := filepath.Join(tempDir, "nested", "sub", "test.txt")
-	tb := tools.New(&DummyRunner{})
+	tb := tools.New(&runnerfaketest.DummyRunner{})
 
 	err = tb.WriteToFileTestHelper(targetPath, "hello world")
 	if err != nil {

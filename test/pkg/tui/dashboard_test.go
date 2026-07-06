@@ -1,4 +1,4 @@
-package tui
+package tui_test
 
 import (
 	"os"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/pkg/scan"
+	"github.com/vishnu303/chaathan/pkg/tui"
 )
 
 func TestTruncateTextMultibyte(t *testing.T) {
@@ -24,9 +25,9 @@ func TestTruncateTextMultibyte(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := truncateText(tt.input, tt.limit)
+		got := tui.TruncateText(tt.input, tt.limit)
 		if got != tt.expected {
-			t.Errorf("truncateText(%q, %d) = %q, want %q", tt.input, tt.limit, got, tt.expected)
+			t.Errorf("TruncateText(%q, %d) = %q, want %q", tt.input, tt.limit, got, tt.expected)
 		}
 	}
 }
@@ -42,9 +43,9 @@ func TestPickStepsByType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		steps := pickStepsForType(tt.scanType)
+		steps := tui.PickStepsForType(tt.scanType)
 		if len(steps) != tt.expected {
-			t.Errorf("pickStepsForType(%q) returned %d steps, want %d", tt.scanType, len(steps), tt.expected)
+			t.Errorf("PickStepsForType(%q) returned %d steps, want %d", tt.scanType, len(steps), tt.expected)
 		}
 	}
 }
@@ -91,7 +92,7 @@ func TestGetTopTechnologiesAggregation(t *testing.T) {
 		}
 	}
 
-	topTechs := getTopTechnologies(scanID)
+	topTechs := tui.GetTopTechnologies(scanID)
 	
 	if len(topTechs) != 3 {
 		t.Fatalf("expected 3 top technologies, got %d: %v", len(topTechs), topTechs)

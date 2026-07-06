@@ -69,8 +69,8 @@ The Return on Investment (ROI) score helps prioritize targets by analyzing crawl
 ### Verification Pipeline:
 ```bash
 # Validate database compilation
-wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./pkg/database/..."
-wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./pkg/report/..."
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./test/pkg/database/..."
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./test/pkg/report/..."
 ```
 
 ### Dry-run Command Checks (using a local database):

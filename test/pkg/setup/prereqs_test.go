@@ -1,10 +1,12 @@
-package setup
+package setup_test
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vishnu303/chaathan/pkg/setup"
 )
 
 func TestContainsWord(t *testing.T) {
@@ -21,9 +23,9 @@ func TestContainsWord(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := containsWord(tt.s, tt.word)
+		got := setup.ContainsWord(tt.s, tt.word)
 		if got != tt.expected {
-			t.Errorf("containsWord(%q, %q) = %v, want %v", tt.s, tt.word, got, tt.expected)
+			t.Errorf("ContainsWord(%q, %q) = %v, want %v", tt.s, tt.word, got, tt.expected)
 		}
 	}
 }
@@ -45,9 +47,9 @@ func TestPathListContains(t *testing.T) {
 	for _, tt := range tests {
 		list := strings.ReplaceAll(tt.list, ":", string(os.PathListSeparator))
 		dir := tt.dir
-		got := pathListContains(list, dir)
+		got := setup.PathListContains(list, dir)
 		if got != tt.expected {
-			t.Errorf("pathListContains(%q, %q) = %v, want %v", list, dir, got, tt.expected)
+			t.Errorf("PathListContains(%q, %q) = %v, want %v", list, dir, got, tt.expected)
 		}
 	}
 }
@@ -70,9 +72,9 @@ func TestAppendLinesToFile(t *testing.T) {
 	comment := "# test comment"
 	lines := []string{"line3", "line4"}
 
-	added, err := appendLinesToFile(filePath, lines, comment)
+	added, err := setup.AppendLinesToFile(filePath, lines, comment)
 	if err != nil {
-		t.Fatalf("appendLinesToFile first run failed: %v", err)
+		t.Fatalf("AppendLinesToFile first run failed: %v", err)
 	}
 	if !added {
 		t.Error("expected added = true on first run, got false")
@@ -87,9 +89,9 @@ func TestAppendLinesToFile(t *testing.T) {
 		t.Errorf("file content missing expected appended lines: %s", content)
 	}
 
-	addedSecond, err := appendLinesToFile(filePath, lines, comment)
+	addedSecond, err := setup.AppendLinesToFile(filePath, lines, comment)
 	if err != nil {
-		t.Fatalf("appendLinesToFile second run failed: %v", err)
+		t.Fatalf("AppendLinesToFile second run failed: %v", err)
 	}
 	if addedSecond {
 		t.Error("expected added = false on second run (idempotency check), got true")

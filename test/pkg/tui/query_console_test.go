@@ -1,4 +1,4 @@
-package tui
+package tui_test
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/rivo/tview"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/tui"
 )
 
 func TestQueryConsoleLoadAndCapping(t *testing.T) {
@@ -51,25 +52,25 @@ func TestQueryConsoleLoadAndCapping(t *testing.T) {
 		t.Fatalf("failed to insert URL: %v", err)
 	}
 
-	q := &QueryConsole{}
+	q := &tui.QueryConsole{}
 	q.FilterInput = tview.NewInputField()
 	q.FooterText = tview.NewTextView()
 	for i := 0; i < 6; i++ {
 		q.Tables[i] = tview.NewTable()
 	}
 
-	q.loadScanData(scanID)
+	q.LoadScanData(scanID)
 
-	if q.subdomainsTotalCount != 5005 {
-		t.Errorf("expected subdomainsTotalCount to be 5005, got %d", q.subdomainsTotalCount)
+	if q.GetSubdomainsTotalCount() != 5005 {
+		t.Errorf("expected subdomainsTotalCount to be 5005, got %d", q.GetSubdomainsTotalCount())
 	}
 
-	if len(q.subdomains) != 5000 {
-		t.Errorf("expected capped subdomains slice to have length 5000, got %d", len(q.subdomains))
+	if len(q.GetSubdomains()) != 5000 {
+		t.Errorf("expected capped subdomains slice to have length 5000, got %d", len(q.GetSubdomains()))
 	}
 
-	cachedTech, ok := q.techCache["https://example.com/api"]
-	if !ok {
+	cachedTech := q.GetTechCacheValue("https://example.com/api")
+	if cachedTech == "" {
 		t.Fatal("expected tech cache to contain entry for URL")
 	}
 

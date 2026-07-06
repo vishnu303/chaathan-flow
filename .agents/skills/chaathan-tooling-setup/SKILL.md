@@ -67,7 +67,7 @@ If an external installation fails:
 ### Verification Pipeline:
 ```bash
 # Validate installer packages
-wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./pkg/setup/..."
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./test/pkg/setup/..."
 
 # Compile binary verification
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go build -buildvcs=false -o chaathan ."

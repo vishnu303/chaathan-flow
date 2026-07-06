@@ -1,9 +1,11 @@
-package setup
+package setup_test
 
 import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/vishnu303/chaathan/pkg/setup"
 )
 
 func TestParseGoVersion(t *testing.T) {
@@ -47,30 +49,30 @@ func TestParseGoVersion(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotOK, gotVerStr := parseGoVersion(tt.version)
+			gotOK, gotVerStr := setup.ParseGoVersion(tt.version)
 			if gotOK != tt.wantOK {
-				t.Errorf("parseGoVersion() gotOK = %v, want %v", gotOK, tt.wantOK)
+				t.Errorf("ParseGoVersion() gotOK = %v, want %v", gotOK, tt.wantOK)
 			}
 			if gotVerStr != tt.wantVerStr {
-				t.Errorf("parseGoVersion() gotVerStr = %q, want %q", gotVerStr, tt.wantVerStr)
+				t.Errorf("ParseGoVersion() gotVerStr = %q, want %q", gotVerStr, tt.wantVerStr)
 			}
 		})
 	}
 }
 
 func TestGoArchSuffix(t *testing.T) {
-	arch, err := goArchSuffix()
+	arch, err := setup.GoArchSuffix()
 	switch runtime.GOARCH {
 	case "amd64", "arm64", "386":
 		if err != nil {
-			t.Errorf("goArchSuffix() failed for supported arch %s: %v", runtime.GOARCH, err)
+			t.Errorf("GoArchSuffix() failed for supported arch %s: %v", runtime.GOARCH, err)
 		}
 		if arch != runtime.GOARCH {
-			t.Errorf("goArchSuffix() = %q, want %q", arch, runtime.GOARCH)
+			t.Errorf("GoArchSuffix() = %q, want %q", arch, runtime.GOARCH)
 		}
 	default:
 		if err == nil {
-			t.Errorf("goArchSuffix() did not fail for unsupported arch %s", runtime.GOARCH)
+			t.Errorf("GoArchSuffix() did not fail for unsupported arch %s", runtime.GOARCH)
 		}
 	}
 }
@@ -82,9 +84,9 @@ func TestVerifySHA256(t *testing.T) {
 
 	t.Run("valid hash", func(t *testing.T) {
 		r := strings.NewReader(content)
-		err := verifySHA256(r, expectedHash)
+		err := setup.VerifySHA256Func(r, expectedHash)
 		if err != nil {
-			t.Errorf("verifySHA256() unexpected error: %v", err)
+			t.Errorf("VerifySHA256Func() unexpected error: %v", err)
 		}
 	})
 
@@ -92,25 +94,25 @@ func TestVerifySHA256(t *testing.T) {
 		r := strings.NewReader(content)
 		// simulate sha256sum file content
 		sha256sumOutput := expectedHash + "  some_file.tar.gz\n"
-		err := verifySHA256(r, sha256sumOutput)
+		err := setup.VerifySHA256Func(r, sha256sumOutput)
 		if err != nil {
-			t.Errorf("verifySHA256() unexpected error: %v", err)
+			t.Errorf("VerifySHA256Func() unexpected error: %v", err)
 		}
 	})
 
 	t.Run("tampered content", func(t *testing.T) {
 		r := strings.NewReader("hello world modified")
-		err := verifySHA256(r, expectedHash)
+		err := setup.VerifySHA256Func(r, expectedHash)
 		if err == nil {
-			t.Error("verifySHA256() expected error for tampered content, got nil")
+			t.Error("VerifySHA256Func() expected error for tampered content, got nil")
 		}
 	})
 
 	t.Run("invalid hash string", func(t *testing.T) {
 		r := strings.NewReader(content)
-		err := verifySHA256(r, "")
+		err := setup.VerifySHA256Func(r, "")
 		if err == nil {
-			t.Error("verifySHA256() expected error for empty hash, got nil")
+			t.Error("VerifySHA256Func() expected error for empty hash, got nil")
 		}
 	})
 }

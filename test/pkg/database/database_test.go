@@ -8,6 +8,7 @@ import (
 )
 
 func TestDatabaseOperations(t *testing.T) {
+	// NOT t.Parallel
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
 
@@ -115,6 +116,7 @@ func TestDatabaseOperations(t *testing.T) {
 }
 
 func TestNullStringMetadataReads(t *testing.T) {
+	// NOT t.Parallel
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test_nulls.db")
 
@@ -148,7 +150,7 @@ func TestNullStringMetadataReads(t *testing.T) {
 		t.Errorf("expected empty HeadersJSON for NULL value, got %q", metas[0].HeadersJSON)
 	}
 
-	_, err = database.DB.Exec("INSERT INTO url_metadata (scan_id, url, host, headers_json) VALUES (?, ?, ?, NULL)", scanID, "http://target-null.com/path", "target-null.com")
+	err = database.InsertRawURLMetadataForTest(scanID, "http://target-null.com/path", "target-null.com")
 	if err != nil {
 		t.Fatalf("failed to insert partial url metadata: %v", err)
 	}

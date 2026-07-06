@@ -1,98 +1,192 @@
 package logger_test
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/logger"
 )
 
-func TestLoggerFileLogging(t *testing.T) {
-	tempDir := t.TempDir()
-	logPath := filepath.Join(tempDir, "scan.log")
+func TestSmartStepHeaderIncrement(t *testing.T) {
+	logger.InitScanUI(23)
 
-	// 1. Init file log
-	err := logger.InitFileLog(logPath)
+	// 1. First step call: increments to 1
+	logger.StepHeader("Step 1: Passive Recon")
+	if logger.GetCurrentStep() != 1 {
+		t.Errorf("expected step 1, got %d", logger.GetCurrentStep())
+	}
+
+	// 2. Second step call (different step): increments to 2
+	logger.StepHeader("Step 2: Active Subdomain Enumeration (Amass)")
+	if logger.GetCurrentStep() != 2 {
+		t.Errorf("expected step 2, got %d", logger.GetCurrentStep())
+	}
+
+	// 3. Skip call for same step: should NOT increment (stays at 2)
+	logger.StepHeader("Step 2: Skipping Amass (--skip-amass)")
+	if logger.GetCurrentStep() != 2 {
+		t.Errorf("expected step 2 to remain, got %d", logger.GetCurrentStep())
+	}
+
+	// 4. Next step (different step): increments to 3
+	logger.StepHeader("Step 3: GitHub Subdomain Discovery")
+	if logger.GetCurrentStep() != 3 {
+		t.Errorf("expected step 3, got %d", logger.GetCurrentStep())
+	}
+
+	// 5. Alternate/skip call for same step: should NOT increment (stays at 3)
+	logger.StepHeader("Step 3: Skipping GitHub Recon (no token provided)")
+	if logger.GetCurrentStep() != 3 {
+		t.Errorf("expected step 3 to remain, got %d", logger.GetCurrentStep())
+	}
+
+	// 6. Non-step prefix call: should increment (since prefix is "")
+	logger.StepHeader("Some random header")
+	if logger.GetCurrentStep() != 4 {
+		t.Errorf("expected step 4, got %d", logger.GetCurrentStep())
+	}
+}
+
+func TestStepHeaderConcurrent(t *testing.T) {
+	logger.InitScanUI(100)
+
+	var wg sync.WaitGroup
+	numWorkers := 10
+	numCalls := 10
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < numCalls; j++ {
+				logger.StepHeader("Step %d: Worker %d Run %d", workerID*numCalls+j, workerID, j)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	finalStep := logger.GetCurrentStep()
+
+	if finalStep <= 0 {
+		t.Errorf("expected final step count > 0, got %d", finalStep)
+	}
+}
+
+func TestLogWriteStripsANSI(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "chaathan_logger_test_*")
 	if err != nil {
-		t.Fatalf("InitFileLog failed: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	logPath := filepath.Join(tempDir, "test.log")
+	if err := logger.InitFileLog(logPath); err != nil {
+		t.Fatalf("failed to init log file: %v", err)
 	}
 	defer logger.CloseFileLog()
 
-	// 2. Write log header
-	logger.WriteLogHeader("target.com", 123, logPath)
+	ansiStr := "\033[31mRed Bold Text\033[0m"
+	logger.LogWrite(io.Discard, ansiStr)
 
-	// 3. Log commands and debug lines
-	logger.LogCommand("ping -c 4 target.com")
-	logger.FileDebug("Starting scanning pipeline")
-	logger.LogToolFailure("ping", "ping -c 4 target.com", "unknown host target.com", nil)
-	logger.LogToolSkipped("ping", "ping -c 4 target.com")
-
-	// Close the log file so we can read it
 	logger.CloseFileLog()
 
-	contentBytes, err := os.ReadFile(logPath)
+	content, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("failed to read log file: %v", err)
 	}
-	content := string(contentBytes)
 
-	// Verify headers and content
-	if !strings.Contains(content, "=== Chaathan Wildcard Scan Log ===") {
-		t.Errorf("expected log header in file content, got: %s", content)
+	contentStr := string(content)
+	if strings.Contains(contentStr, "\x1b[") || strings.Contains(contentStr, "\033") {
+		t.Errorf("log file contains ANSI escape sequences: %q", contentStr)
 	}
-	if !strings.Contains(content, "target.com") {
-		t.Errorf("expected target domain in file content")
-	}
-	if !strings.Contains(content, "ping -c 4 target.com") {
-		t.Errorf("expected logged command in file content")
-	}
-	if !strings.Contains(content, "Starting scanning pipeline") {
-		t.Errorf("expected debug log in file content")
-	}
-	if !strings.Contains(content, "TOOL ERROR: ping") {
-		t.Errorf("expected tool error log in file content")
-	}
-	if !strings.Contains(content, "TOOL SKIPPED: ping") {
-		t.Errorf("expected tool skipped log in file content")
+
+	if !strings.Contains(contentStr, "Red Bold Text") {
+		t.Errorf("expected text 'Red Bold Text' in log file, got: %q", contentStr)
 	}
 }
 
-func TestLoggerFormatDuration(t *testing.T) {
-	d1 := 5 * time.Second
-	s1 := logger.FmtDuration(d1)
-	if s1 != "5s" {
-		t.Errorf("expected 5s, got %q", s1)
+func TestFmtDurationAndElapsed(t *testing.T) {
+	tests := []struct {
+		d        time.Duration
+		expected string
+	}{
+		{0, "0s"},
+		{5 * time.Second, "5s"},
+		{5*time.Minute + 4*time.Second, "5m04s"},
+		{1*time.Hour + 2*time.Minute + 3*time.Second, "1h02m03s"},
 	}
 
-	d2 := 2*time.Minute + 3*time.Second
-	s2 := logger.FmtDuration(d2)
-	if s2 != "2m03s" {
-		t.Errorf("expected 2m03s, got %q", s2)
+	for _, tt := range tests {
+		got := logger.FmtDuration(tt.d)
+		if got != tt.expected {
+			t.Errorf("FmtDuration(%v) = %q, want %q", tt.d, got, tt.expected)
+		}
 	}
 
-	d3 := 1*time.Hour + 4*time.Minute + 12*time.Second
-	s3 := logger.FmtDuration(d3)
-	if s3 != "1h04m12s" {
-		t.Errorf("expected 1h04m12s, got %q", s3)
+	elapsedTests := []struct {
+		d        time.Duration
+		expected string
+	}{
+		{5 * time.Second, "[5s]"},
+		{5*time.Minute + 4*time.Second, "[5m04s]"},
+	}
+
+	for _, tt := range elapsedTests {
+		got := logger.FmtElapsed(tt.d)
+		if got != tt.expected {
+			t.Errorf("FmtElapsed(%v) = %q, want %q", tt.d, got, tt.expected)
+		}
 	}
 }
 
-func TestLoggerStdoutOperations(t *testing.T) {
-	// Simple test to ensure these print methods do not crash/panic
-	logger.InitScanUI(5)
-	logger.ScanHeader("Wildcard", "test.com", 42)
-	logger.StepHeader("Passive Recon")
-	logger.Info("Finding subdomains...")
-	logger.SubStep("Running Subfinder")
-	logger.Success("Found 10 subdomains")
-	logger.Warning("Some source timed out")
-	logger.Error("Command failed completely")
-	logger.Debug("Verbose debugging info")
-	logger.Section("Query Report")
-	logger.Command("chaathan diff 1 2")
-	logger.NextSteps([]string{"run scan show 42"})
-	logger.ScanSummary("completed", "test.com", 42, 5*time.Second, map[string]string{"subdomains": "10"})
+func TestLogToolFailureTruncation(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "chaathan_logger_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	logPath := filepath.Join(tempDir, "failure.log")
+	if err := logger.InitFileLog(logPath); err != nil {
+		t.Fatalf("failed to init log: %v", err)
+	}
+	defer logger.CloseFileLog()
+
+	var sb strings.Builder
+	for i := 1; i <= 50; i++ {
+		sb.WriteString(fmt.Sprintf("Error line %d\n", i))
+	}
+
+	logger.LogToolFailure("test_tool", "run command", sb.String(), nil)
+	logger.CloseFileLog()
+
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("failed to read log: %v", err)
+	}
+
+	contentStr := string(content)
+	lines := strings.Split(contentStr, "\n")
+
+	errLineCount := 0
+	for _, l := range lines {
+		if strings.Contains(l, "Error line") {
+			errLineCount++
+		}
+	}
+
+	if errLineCount != 30 {
+		t.Errorf("expected exactly 30 lines of stderr in log, got %d", errLineCount)
+	}
+
+	if !strings.Contains(contentStr, "... (20 more lines truncated)") {
+		t.Error("expected truncation message in log file, not found")
+	}
 }

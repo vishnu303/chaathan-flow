@@ -580,3 +580,11 @@ func TestExportVulnerabilities_CaseInsensitiveSeverity(t *testing.T) {
 		t.Errorf("expected critical vuln to be exported, got content: %q", contentStr)
 	}
 }
+
+func BenchmarkUnescapeUnicodeURL(b *testing.B) {
+	input := "https://example.com/api/v1/search?\\u0071=\\u0076\\u0061\\u006c\\u0075\\u0065"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = utils.UnescapeUnicodeURL(input)
+	}
+}
