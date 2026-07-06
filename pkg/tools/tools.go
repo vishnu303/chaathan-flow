@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/config"
@@ -779,36 +777,7 @@ func (t *ToolBox) RunCloudEnum(ctx context.Context, keyword string, outputFile s
 	return err
 }
 
-func runBypassedCmd(ctx context.Context, cmd *exec.Cmd) error {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		// Wait up to 2 seconds for clean exit
-		select {
-		case err := <-done:
-			if err == nil {
-				return ctx.Err()
-			}
-			return err
-		case <-time.After(2 * time.Second):
-			return ctx.Err()
-		}
-	}
-}
 
 // TODO(config): Add General.HakrawlerTimeout to config.go and use it here.
 func (t *ToolBox) hakrawlerMaxTimeout() time.Duration {

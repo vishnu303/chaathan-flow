@@ -369,7 +369,6 @@ var dockerImages = map[string]dockerImageInfo{
 	"amass":       {"caffix/amass", true},
 	"ffuf":        {"ffuf/ffuf", true},
 	"dalfox":      {"hahwul/dalfox", true},
-	"arjun":       {"s0md3v/arjun", true},
 	"GoLinkFinder": {"alpine", false}, // no official image; go binary compiled from source
 
 	// Third-party tools WITHOUT ENTRYPOINT (need command passed)

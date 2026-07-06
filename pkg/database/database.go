@@ -287,40 +287,6 @@ func runMigrations() {
 		ON vulnerabilities(scan_id, host, IFNULL(template_id, ''), IFNULL(url, ''))`); err != nil {
 		logger.Debug("Migration (vulnerabilities index) skipped or failed: %v", err)
 	}
-
-	// Game-changer columns — safe to fail on fresh installs where columns already exist.
-	if _, err := DB.Exec(`ALTER TABLE host_metadata ADD COLUMN has_js_secrets BOOLEAN DEFAULT FALSE`); err != nil {
-		logger.Debug("Migration (host_metadata has_js_secrets) skipped or failed: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE url_metadata ADD COLUMN form_count INTEGER DEFAULT 0`); err != nil {
-		logger.Debug("Migration (url_metadata form_count) skipped or failed: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE url_metadata ADD COLUMN has_file_upload BOOLEAN DEFAULT FALSE`); err != nil {
-		logger.Debug("Migration (url_metadata has_file_upload) skipped or failed: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE url_metadata ADD COLUMN hidden_input_count INTEGER DEFAULT 0`); err != nil {
-		logger.Debug("Migration (url_metadata hidden_input_count) skipped or failed: %v", err)
-	}
-
-	// Phase 4 columns — CORS, cookie security, dangerous methods, parameter counts.
-	if _, err := DB.Exec(`ALTER TABLE host_metadata ADD COLUMN cors_wildcard BOOLEAN DEFAULT FALSE`); err != nil {
-		logger.Debug("Migration (host_metadata cors_wildcard) skipped or failed: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE host_metadata ADD COLUMN has_insecure_cookies BOOLEAN DEFAULT FALSE`); err != nil {
-		logger.Debug("Migration (host_metadata has_insecure_cookies) skipped or failed: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE host_metadata ADD COLUMN has_session_cookie BOOLEAN DEFAULT FALSE`); err != nil {
-		logger.Debug("Migration (host_metadata has_session_cookie) skipped or failed: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE host_metadata ADD COLUMN has_dangerous_methods BOOLEAN DEFAULT FALSE`); err != nil {
-		logger.Debug("Migration (host_metadata has_dangerous_methods) skipped or failed: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE url_metadata ADD COLUMN arjun_param_count INTEGER DEFAULT 0`); err != nil {
-		logger.Debug("Migration (url_metadata arjun_param_count) skipped or failed: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE url_metadata ADD COLUMN param_count INTEGER DEFAULT 0`); err != nil {
-		logger.Debug("Migration (url_metadata param_count) skipped or failed: %v", err)
-	}
 }
 
 // Close closes the database connection
@@ -1236,6 +1202,46 @@ func GetTotalPortsCount() (int, error) {
 // signal until a writer is reintroduced. The table and schema are kept for
 // backwards compatibility with existing databases.
 // ─────────────────────────────────────────────────────────────
+
+// GFMatch holds URL and gf pattern match details.
+type GFMatch struct {
+	URL     string
+	Pattern string
+}
+
+// InsertGFMatches stores gf pattern matches for a scan.
+// It uses INSERT OR IGNORE to honor the existing UNIQUE(scan_id, url, pattern) constraint.
+func InsertGFMatches(scanID int64, matches []GFMatch) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO gf_matches (scan_id, url, pattern) VALUES (?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, m := range matches {
+		urlStr := strings.TrimSpace(m.URL)
+		patternStr := strings.TrimSpace(m.Pattern)
+		if urlStr == "" || patternStr == "" {
+			continue
+		}
+		if _, err := stmt.Exec(scanID, urlStr, patternStr); err != nil {
+			return fmt.Errorf("failed to insert gf match for %q pattern %q: %w", urlStr, patternStr, err)
+		}
+	}
+	return tx.Commit()
+}
 
 // GetGFMatchesByScan returns all gf pattern matches for a scan, grouped by URL.
 // The returned map keys are raw URLs; the values are slices of pattern names

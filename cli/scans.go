@@ -268,7 +268,7 @@ func resumeScanByID(scanID int64) {
 			SkipDalfox:        boolOpt("skip_dalfox"),
 			SkipUncover:       boolOpt("skip_uncover"),
 			SkipTlsx:          boolOpt("skip_tlsx"),
-			SkipX8:            boolOpt("skip_x8") || boolOpt("skip_arjun"),
+			SkipX8:            boolOpt("skip_x8"),
 			SkipShuffleDNS:    boolOpt("skip_shuffledns"),
 			SkipHakrawler:     boolOpt("skip_hakrawler"),
 			SkipFingerprint:   boolOpt("skip_fingerprint"),

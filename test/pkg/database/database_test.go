@@ -113,6 +113,37 @@ func TestDatabaseOperations(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to upsert URL metadata: %v", err)
 	}
+
+	// 14. GF Matches
+	gfMatches := []database.GFMatch{
+		{URL: "http://sub.testdomain.com/js/app.js", Pattern: "sqli"},
+		{URL: "http://sub.testdomain.com/js/app.js", Pattern: "xss"},
+		{URL: "http://sub.testdomain.com/js/lib.js", Pattern: "rce"},
+		{URL: "http://sub.testdomain.com/js/lib.js", Pattern: "rce"}, // Duplicate to check INSERT OR IGNORE
+	}
+	err = database.InsertGFMatches(scan.ID, gfMatches)
+	if err != nil {
+		t.Errorf("failed to insert gf matches: %v", err)
+	}
+
+	fetchedGF, err := database.GetGFMatchesByScan(scan.ID)
+	if err != nil {
+		t.Fatalf("failed to get gf matches: %v", err)
+	}
+
+	if len(fetchedGF) != 2 {
+		t.Errorf("expected 2 URLs with gf matches, got %d", len(fetchedGF))
+	}
+
+	appMatches := fetchedGF["http://sub.testdomain.com/js/app.js"]
+	if len(appMatches) != 2 {
+		t.Errorf("expected 2 pattern matches for app.js, got %d: %v", len(appMatches), appMatches)
+	}
+
+	libMatches := fetchedGF["http://sub.testdomain.com/js/lib.js"]
+	if len(libMatches) != 1 {
+		t.Errorf("expected 1 pattern match for lib.js (deduplicated), got %d: %v", len(libMatches), libMatches)
+	}
 }
 
 func TestNullStringMetadataReads(t *testing.T) {

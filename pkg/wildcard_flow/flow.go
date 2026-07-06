@@ -417,7 +417,9 @@ func Run(cfg RunConfig) error {
 		c.Proxy = cfg.Cfg.General.Proxy
 	}
 
-	_ = c.SetupResolvers()
+	if err := c.SetupResolvers(); err != nil {
+		logger.Warning("SetupResolvers failed: %v", err)
+	}
 
 
 	// Wire notification logging (FileDebug no-ops if --log is inactive)

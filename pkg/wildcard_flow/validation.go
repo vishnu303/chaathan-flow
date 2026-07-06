@@ -72,6 +72,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 	// Sync consolidated subdomains to DB
 	if c.ScanID > 0 {
 		if count, err := utils.ParseSubdomainsFile(c.ScanID, c.F.ConsolidatedSubs, "consolidated"); err != nil {
+			c.markStepFailedSafe("dns_resolution", err)
 			logger.Warning("Failed to sync consolidated subdomains to database: %v", err)
 		} else {
 			logger.FileDebug("synced %d consolidated subdomains to database", count)
@@ -437,7 +438,9 @@ func stepTLSAnalysis(c *Ctx) bool {
 					if parsed, err := neturl.Parse(h); err == nil && parsed.Hostname() != "" {
 						host = strings.ToLower(parsed.Hostname())
 					}
-					database.UpdateSubdomainLive(c.ScanID, host, true, "")
+					if err := database.UpdateSubdomainLive(c.ScanID, host, true, ""); err != nil {
+						logger.FileDebug("UpdateSubdomainLive failed for %s: %v", host, err)
+					}
 				}
 			}
 		}

@@ -1183,6 +1183,39 @@ func runInMemoryJSSecretScan(ctx context.Context, c *Ctx, urls []string, jsPatte
 	if len(jsMatches) > 0 {
 		content := strings.Join(jsMatches, "\n") + "\n"
 		_ = os.WriteFile(c.F.GFJSMatches, []byte(content), 0644)
+		if c.ScanID > 0 {
+			var parsed []database.GFMatch
+			for _, match := range jsMatches {
+				if !strings.HasPrefix(match, "[") {
+					continue
+				}
+				firstClose := strings.Index(match, "]")
+				if firstClose == -1 {
+					continue
+				}
+				urlVal := match[1:firstClose]
+
+				rest := match[firstClose+1:]
+				firstOpen2 := strings.Index(rest, "[")
+				if firstOpen2 == -1 {
+					continue
+				}
+				secondClose := strings.Index(rest, "]")
+				if secondClose == -1 || secondClose <= firstOpen2 {
+					continue
+				}
+				patternVal := rest[firstOpen2+1 : secondClose]
+				parsed = append(parsed, database.GFMatch{
+					URL:     urlVal,
+					Pattern: patternVal,
+				})
+			}
+			if len(parsed) > 0 {
+				if err := database.InsertGFMatches(c.ScanID, parsed); err != nil {
+					logger.Warning("Failed to persist gf pattern matches: %v", err)
+				}
+			}
+		}
 	} else {
 		writeEmptyFile(c.F.GFJSMatches)
 	}
