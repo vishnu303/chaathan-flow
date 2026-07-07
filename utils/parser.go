@@ -100,13 +100,29 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 		}
 
 		// Also mark subdomain as live
-		host := result.Host
-		if host == "" {
-			host = result.Input
+		subdomain := ""
+		if parsed, err := neturl.Parse(result.URL); err == nil && parsed.Hostname() != "" {
+			subdomain = strings.ToLower(parsed.Hostname())
+		} else {
+			subdomain = strings.ToLower(result.Input)
+			if idx := strings.LastIndex(subdomain, ":"); idx != -1 {
+				subdomain = subdomain[:idx]
+			}
 		}
-		if host != "" {
-			if err := database.UpdateSubdomainLive(scanID, host, true, ""); err != nil {
-				logger.FileDebug("parser: UpdateSubdomainLive failed for %s: %v", host, err)
+
+		if subdomain != "" {
+			ipAddr := result.Host
+			// Remove port if present in IP address
+			if idx := strings.LastIndex(ipAddr, ":"); idx != -1 {
+				// Ensure it's not a bare IPv6 address without brackets
+				if !strings.Contains(ipAddr, "]") && strings.Count(ipAddr, ":") == 1 {
+					ipAddr = ipAddr[:idx]
+				} else if strings.Contains(ipAddr, "]") {
+					ipAddr = ipAddr[:idx]
+				}
+			}
+			if err := database.UpdateSubdomainLive(scanID, subdomain, true, ipAddr); err != nil {
+				logger.FileDebug("parser: UpdateSubdomainLive failed for %s: %v", subdomain, err)
 			}
 		}
 

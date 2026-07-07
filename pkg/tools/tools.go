@@ -520,9 +520,8 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 
 
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
-	// Use the long --output form: some flag libraries reject "--o" as an
-	// ambiguous/invalid abbreviation, which would silently produce an empty file.
-	args := []string{domain, "--providers", "wayback", "--subs", "--output", outputFile}
+	// Use -o which is universally accepted by gau to write results.
+	args := []string{domain, "--providers", "wayback", "--subs", "-o", outputFile}
 	args = t.appendProxy(args, "--proxy")
 	_, err := t.Runner.Run(ctx, "gau", args)
 	return err
@@ -786,7 +785,10 @@ func (t *ToolBox) hakrawlerMaxTimeout() time.Duration {
 
 func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile string) error {
 	args := []string{"-subs", "-u", "-d", "3"}
-	args = t.appendGoSpiderUA(args)
+	if t.uaEnabled() {
+		args = append(args, "-h", "User-Agent: "+t.getUA())
+	}
+	args = t.appendProxy(args, "-proxy")
 
 	output, err := t.Runner.Run(ctx, "hakrawler", args, runner.WithStdin(strings.NewReader(url+"\n")), runner.WithTimeout(t.hakrawlerMaxTimeout()))
 	if strings.TrimSpace(output) != "" {
@@ -829,9 +831,13 @@ func (t *ToolBox) RunX8(ctx context.Context, inputFile string, outputFile string
 func (t *ToolBox) RunX8WithWordlist(ctx context.Context, inputFile string, outputFile string, wordlist string) error {
 	args := []string{"-u", inputFile, "-o", outputFile, "-O", "json"}
 	if wordlist != "" {
-		args = append(args, "-w", wordlist)
+		if _, err := os.Stat(wordlist); err == nil {
+			args = append(args, "-w", wordlist)
+		}
 	} else if t.General != nil && t.General.Wordlists.Parameters != "" {
-		args = append(args, "-w", t.General.Wordlists.Parameters)
+		if _, err := os.Stat(t.General.Wordlists.Parameters); err == nil {
+			args = append(args, "-w", t.General.Wordlists.Parameters)
+		}
 	}
 
 	args = t.appendX8Headers(args)
@@ -930,7 +936,10 @@ func (t *ToolBox) RunDalfox(ctx context.Context, inputFile string, outputFile st
 	if err != nil {
 		return err
 	}
-	return s.Scan(ctx, inputFile, outputFile, ScanOptions{})
+	concurrency := 20 // Default parallel worker threads for XSS fuzzing
+	return s.Scan(ctx, inputFile, outputFile, ScanOptions{
+		Concurrency: concurrency,
+	})
 }
 
 // --- TLS/SSL Analysis ---

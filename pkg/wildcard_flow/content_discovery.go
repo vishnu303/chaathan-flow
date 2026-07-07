@@ -313,6 +313,10 @@ func filterAndDeduplicateHosts(hosts []string) []string {
 			continue
 		}
 
+		if utils.ValidateDomain(hostname) != nil {
+			continue
+		}
+
 		port := parsed.Port()
 		scheme := strings.ToLower(parsed.Scheme)
 
@@ -440,7 +444,7 @@ func stepJSAnalysis(c *Ctx) bool {
 			}
 			logger.Info("  Found %d endpoints%s", count, label)
 		} else if golinkfinderSkipped {
-			logger.Info("  GoLinkFinder skipped — no endpoints found")
+			logger.Info("  GoLinkFinder skipped — endpoints unknown")
 		} else {
 			logger.Info("  Found 0 endpoints")
 		}

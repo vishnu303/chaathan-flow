@@ -52,6 +52,16 @@ func stepDNSConsolidation(c *Ctx) bool {
 		logger.Error("Failed to consolidate: %v", err)
 		return c.cancelled()
 	}
+
+	// Filter out invalid domains and ensure they belong to the target domain
+	_ = utils.FilterFileLines(c.F.ConsolidatedSubs, func(line string) bool {
+		line = strings.ToLower(strings.TrimSpace(line))
+		if utils.ValidateDomain(line) != nil {
+			return false
+		}
+		return line == c.Domain || strings.HasSuffix(line, "."+c.Domain)
+	})
+
 	subCount, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
 	logger.Success("Consolidated %d unique subdomains", subCount)
 	logger.FileDebug("consolidated subs total: %d -> %s", subCount, c.F.ConsolidatedSubs)
@@ -179,6 +189,14 @@ func stepDNSBruteforce(c *Ctx) bool {
 			[]string{c.F.ConsolidatedSubs, c.F.ShufflednsOut},
 			c.F.ConsolidatedSubs,
 		)
+		// Filter out invalid domains and ensure they belong to the target domain
+		_ = utils.FilterFileLines(c.F.ConsolidatedSubs, func(line string) bool {
+			line = strings.ToLower(strings.TrimSpace(line))
+			if utils.ValidateDomain(line) != nil {
+				return false
+			}
+			return line == c.Domain || strings.HasSuffix(line, "."+c.Domain)
+		})
 		if merged, _ := utils.CountFileLines(c.F.ConsolidatedSubs); merged > 0 {
 			logger.FileDebug("consolidated subs after shuffledns merge: %d", merged)
 		}
@@ -258,7 +276,7 @@ func stepHTTPProbing(c *Ctx) bool {
 			logger.Info("  Found %d live hosts%s", count, label)
 			logger.FileDebug("httpx output: %d live hosts -> %s", count, c.F.HttpxOut)
 		} else if httpxSkipped {
-			logger.Info("  Httpx skipped — no live host data from this scan")
+			logger.Info("  Httpx skipped — live hosts unknown")
 		} else {
 			logger.Info("  Found 0 live hosts")
 		}
@@ -413,7 +431,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 					logger.Info("  Found %d certificate issues (expired/self-signed/mismatch)%s", certVulns, label)
 				}
 			} else if tlsxSkipped {
-				logger.Info("  Tlsx skipped — no new subdomains or certificate issues found")
+				logger.Info("  Tlsx skipped — new subdomains and cert issues unknown")
 			} else {
 				logger.Info("  Discovered 0 new subdomains and 0 certificate issues")
 			}
@@ -490,7 +508,7 @@ func stepPortScanning(c *Ctx) bool {
 				}
 				logger.Info("  Found %d open ports%s", count, label)
 			} else if naabuSkipped {
-				logger.Info("  Naabu skipped — no open ports found")
+				logger.Info("  Naabu skipped — open ports unknown")
 			} else {
 				logger.Info("  Found 0 open ports")
 			}
