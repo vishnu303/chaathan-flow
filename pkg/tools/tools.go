@@ -819,10 +819,10 @@ func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile 
 
 // RunGoLinkFinder extracts endpoints from JavaScript files found at the given URL.
 func (t *ToolBox) RunGoLinkFinder(ctx context.Context, url string, outputFile string) error {
-	args := []string{"-d", url, "-o", outputFile}
+	args := []string{"-d", url, "-o", outputFile, "--silent", "--timeout", "10"}
 	// GoLinkFinder does not have a built-in proxy flag, but if it runs in docker we could pass HTTP_PROXY.
 	// We'll pass it as a runner env var later if needed, but for now it's skipped as there's no native flag.
-	_, err := t.Runner.Run(ctx, "GoLinkFinder", args)
+	_, err := t.Runner.Run(ctx, "GoLinkFinder", args, runner.WithNoRetry())
 	return err
 }
 

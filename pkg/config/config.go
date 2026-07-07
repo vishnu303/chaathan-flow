@@ -156,8 +156,9 @@ type NucleiConfig struct {
 }
 
 type DalfoxConfig struct {
-	MaxURLs        int  `yaml:"max_urls"`         // cap parameterized URLs (default: 500)
+	MaxURLs        int   `yaml:"max_urls"`         // cap parameterized URLs (default: 500)
 	SkipThirdParty *bool `yaml:"skip_third_party"` // filter non-target domains (default: true)
+	MaxTimeout     int   `yaml:"max_timeout_min"`  // hard process timeout per run in minutes (default: 120)
 }
 
 type HttpxConfig struct {
@@ -357,6 +358,7 @@ var expectedKeys = map[string]interface{}{
 	"tools.dalfox": map[string]interface{}{
 		"max_urls":         "int",
 		"skip_third_party": "bool",
+		"max_timeout_min":  "int",
 	},
 	"tools.katana": map[string]interface{}{
 		"timeout": "int",
@@ -620,6 +622,7 @@ func applyDefaults(cfg *Config) {
 	if cfg.Tools.Dalfox.SkipThirdParty == nil {
 		cfg.Tools.Dalfox.SkipThirdParty = newBool(true)
 	}
+	defaultInt(&cfg.Tools.Dalfox.MaxTimeout, 120)
 	defaultInt(&cfg.Tools.Naabu.Timeout, 240)
 	defaultInt(&cfg.Tools.Ffuf.MaxTimeout, 180)
 	defaultInt(&cfg.Tools.Katana.Timeout, 300)

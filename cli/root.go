@@ -71,7 +71,7 @@ Getting started:
   chaathan status                    View scan dashboard
   chaathan query vulns 1             Query vulnerabilities
   chaathan report generate 1         Generate report`,
-	PersistentPreRun: initializeApp,
+	PersistentPreRunE: initializeApp,
 }
 
 func Execute() error {
@@ -79,16 +79,17 @@ func Execute() error {
 }
 
 func init() {
+	rootCmd.SilenceErrors = true
 	rootCmd.PersistentFlags().StringVarP(&Mode, "mode", "m", "native", "Execution mode: 'native' or 'docker'")
 	rootCmd.PersistentFlags().StringVarP(&OutputDir, "output", "o", "", "Directory to store results")
 	rootCmd.PersistentFlags().BoolVarP(&Verbose, "verbose", "v", false, "Enable verbose logging")
 	rootCmd.PersistentFlags().StringVar(&ConfigPath, "config", "", "Config file path (default: ~/.chaathan/config.yaml)")
 }
 
-func initializeApp(cmd *cobra.Command, args []string) {
+func initializeApp(cmd *cobra.Command, args []string) error {
 	// Skip initialization for setup command
 	if cmd.Name() == "setup" {
-		return
+		return nil
 	}
 
 	// Determine config path
@@ -105,8 +106,7 @@ func initializeApp(cmd *cobra.Command, args []string) {
 			logger.Warning("Config file not found, using defaults: %v", err)
 			Cfg = config.DefaultConfig()
 		} else {
-			logger.Error("Fatal: failed to load or parse configuration: %v", err)
-			os.Exit(1)
+			return fmt.Errorf("fatal: failed to load or parse configuration: %w", err)
 		}
 	}
 
@@ -123,8 +123,7 @@ func initializeApp(cmd *cobra.Command, args []string) {
 
 	// Validate mode
 	if Mode != "native" && Mode != "docker" {
-		logger.Error("Invalid mode '%s'. Must be 'native' or 'docker'.", Mode)
-		os.Exit(1)
+		return fmt.Errorf("invalid mode '%s'. Must be 'native' or 'docker'", Mode)
 	}
 
 	// Initialize database
@@ -137,6 +136,8 @@ func initializeApp(cmd *cobra.Command, args []string) {
 		logger.Warning("Failed to initialize database: %v", err)
 		logger.Warning("Some features (history, reports) may not work.")
 	}
+
+	return nil
 }
 
 func CreateOutputDir(target string) (string, error) {

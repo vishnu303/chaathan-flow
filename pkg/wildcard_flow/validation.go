@@ -14,9 +14,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	neturl "net/url"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/vishnu303/chaathan/pkg/database"
@@ -377,9 +377,9 @@ func stepTLSAnalysis(c *Ctx) bool {
 
 					if len(newSANs) > 0 {
 						logger.SubStep("Re-probing %d new SAN-discovered subdomains...", len(newSANs))
-						sanSubsInputFile := filepath.Join(filepath.Dir(c.F.ConsolidatedSubs), "tls_san_new_subs.txt")
-						sanHttpxOutFile := filepath.Join(filepath.Dir(c.F.ConsolidatedSubs), "tls_san_httpx_out.json")
-						sanHttpxLiveFile := filepath.Join(filepath.Dir(c.F.ConsolidatedSubs), "tls_san_httpx_live.txt")
+						sanSubsInputFile := c.F.TlsSanNewSubs
+						sanHttpxOutFile := c.F.TlsSanHttpxOut
+						sanHttpxLiveFile := c.F.TlsSanHttpxLive
 
 						if fSan, err := os.Create(sanSubsInputFile); err == nil {
 							for _, san := range newSANs {
@@ -416,11 +416,13 @@ func stepTLSAnalysis(c *Ctx) bool {
 								}
 
 								// Append sanHttpxOutFile contents to c.F.HttpxOut
-								if outData, err := os.ReadFile(sanHttpxOutFile); err == nil && len(outData) > 0 {
-									if fOut, err := os.OpenFile(c.F.HttpxOut, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644); err == nil {
-										_, _ = fOut.Write(outData)
+								if fIn, err := os.Open(sanHttpxOutFile); err == nil {
+									fOut, openErr := os.OpenFile(c.F.HttpxOut, os.O_APPEND|os.O_WRONLY, 0644)
+									if openErr == nil {
+										_, _ = io.Copy(fOut, fIn)
 										fOut.Close()
 									}
+									fIn.Close()
 								}
 							}
 
@@ -446,22 +448,24 @@ func stepTLSAnalysis(c *Ctx) bool {
 	if c.ScanID > 0 && utils.FileExists(c.F.HttpxOut) {
 		hostTargetCount := collectLiveHostTargetsFromHttpx(c.F.HttpxOut, c.F.HttpxLiveHosts)
 		if hostTargetCount > 0 {
+			// Mark ALL live hosts in DB (uncapped) — accuracy
+			allLive := loadLineSlice(c.F.HttpxLiveHosts, 0)
+			liveHosts := make([]string, 0, len(allLive))
+			for _, h := range allLive {
+				if parsed, err := neturl.Parse(h); err == nil && parsed.Hostname() != "" {
+					liveHosts = append(liveHosts, strings.ToLower(parsed.Hostname()))
+				}
+			}
+			if err := database.UpdateSubdomainsLiveBulk(c.ScanID, liveHosts); err != nil {
+				logger.FileDebug("UpdateSubdomainsLiveBulk failed: %v", err)
+			}
+
 			logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
 			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, metadataHostCap)
 			if count, err := metadata.CollectHostMetadata(c.ScanID, hostTargets, c.Proxy); err != nil {
 				logger.Warning("Host metadata enrichment failed: %v", err)
 			} else if count > 0 {
 				logger.Info("  Stored metadata for %d live hosts", count)
-				// Ensure these hosts are marked live in the subdomains table
-				for _, h := range hostTargets {
-					host := h
-					if parsed, err := neturl.Parse(h); err == nil && parsed.Hostname() != "" {
-						host = strings.ToLower(parsed.Hostname())
-					}
-					if err := database.UpdateSubdomainLive(c.ScanID, host, true, ""); err != nil {
-						logger.FileDebug("UpdateSubdomainLive failed for %s: %v", host, err)
-					}
-				}
 			}
 		}
 	}

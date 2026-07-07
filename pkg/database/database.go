@@ -472,6 +472,36 @@ func UpdateSubdomainLive(scanID int64, domain string, isLive bool, ipAddress str
 	return err
 }
 
+// UpdateSubdomainsLiveBulk marks the given domains as live for a scan in a single transaction.
+func UpdateSubdomainsLiveBulk(scanID int64, domains []string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
+	if len(domains) == 0 {
+		return nil
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`UPDATE subdomains SET is_live = TRUE WHERE scan_id = ? AND domain = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, domain := range domains {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if _, err := stmt.Exec(scanID, domain); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 func GetSubdomains(scanID int64) ([]Subdomain, error) {
 	if DB == nil {
 		return nil, ErrDBNotInitialized

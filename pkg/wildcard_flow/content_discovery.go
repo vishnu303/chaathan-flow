@@ -411,14 +411,14 @@ func stepJSAnalysis(c *Ctx) bool {
 				defer os.Remove(tmpOut)
 
 				if err := c.Tb.RunGoLinkFinder(hostCtx, target, tmpOut); err == nil && utils.FileExists(tmpOut) {
-					if data, readErr := os.ReadFile(tmpOut); readErr == nil && len(data) > 0 {
+					if fIn, openErr := os.Open(tmpOut); openErr == nil {
 						writeMu.Lock()
-						fOut, openErr := os.OpenFile(c.F.GoLinkFinderOut, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-						if openErr == nil {
-							_, _ = fOut.Write(data)
+						if fOut, openErr := os.OpenFile(c.F.GoLinkFinderOut, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644); openErr == nil {
+							_, _ = io.Copy(fOut, fIn)
 							fOut.Close()
 						}
 						writeMu.Unlock()
+						fIn.Close()
 					}
 				}
 			}(host)
@@ -486,7 +486,7 @@ func stepParamDiscovery(c *Ctx) bool {
 	}
 
 	// Merge FfufDiscoveredURLs and high-signal endpoints into a temporary input file
-	x8InputFile := filepath.Join(filepath.Dir(c.F.HttpxLiveHosts), "x8_input.txt")
+	x8InputFile := c.F.X8Input
 	
 	var x8Targets []string
 
@@ -1331,7 +1331,7 @@ func stepJSSecretScan(c *Ctx) bool {
 	}
 
 	if totalFindings > 0 {
-		metadataPath := filepath.Join(filepath.Dir(c.F.GFSecretsFinal), "gf_secrets_metadata.txt")
+		metadataPath := c.F.GfSecretsMetadata
 		header := fmt.Sprintf("// Scan Metadata | JS Combined File Size: %.4f GB\n", float64(combinedBytes)/(1024*1024*1024))
 		_ = os.WriteFile(metadataPath, []byte(header), 0644)
 	}
@@ -1411,16 +1411,16 @@ func stepDirFuzzing(c *Ctx) bool {
 
 			logger.FileDebug("ffuf input: target=%s wordlist=%s out=%s", targetURL, c.WordlistPath, tmpFfufOut)
 			if err := c.Tb.RunFfufWithFUZZ(sCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
-				// Parse and add to allResults
-				if data, readErr := os.ReadFile(tmpFfufOut); readErr == nil && len(data) > 0 {
+				if fIn, openErr := os.Open(tmpFfufOut); openErr == nil {
 					var payload struct {
 						Results []localFfufResult `json:"results"`
 					}
-					if jsonErr := json.Unmarshal(data, &payload); jsonErr == nil {
+					if jsonErr := json.NewDecoder(fIn).Decode(&payload); jsonErr == nil {
 						resultsMu.Lock()
 						allResults = append(allResults, payload.Results...)
 						resultsMu.Unlock()
 					}
+					fIn.Close()
 				}
 			} else if err != nil && sCtx.Err() == nil {
 				logger.Warning("ffuf failed on host %s: %v", targetURL, err)

@@ -133,6 +133,11 @@ type Files struct {
 	TakeoverCandidates string
 	ProxyScrapingConfig string // intermediate_files/proxy_scraping_config.toml
 	ProxyPool          string // intermediate_files/proxy_pool.txt
+	TlsSanNewSubs      string
+	TlsSanHttpxOut     string
+	TlsSanHttpxLive    string
+	X8Input            string
+	GfSecretsMetadata  string
 }
 
 // newFiles builds all output paths from the result directory.
@@ -192,6 +197,11 @@ func newFiles(dir string) Files {
 		TakeoverCandidates: j("takeover_candidates.txt"),
 		ProxyScrapingConfig: j("proxy_scraping_config.toml"),
 		ProxyPool:          j("proxy_pool.txt"),
+		TlsSanNewSubs:      j("tls_san_new_subs.txt"),
+		TlsSanHttpxOut:     j("tls_san_httpx_out.json"),
+		TlsSanHttpxLive:    j("tls_san_httpx_live.txt"),
+		X8Input:            j("x8_input.txt"),
+		GfSecretsMetadata:  j("gf_secrets_metadata.txt"),
 	}
 }
 

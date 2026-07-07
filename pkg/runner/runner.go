@@ -36,6 +36,7 @@ type RunOptions struct {
 	Env     []string
 	Timeout time.Duration // per-tool timeout (0 = use context timeout)
 	Stdin   func() io.Reader
+	NoRetry bool          // if true, disables retries for this run
 }
 
 type Option func(*RunOptions)
@@ -43,6 +44,12 @@ type Option func(*RunOptions)
 func WithDir(dir string) Option {
 	return func(o *RunOptions) {
 		o.Dir = dir
+	}
+}
+
+func WithNoRetry() Option {
+	return func(o *RunOptions) {
+		o.NoRetry = true
 	}
 }
 
@@ -143,7 +150,12 @@ func executeWithRetry(ctx context.Context, command string, maxRetries int, retry
 		defer cancel()
 	}
 
-	return retryRun(runCtx, command, maxRetries, retryDelay, func(rCtx context.Context) (string, error) {
+	actualMaxRetries := maxRetries
+	if options.NoRetry {
+		actualMaxRetries = 0
+	}
+
+	return retryRun(runCtx, command, actualMaxRetries, retryDelay, func(rCtx context.Context) (string, error) {
 		return runOnceFn(rCtx, options)
 	})
 }

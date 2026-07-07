@@ -189,6 +189,18 @@ func LogToolFailure(tool, command, stderr string, exitErr error) {
 	}
 	if stderr != "" {
 		lines := strings.Split(strings.TrimSpace(stderr), "\n")
+		
+		// Optional: strip nuclei stats logs from stderr
+		if strings.Contains(strings.ToLower(tool), "nuclei") {
+			var filtered []string
+			for _, line := range lines {
+				if !strings.Contains(line, `{"duration":`) {
+					filtered = append(filtered, line)
+				}
+			}
+			lines = filtered
+		}
+
 		totalLines := len(lines)
 		const maxStderrLines = 30
 		truncated := totalLines > maxStderrLines

@@ -16,10 +16,10 @@ A systematic, phase-wise audit of every source file in the repository. Each phas
 | 4 | [Makefile](file:///c:/Users/vishn/Desktop/chaathan/Makefile) | Build targets, `-buildvcs=false` flag, test/vet/install targets |
 
 **Checks:**
-- [ ] `paths.Init()` is called before any file I/O
-- [ ] `database.Close()` is deferred after open
-- [ ] No `os.Exit()` in packages (only main/Cobra)
-- [ ] Build commands use correct flags
+- [x] `paths.Init()` is called before any file I/O
+- [x] `database.Close()` is deferred after open
+- [x] No `os.Exit()` in packages (only main/Cobra)
+- [x] Build commands use correct flags
 
 ---
 
@@ -93,16 +93,16 @@ This is the **largest and most critical** component. All files in [wildcard_flow
 | 10 | [secret_scan_helpers_test.go](file:///c:/Users/vishn/Desktop/chaathan/pkg/wildcard_flow/secret_scan_helpers_test.go) | 2KB | Unit test coverage for secret scanning |
 
 **Checks (per step function):**
-- [ ] Every step follows the template: `resumeOrSkip` → logic → `markStepCompleteIfNoFailure`
-- [ ] No hardcoded `return false` or `return true` — always `c.cancelled()` on error
-- [ ] `MarkStepFailed` never followed by `MarkStepComplete` in same path
-- [ ] Output file paths match `Ctx.F` fields (no hardcoded paths)
-- [ ] Input/output file chaining is correct (step N's output feeds step N+1's input)
-- [ ] High-volume data uses `bufio.Scanner` streaming (not full memory load)
-- [ ] All tool invocations go through `pkg/tools/` wrappers (no inline `exec.Command`)
-- [ ] Skip flags (`SkipAmass`, `SkipSubfinder`, etc.) honored correctly
-- [ ] Scope filtering applied where required
-- [ ] DB persistence calls have proper error handling
+- [x] Every step follows the template: `resumeOrSkip` → logic → `markStepCompleteIfNoFailure`
+- [x] No hardcoded `return false` or `return true` — always `c.cancelled()` on error
+- [x] `MarkStepFailed` never followed by `MarkStepComplete` in same path
+- [x] Output file paths match `Ctx.F` fields (no hardcoded paths)
+- [x] Input/output file chaining is correct (step N's output feeds step N+1's input)
+- [x] High-volume data uses `bufio.Scanner` streaming (not full memory load)
+- [x] All tool invocations go through `pkg/tools/` wrappers (no inline `exec.Command`)
+- [x] Skip flags (`SkipAmass`, `SkipSubfinder`, etc.) honored correctly
+- [x] Scope filtering applied where required
+- [x] DB persistence calls have proper error handling
 
 ---
 
