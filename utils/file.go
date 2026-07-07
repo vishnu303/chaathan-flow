@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	neturl "net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -146,7 +147,8 @@ func FilterFileLines(filePath string, keep func(string) bool) error {
 }
 
 // readSanitizedURLLines reads a file and returns sanitized, distinct URLs.
-func readSanitizedURLLines(filePath string) ([]string, error) {
+// If isAllowedHost is not nil, it filters out URLs with hostnames that don't pass the check.
+func readSanitizedURLLines(filePath string, isAllowedHost func(string) bool) ([]string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -173,6 +175,18 @@ func readSanitizedURLLines(filePath string) ([]string, error) {
 			continue
 		}
 
+		// Apply host filter if provided
+		if isAllowedHost != nil {
+			parsed, err := neturl.Parse(line)
+			if err != nil {
+				continue
+			}
+			hostname := parsed.Hostname()
+			if hostname == "" || !isAllowedHost(hostname) {
+				continue
+			}
+		}
+
 		if _, ok := seen[line]; !ok {
 			seen[line] = struct{}{}
 			cleaned = append(cleaned, line)
@@ -188,8 +202,9 @@ func readSanitizedURLLines(filePath string) ([]string, error) {
 // stripping non-URL lines), and writes the result back in place.
 // This prevents downstream tools (Nuclei, Dalfox, httpx) from receiving
 // malformed URLs that contain literal \uXXXX sequences or GoSpider tags.
-func SanitizeURLFile(filePath string) error {
-	cleaned, err := readSanitizedURLLines(filePath)
+// An optional isAllowedHost filter can be provided to exclude out-of-scope hostnames.
+func SanitizeURLFile(filePath string, isAllowedHost func(string) bool) error {
+	cleaned, err := readSanitizedURLLines(filePath, isAllowedHost)
 	if err != nil {
 		return err
 	}

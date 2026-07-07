@@ -24,7 +24,18 @@ func installSecListsSection(ctx *SetupContext) (installed, skipped, failed int) 
 	debianPath := "/usr/share/wordlists/seclists"
 
 	if !ctx.IsForceUpdate() {
-		for _, path := range []string{localPath, archPath, debianPath} {
+		home, _ := os.UserHomeDir()
+		candidates := []string{
+			localPath,
+			filepath.Join(paths.ChaathanHome(), "SecLists"),
+			filepath.Join(home, "seclists"),
+			filepath.Join(home, "SecLists"),
+			archPath,
+			"/usr/share/SecLists",
+			debianPath,
+			"/usr/share/wordlists/SecLists",
+		}
+		for _, path := range candidates {
 			if info, err := os.Stat(path); err == nil && info.IsDir() {
 				// Check for the Discovery subfolder
 				discPath := filepath.Join(path, "Discovery")

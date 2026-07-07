@@ -328,7 +328,7 @@ https://example.com/a
 		t.Fatal(err)
 	}
 
-	err = utils.SanitizeURLFile(urlFile)
+	err = utils.SanitizeURLFile(urlFile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

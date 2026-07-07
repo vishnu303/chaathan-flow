@@ -626,6 +626,23 @@ func applyDefaults(cfg *Config) {
 	defaultInt(&cfg.Tools.GoSpider.Timeout, 300)
 	defaultString(&cfg.Notifications.MinSeverity, "high")
 
+	// Dynamic fallback for wordlist paths if the configured paths do not exist on disk
+	resolveWordlist := func(configuredPath, subpath string) string {
+		if configuredPath != "" {
+			if _, err := os.Stat(configuredPath); err == nil {
+				return configuredPath
+			}
+		}
+		resolved := filepath.Join(resolveSeclistsBase(), subpath)
+		if _, err := os.Stat(resolved); err == nil {
+			return resolved
+		}
+		return configuredPath
+	}
+
+	cfg.General.Wordlists.Subdomains = resolveWordlist(cfg.General.Wordlists.Subdomains, filepath.Join("Discovery", "DNS", "subdomains-top1million-5000.txt"))
+	cfg.General.Wordlists.Directories = resolveWordlist(cfg.General.Wordlists.Directories, filepath.Join("Discovery", "Web-Content", "common.txt"))
+	cfg.General.Wordlists.Parameters = resolveWordlist(cfg.General.Wordlists.Parameters, filepath.Join("Discovery", "Web-Content", "burp-parameter-names.txt"))
 
 	// Proxy scraping defaults
 	defaultInt(&cfg.General.ProxyScraping.TimeoutMin, 10)
@@ -681,15 +698,25 @@ func (c *Config) GetAPIKey(name string) string {
 // and finally Debian/Kali (/usr/share/wordlists/seclists).
 // Returns whichever path exists, falling back to the Debian path.
 func resolveSeclistsBase() string {
-	localPath := filepath.Join(paths.ChaathanHome(), "seclists")
-	archPath := "/usr/share/seclists"
-	debianPath := "/usr/share/wordlists/seclists"
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(paths.ChaathanHome(), "seclists"),
+		filepath.Join(paths.ChaathanHome(), "SecLists"),
+		filepath.Join(home, "seclists"),
+		filepath.Join(home, "SecLists"),
+		"/usr/share/seclists",
+		"/usr/share/SecLists",
+		"/usr/share/wordlists/seclists",
+		"/usr/share/wordlists/SecLists",
+	}
 
-	if info, err := os.Stat(filepath.Join(localPath, "Discovery")); err == nil && info.IsDir() {
-		return localPath
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(p, "Discovery")); err == nil && info.IsDir() {
+			return p
+		}
 	}
-	if info, err := os.Stat(filepath.Join(archPath, "Discovery")); err == nil && info.IsDir() {
-		return archPath
-	}
-	return debianPath
+	return "/usr/share/wordlists/seclists"
 }

@@ -11,6 +11,7 @@ import (
 	"net"
 	neturl "net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -21,30 +22,111 @@ import (
 // maxScanBufferSize is the buffer size limit used when scanning large output files (4MB)
 const maxScanBufferSize = 4 * 1024 * 1024
 
-// ParseSubdomainsFile reads a file with one subdomain per line and adds to database
+// getTargetDomain gets the target domain of a scan from database if it's a valid domain
+func getTargetDomain(scanID int64) string {
+	if scanID <= 0 {
+		return ""
+	}
+	scan, err := database.GetScan(scanID)
+	if err != nil || scan == nil {
+		return ""
+	}
+	t := strings.ToLower(strings.TrimSpace(scan.Target))
+	if ValidateDomain(t) == nil {
+		return t
+	}
+	return ""
+}
+
+// isDomainInScope checks if a given domain/hostname is within the target domain scope
+func isDomainInScope(domain, targetDomain string) bool {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if targetDomain == "" {
+		return ValidateDomain(domain) == nil
+	}
+	return domain == targetDomain || strings.HasSuffix(domain, "."+targetDomain)
+}
+
+// isURLInScope checks if a given URL is within the target domain scope
+func isURLInScope(urlStr, targetDomain string) bool {
+	if targetDomain == "" {
+		return true
+	}
+	u, err := neturl.Parse(urlStr)
+	if err != nil {
+		return false
+	}
+	return isDomainInScope(u.Hostname(), targetDomain)
+}
+
+// extractDomainsFromLine extracts potential domains from a line (including Amass relation lines)
+func extractDomainsFromLine(line string) []string {
+	var found []string
+	
+	// Remove common amass suffixes
+	line = strings.ReplaceAll(line, " (FQDN)", "")
+	line = strings.ReplaceAll(line, "(FQDN)", "")
+	line = strings.ReplaceAll(line, " (IPAddress)", "")
+	line = strings.ReplaceAll(line, "(IPAddress)", "")
+
+	words := strings.Fields(line)
+	for _, w := range words {
+		w = strings.Trim(w, ",.;:()<>\"'")
+		if ValidateDomain(w) == nil {
+			found = append(found, w)
+		}
+	}
+	return found
+}
+
+// ParseSubdomainsFile reads a file with one subdomain per line, extracts valid domains
+// (including from Amass relationship lines), inserts them into the database,
+// and rewrites the file in-place to only contain the unique, validated subdomains.
 func ParseSubdomainsFile(scanID int64, filePath, source string) (int, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	var domains []string
+	seen := make(map[string]bool)
+
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, maxScanBufferSize)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line != "" && !strings.HasPrefix(line, "#") {
-			domains = append(domains, line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Extract any valid domains from the line (e.g. Amass graph relation lines)
+		extracted := extractDomainsFromLine(line)
+		for _, d := range extracted {
+			if !isDomainInScope(d, targetDomain) {
+				continue
+			}
+			dLower := strings.ToLower(d)
+			if !seen[dLower] {
+				seen[dLower] = true
+				domains = append(domains, d)
+			}
 		}
 	}
+	file.Close() // Close before rewrite
 
 	if err := scanner.Err(); err != nil {
 		return 0, err
 	}
 
-	if len(domains) > 0 {
+	// Rewrite the file in-place with clean, sorted subdomains
+	slices.Sort(domains)
+	if err := writeLines(filePath, domains); err != nil {
+		logger.Warning("failed to rewrite subdomains file %s: %v", filePath, err)
+	}
+
+	if len(domains) > 0 && scanID > 0 {
 		if err := database.AddSubdomains(scanID, domains, source); err != nil {
 			return 0, err
 		}
@@ -73,6 +155,7 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 	}
 	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	count := 0
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -86,6 +169,12 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 		var result HttpxResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
 			continue
+		}
+
+		if targetDomain != "" {
+			if !isURLInScope(result.URL, targetDomain) {
+				continue
+			}
 		}
 
 		tech := ""
@@ -294,6 +383,7 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 	}
 	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	count := 0
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -314,6 +404,12 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 			url = parts[1]
 		}
 
+		if targetDomain != "" {
+			if !isURLInScope(url, targetDomain) {
+				continue
+			}
+		}
+
 		if err := database.AddEndpoint(scanID, url, method, source); err != nil {
 			continue
 		}
@@ -331,6 +427,7 @@ func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 	}
 	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	count := 0
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -339,6 +436,12 @@ func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
+		}
+
+		if targetDomain != "" {
+			if !isURLInScope(line, targetDomain) {
+				continue
+			}
 		}
 
 		if err := database.AddURL(scanID, line, 0, "", "", "", source); err != nil {
@@ -361,6 +464,7 @@ func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 	}
 	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	seen := make(map[string]bool)
 	count := 0
 	scanner := bufio.NewScanner(file)
@@ -379,6 +483,13 @@ func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 		if url == "" || seen[url] {
 			continue
 		}
+
+		if targetDomain != "" {
+			if !isURLInScope(url, targetDomain) {
+				continue
+			}
+		}
+
 		seen[url] = true
 		if err := database.AddURL(scanID, url, 0, "", "", "", source); err != nil {
 			continue
@@ -480,12 +591,14 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 		}
 		for _, san := range sans {
 			san = strings.TrimPrefix(san, "*.")
-			if targetDomain != "" && !seenSANs[san] && (san == targetDomain || strings.HasSuffix(san, "."+targetDomain)) {
-				seenSANs[san] = true
-				if err := database.AddSubdomains(scanID, []string{san}, "tlsx-san"); err != nil {
-					logger.FileDebug("parser: AddSubdomains failed for %s: %v", san, err)
-				} else {
-					newSubs++
+			if ValidateDomain(san) == nil {
+				if targetDomain != "" && !seenSANs[san] && (san == targetDomain || strings.HasSuffix(san, "."+targetDomain)) {
+					seenSANs[san] = true
+					if err := database.AddSubdomains(scanID, []string{san}, "tlsx-san"); err != nil {
+						logger.FileDebug("parser: AddSubdomains failed for %s: %v", san, err)
+					} else {
+						newSubs++
+					}
 				}
 			}
 		}
@@ -565,7 +678,7 @@ type UncoverResult struct {
 }
 
 // ParseUncoverOutput parses uncover JSON output and extracts subdomains/ports.
-func ParseUncoverOutput(scanID int64, filePath string) (subs int, ports int, err error) {
+func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (subs int, ports int, err error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, 0, err
@@ -594,10 +707,12 @@ func ParseUncoverOutput(scanID int64, filePath string) (subs int, ports int, err
 		}
 		if host != "" && !seenHosts[host] {
 			seenHosts[host] = true
-			if err := database.AddSubdomains(scanID, []string{host}, "uncover-"+result.Source); err != nil {
-				logger.FileDebug("parser: AddSubdomains failed for %s: %v", host, err)
-			} else {
-				subs++
+			if ValidateDomain(host) == nil && (targetDomain == "" || host == targetDomain || strings.HasSuffix(host, "."+targetDomain)) {
+				if err := database.AddSubdomains(scanID, []string{host}, "uncover-"+result.Source); err != nil {
+					logger.FileDebug("parser: AddSubdomains failed for %s: %v", host, err)
+				} else {
+					subs++
+				}
 			}
 		}
 

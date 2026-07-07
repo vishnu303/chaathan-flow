@@ -343,7 +343,7 @@ func hostFromRawURL(raw string) string {
 // hostnames (one per line) to outputFile. Returns the number written.
 // This converts Uncover's JSON format into a plain-text list that can be
 // merged into all_subdomains.txt by stepDNSConsolidation (Step 6).
-func extractUncoverHosts(uncoverJSON, outputFile string) int {
+func extractUncoverHosts(uncoverJSON, outputFile string, targetDomain string) int {
 	type uncoverLine struct {
 		Host string `json:"host"`
 		IP   string `json:"ip"`
@@ -379,6 +379,13 @@ func extractUncoverHosts(uncoverJSON, outputFile string) int {
 		}
 		host = strings.ToLower(strings.TrimSpace(host))
 		if host == "" || seen[host] {
+			continue
+		}
+		// Validate that the host is a valid domain and is in-scope
+		if utils.ValidateDomain(host) != nil {
+			continue
+		}
+		if targetDomain != "" && host != targetDomain && !strings.HasSuffix(host, "."+targetDomain) {
 			continue
 		}
 		seen[host] = true

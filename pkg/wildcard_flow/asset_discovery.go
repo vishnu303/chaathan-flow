@@ -272,7 +272,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		subs, ports, _ := utils.ParseUncoverOutput(c.ScanID, c.F.UncoverOut)
+		subs, ports, _ := utils.ParseUncoverOutput(c.ScanID, c.F.UncoverOut, c.Domain)
 		if subs > 0 || ports > 0 {
 			label := ""
 			if uncoverSkipped {
@@ -287,7 +287,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 	}
 	
 	// Extract hostnames into a plain-text file so Step 6 can merge them
-	if n := extractUncoverHosts(c.F.UncoverOut, c.F.UncoverHostsOut); n > 0 {
+	if n := extractUncoverHosts(c.F.UncoverOut, c.F.UncoverHostsOut, c.Domain); n > 0 {
 		logger.SubStep("[Done] Extracted %d unique hosts from Uncover output", n)
 	}
 

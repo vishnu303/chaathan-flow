@@ -697,7 +697,15 @@ func stepURLConsolidation(c *Ctx) bool {
 
 	// Sanitize: unescape \uXXXX sequences, strip non-URL lines (GoSpider tags,
 	// relative paths from GoLinkFinder), and re-deduplicate.
-	if err := utils.SanitizeURLFile(c.F.AllURLsRaw); err != nil {
+	// We also filter out any out-of-scope hostnames.
+	isAllowedHost := func(host string) bool {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if c.ScopeFilter != nil {
+			return c.ScopeFilter.IsInScope(host) && !c.ScopeFilter.IsOutOfScope(host)
+		}
+		return host == c.Domain || strings.HasSuffix(host, "."+c.Domain)
+	}
+	if err := utils.SanitizeURLFile(c.F.AllURLsRaw, isAllowedHost); err != nil {
 		logger.Warning("URL sanitization failed: %v", err)
 	}
 	rawCount, _ := utils.CountFileLines(c.F.AllURLsRaw)

@@ -365,8 +365,10 @@ func stepTLSAnalysis(c *Ctx) bool {
 										continue
 									}
 									seen[san] = true
-									if (san == c.Domain || strings.HasSuffix(san, "."+c.Domain)) && !existingSubs[san] {
-										newSANs = append(newSANs, san)
+									if utils.ValidateDomain(san) == nil {
+										if (san == c.Domain || strings.HasSuffix(san, "."+c.Domain)) && !existingSubs[san] {
+											newSANs = append(newSANs, san)
+										}
 									}
 								}
 							}
