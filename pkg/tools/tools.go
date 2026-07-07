@@ -520,10 +520,14 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 
 
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
-	// Use -o which is universally accepted by gau to write results.
-	args := []string{domain, "--providers", "wayback", "--subs", "-o", outputFile}
+	args := []string{domain, "--providers", "wayback", "--subs"}
 	args = t.appendProxy(args, "--proxy")
-	_, err := t.Runner.Run(ctx, "gau", args)
+	output, err := t.Runner.Run(ctx, "gau", args)
+	if strings.TrimSpace(output) != "" {
+		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
+	}
 	return err
 }
 
