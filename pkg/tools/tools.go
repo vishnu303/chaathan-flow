@@ -520,7 +520,7 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 
 
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
-	args := []string{domain, "--providers", "wayback", "--subs"}
+	args := []string{"--providers", "wayback", "--subs", domain}
 	args = t.appendProxy(args, "--proxy")
 	output, err := t.Runner.Run(ctx, "gau", args)
 	if strings.TrimSpace(output) != "" {
@@ -807,8 +807,9 @@ func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile strin
 
 // RunWaybackurls fetches historical URLs from Wayback Machine
 func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile string) error {
-	args := []string{domain}
-	output, err := t.Runner.Run(ctx, "waybackurls", args)
+	args := []string{}
+	// waybackurls reads the domain from standard input
+	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")))
 	if strings.TrimSpace(output) != "" {
 		if writeErr := writeToFile(outputFile, output); writeErr != nil {
 			return writeErr

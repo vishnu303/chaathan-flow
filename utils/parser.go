@@ -72,6 +72,14 @@ func extractDomainsFromLine(line string) []string {
 	words := strings.Fields(line)
 	for _, w := range words {
 		w = strings.Trim(w, ",.;:()<>\"'")
+		
+		// If it looks like a URL, extract the hostname
+		if strings.HasPrefix(strings.ToLower(w), "http://") || strings.HasPrefix(strings.ToLower(w), "https://") {
+			if u, err := neturl.Parse(w); err == nil && u.Hostname() != "" {
+				w = u.Hostname()
+			}
+		}
+
 		if ValidateDomain(w) == nil {
 			found = append(found, w)
 		}
