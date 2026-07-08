@@ -21,10 +21,16 @@ type QueryConsole struct {
 	Tables      [6]*tview.Table
 	FilterInput *tview.InputField
 	FooterText  *tview.TextView
+	HeaderText  *tview.TextView
 
 	ActiveTab  int
 	ScanID     int64
 	FilterText string
+
+	showLiveOnly       bool
+	vulnSeverityFilter string
+	currentPage        [6]int
+	pageSize           int
 
 	// Master raw data loaded from database
 	subdomains []database.Subdomain
@@ -71,16 +77,18 @@ func StartQueryConsole(presetScanID int64) error {
 	tview.Styles.TitleColor = tcell.GetColor(ColorSapphire)
 
 	q := &QueryConsole{
-		App:       tview.NewApplication(),
-		ActiveTab: 0,
-		ScanID:    presetScanID,
+		App:          tview.NewApplication(),
+		ActiveTab:    0,
+		ScanID:       presetScanID,
+		showLiveOnly: true,
+		pageSize:     100,
 	}
 
 	// 1. Header Text
-	header := tview.NewTextView().
+	q.HeaderText = tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft)
-	header.SetText(fmt.Sprintf(
+	q.HeaderText.SetText(fmt.Sprintf(
 		" [%s::b]CHAATHAN RECON CONSOLE[-] [%s::i]• Unified Query & Findings Explorer[-]",
 		ColorActive, ColorSapphire,
 	))
@@ -157,6 +165,7 @@ func StartQueryConsole(presetScanID int64) error {
 
 		q.filterTimer = time.AfterFunc(60*time.Millisecond, func() {
 			q.App.QueueUpdateDraw(func() {
+				q.currentPage[q.ActiveTab] = 0
 				q.populateTable(q.ActiveTab)
 			})
 		})
@@ -185,7 +194,7 @@ func StartQueryConsole(presetScanID int64) error {
 
 	rootLayout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(header, 1, 0, false).
+		AddItem(q.HeaderText, 1, 0, false).
 		AddItem(mainFlex, 0, 1, true).
 		AddItem(q.FooterText, 1, 0, false)
 
@@ -220,6 +229,16 @@ func StartQueryConsole(presetScanID int64) error {
 		case tcell.KeyBacktab:
 			q.cycleFocus(true)
 			return nil
+		case tcell.KeyCtrlF:
+			if !q.FilterInput.HasFocus() {
+				q.nextPage()
+				return nil
+			}
+		case tcell.KeyCtrlB:
+			if !q.FilterInput.HasFocus() {
+				q.prevPage()
+				return nil
+			}
 		case tcell.KeyEscape:
 			if q.FilterInput.HasFocus() {
 				q.FilterInput.SetText("")
@@ -252,6 +271,57 @@ func StartQueryConsole(presetScanID int64) error {
 			if !q.FilterInput.HasFocus() {
 				tabIdx := int(event.Rune() - '1')
 				q.switchTab(tabIdx)
+				return nil
+			}
+		case '[':
+			if !q.FilterInput.HasFocus() {
+				prevTab := (q.ActiveTab - 1 + 6) % 6
+				q.switchTab(prevTab)
+				return nil
+			}
+		case ']':
+			if !q.FilterInput.HasFocus() {
+				nextTab := (q.ActiveTab + 1) % 6
+				q.switchTab(nextTab)
+				return nil
+			}
+		case '.':
+			if !q.FilterInput.HasFocus() {
+				q.nextPage()
+				return nil
+			}
+		case ',':
+			if !q.FilterInput.HasFocus() {
+				q.prevPage()
+				return nil
+			}
+		case 'l', 'L':
+			if !q.FilterInput.HasFocus() && q.ActiveTab == 0 {
+				q.showLiveOnly = !q.showLiveOnly
+				q.currentPage[0] = 0
+				q.populateTable(0)
+				return nil
+			}
+		case 's', 'S':
+			if !q.FilterInput.HasFocus() && q.ActiveTab == 2 {
+				var nextSev string
+				switch q.vulnSeverityFilter {
+				case "":
+					nextSev = "critical"
+				case "critical":
+					nextSev = "high"
+				case "high":
+					nextSev = "medium"
+				case "medium":
+					nextSev = "low"
+				case "low":
+					nextSev = "info"
+				case "info":
+					nextSev = ""
+				}
+				q.vulnSeverityFilter = nextSev
+				q.currentPage[2] = 0
+				q.populateTable(2)
 				return nil
 			}
 		}
@@ -350,13 +420,28 @@ func (q *QueryConsole) cycleFocus(reverse bool) {
 
 // drawTabs renders tab labels with styling markers
 func (q *QueryConsole) drawTabs() {
+	if q.TabsText == nil {
+		return
+	}
 	tabNames := []string{"SUBDOMAINS", "PORTS", "VULNERABILITIES", "URLS", "ENDPOINTS", "ROI TARGETS"}
+	counts := []int{
+		q.subdomainsTotalCount,
+		q.portsTotalCount,
+		q.vulnsTotalCount,
+		q.urlsTotalCount,
+		q.endpointsTotalCount,
+		q.roiTotalCount,
+	}
 	var parts []string
 	for i, name := range tabNames {
+		countStr := ""
+		if len(q.scans) > 0 {
+			countStr = fmt.Sprintf(" (%d)", counts[i])
+		}
 		if i == q.ActiveTab {
-			parts = append(parts, fmt.Sprintf("[%s::b]● %s[-]", ColorActive, name))
+			parts = append(parts, fmt.Sprintf("[%s::b]● %s%s[-]", ColorActive, name, countStr))
 		} else {
-			parts = append(parts, fmt.Sprintf("[%s]○ %s[-]", ColorSubtle, name))
+			parts = append(parts, fmt.Sprintf("[%s]○ %s%s[-]", ColorSubtle, name, countStr))
 		}
 	}
 	q.TabsText.SetText("  " + strings.Join(parts, "   |   "))
@@ -372,7 +457,7 @@ func (q *QueryConsole) switchTab(tabIdx int) {
 
 	tabPages := []string{"subdomains", "ports", "vulns", "urls", "endpoints", "roi"}
 	q.Pages.SwitchToPage(tabPages[tabIdx])
-	q.populateTable(tabIdx)
+	q.loadActiveTab(tabIdx)
 
 	// Preserve active control focus when changing tabs
 	for _, t := range q.Tables {
@@ -388,83 +473,22 @@ func (q *QueryConsole) switchTab(tabIdx int) {
 func (q *QueryConsole) loadScanData(scanID int64) {
 	q.ScanID = scanID
 
-	var err error
-	rawSubs, err := database.GetLiveSubdomains(scanID)
-	if err != nil {
-		logger.FileDebug("GetLiveSubdomains error: %v", err)
-	}
-	rawPorts, err := database.GetPorts(scanID)
-	if err != nil {
-		logger.FileDebug("GetPorts error: %v", err)
-	}
-	rawVulns, err := database.GetVulnerabilities(scanID)
-	if err != nil {
-		logger.FileDebug("GetVulnerabilities error: %v", err)
-	}
-	rawUrls, err := database.GetURLs(scanID)
-	if err != nil {
-		logger.FileDebug("GetURLs error: %v", err)
-	}
-	rawEndpoints, err := database.GetEndpoints(scanID)
-	if err != nil {
-		logger.FileDebug("GetEndpoints error: %v", err)
-	}
-	rawRoi, err := database.GetRankedURLs(scanID, 5000)
-	if err != nil {
-		logger.FileDebug("GetRankedURLs error: %v", err)
-	}
+	// Reset page indices and filters
+	q.currentPage = [6]int{}
+	q.vulnSeverityFilter = ""
+	q.showLiveOnly = true
 
-	// Store total counts
-	q.subdomainsTotalCount = len(rawSubs)
-	q.portsTotalCount = len(rawPorts)
-	q.vulnsTotalCount = len(rawVulns)
-	q.urlsTotalCount = len(rawUrls)
-	q.endpointsTotalCount = len(rawEndpoints)
-	q.roiTotalCount = len(rawRoi)
-
-	// Truncate to 5000 rows max in memory for TUI
-	if len(rawSubs) > 5000 {
-		rawSubs = rawSubs[:5000]
-	}
-	if len(rawPorts) > 5000 {
-		rawPorts = rawPorts[:5000]
-	}
-	if len(rawVulns) > 5000 {
-		rawVulns = rawVulns[:5000]
-	}
-	if len(rawUrls) > 5000 {
-		rawUrls = rawUrls[:5000]
-	}
-	if len(rawEndpoints) > 5000 {
-		rawEndpoints = rawEndpoints[:5000]
-	}
-
-	q.subdomains = rawSubs
-	q.ports = rawPorts
-	q.vulns = rawVulns
-	q.urls = rawUrls
-	q.endpoints = rawEndpoints
-	q.roi = rawRoi
-
-	// Build tech stack cache (L4)
-	q.techCache = make(map[string]string)
-	for _, u := range rawUrls {
-		var techStr string
-		var techs []string
-		if err := json.Unmarshal([]byte(u.Tech), &techs); err == nil {
-			techStr = strings.Join(techs, ", ")
-		} else {
-			techStr = u.Tech
-		}
-		q.techCache[u.URL] = techStr
-	}
-
-	q.FilterInput.SetText("")
+	// Clear filter input UI safely without triggering extra draws
 	q.FilterText = ""
-
-	for i := 0; i < 6; i++ {
-		q.populateTable(i)
+	if q.FilterInput != nil {
+		q.FilterInput.SetText("")
 	}
+
+	// Load counts (also sets header text and calls drawTabs)
+	q.loadScanCounts(scanID)
+
+	// Lazy load active tab data (which will call populateTable)
+	q.loadActiveTab(q.ActiveTab)
 }
 
 // populateTable performs string search filtering and renders columns
@@ -473,8 +497,8 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 	table.Clear()
 
 	filter := strings.ToLower(q.FilterText)
-	rowIdx := 1
 
+	// Phase 1: Filter data
 	switch tabIndex {
 	case 0: // Subdomains
 		q.filteredSubdomains = nil
@@ -489,27 +513,16 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 			table.SetCell(0, col, cell)
 		}
 
-		rowIdx = 1
 		for _, s := range q.subdomains {
+			if q.showLiveOnly && !s.IsLive {
+				continue
+			}
 			if filter != "" && !strings.Contains(strings.ToLower(s.Domain), filter) &&
 				!strings.Contains(strings.ToLower(s.IPAddress), filter) &&
 				!strings.Contains(strings.ToLower(s.Source), filter) {
 				continue
 			}
 			q.filteredSubdomains = append(q.filteredSubdomains, s)
-
-			liveText := "no"
-			liveColor := tcell.GetColor(ColorSubtle)
-			if s.IsLive {
-				liveText = "yes"
-				liveColor = tcell.GetColor(ColorGreen)
-			}
-
-			table.SetCell(rowIdx, 0, tview.NewTableCell(" "+s.Domain).SetTextColor(tcell.ColorWhite))
-			table.SetCell(rowIdx, 1, tview.NewTableCell(" "+liveText).SetTextColor(liveColor).SetAlign(tview.AlignCenter))
-			table.SetCell(rowIdx, 2, tview.NewTableCell(" "+s.IPAddress).SetTextColor(tcell.GetColor(ColorLavender)))
-			table.SetCell(rowIdx, 3, tview.NewTableCell(" "+s.Source).SetTextColor(tcell.GetColor(ColorSubtle)))
-			rowIdx++
 		}
 
 	case 1: // Ports
@@ -525,7 +538,6 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 			table.SetCell(0, col, cell)
 		}
 
-		rowIdx = 1
 		for _, p := range q.ports {
 			portStr := fmt.Sprintf("%d", p.Port)
 			if filter != "" && !strings.Contains(strings.ToLower(p.Host), filter) &&
@@ -535,12 +547,6 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 				continue
 			}
 			q.filteredPorts = append(q.filteredPorts, p)
-
-			table.SetCell(rowIdx, 0, tview.NewTableCell(" "+p.Host).SetTextColor(tcell.ColorWhite))
-			table.SetCell(rowIdx, 1, tview.NewTableCell(" "+portStr).SetTextColor(tcell.GetColor(ColorYellow)).SetAlign(tview.AlignRight))
-			table.SetCell(rowIdx, 2, tview.NewTableCell(" "+p.Protocol).SetTextColor(tcell.GetColor(ColorBlue)).SetAlign(tview.AlignCenter))
-			table.SetCell(rowIdx, 3, tview.NewTableCell(" "+p.Service).SetTextColor(tcell.GetColor(ColorGreen)))
-			rowIdx++
 		}
 
 	case 2: // Vulnerabilities
@@ -556,8 +562,10 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 			table.SetCell(0, col, cell)
 		}
 
-		rowIdx = 1
 		for _, v := range q.vulns {
+			if q.vulnSeverityFilter != "" && strings.ToLower(v.Severity) != q.vulnSeverityFilter {
+				continue
+			}
 			if filter != "" && !strings.Contains(strings.ToLower(v.Severity), filter) &&
 				!strings.Contains(strings.ToLower(v.Host), filter) &&
 				!strings.Contains(strings.ToLower(v.Name), filter) &&
@@ -565,32 +573,6 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 				continue
 			}
 			q.filteredVulns = append(q.filteredVulns, v)
-
-			var badge string
-			var badgeColor tcell.Color
-			switch strings.ToLower(v.Severity) {
-			case "critical":
-				badge = "CRIT"
-				badgeColor = tcell.GetColor(ColorRed)
-			case "high":
-				badge = "HIGH"
-				badgeColor = tcell.GetColor(ColorOrange)
-			case "medium":
-				badge = "MED"
-				badgeColor = tcell.GetColor(ColorYellow)
-			case "low":
-				badge = "LOW"
-				badgeColor = tcell.GetColor(ColorGreen)
-			default:
-				badge = "INFO"
-				badgeColor = tcell.GetColor(ColorBlue)
-			}
-
-			table.SetCell(rowIdx, 0, tview.NewTableCell(fmt.Sprintf(" [%s] ", badge)).SetTextColor(badgeColor).SetAlign(tview.AlignCenter))
-			table.SetCell(rowIdx, 1, tview.NewTableCell(" "+v.Host).SetTextColor(tcell.GetColor(ColorLavender)))
-			table.SetCell(rowIdx, 2, tview.NewTableCell(" "+v.Name).SetTextColor(tcell.ColorWhite))
-			table.SetCell(rowIdx, 3, tview.NewTableCell(" "+v.TemplateID).SetTextColor(tcell.GetColor(ColorSubtle)))
-			rowIdx++
 		}
 
 	case 3: // URLs
@@ -606,7 +588,6 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 			table.SetCell(0, col, cell)
 		}
 
-		rowIdx = 1
 		for _, u := range q.urls {
 			statusStr := fmt.Sprintf("%d", u.StatusCode)
 			if filter != "" && !strings.Contains(statusStr, filter) &&
@@ -617,24 +598,6 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 				continue
 			}
 			q.filteredURLs = append(q.filteredURLs, u)
-
-			statusColor := tcell.GetColor(ColorSubtle)
-			if u.StatusCode >= 200 && u.StatusCode < 300 {
-				statusColor = tcell.GetColor(ColorGreen)
-			} else if u.StatusCode >= 300 && u.StatusCode < 400 {
-				statusColor = tcell.GetColor(ColorYellow)
-			} else if u.StatusCode >= 400 {
-				statusColor = tcell.GetColor(ColorRed)
-			}
-
-			table.SetCell(rowIdx, 0, tview.NewTableCell(" "+statusStr).SetTextColor(statusColor).SetAlign(tview.AlignCenter))
-			table.SetCell(rowIdx, 1, tview.NewTableCell(" "+u.Source).SetTextColor(tcell.GetColor(ColorLavender)))
-			table.SetCell(rowIdx, 2, tview.NewTableCell(" "+u.URL).SetTextColor(tcell.ColorWhite))
-			table.SetCell(rowIdx, 3, tview.NewTableCell(" "+u.Title).SetTextColor(tcell.GetColor(ColorBlue)))
-
-			techStr := q.techCache[u.URL]
-			table.SetCell(rowIdx, 4, tview.NewTableCell(" "+techStr).SetTextColor(tcell.GetColor(ColorGreen)))
-			rowIdx++
 		}
 
 	case 4: // Endpoints
@@ -650,7 +613,6 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 			table.SetCell(0, col, cell)
 		}
 
-		rowIdx = 1
 		for _, e := range q.endpoints {
 			if filter != "" && !strings.Contains(strings.ToLower(e.Method), filter) &&
 				!strings.Contains(strings.ToLower(e.Source), filter) &&
@@ -658,21 +620,6 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 				continue
 			}
 			q.filteredEndpoints = append(q.filteredEndpoints, e)
-
-			methodColor := tcell.GetColor(ColorSubtle)
-			switch strings.ToUpper(e.Method) {
-			case "GET":
-				methodColor = tcell.GetColor(ColorGreen)
-			case "POST":
-				methodColor = tcell.GetColor(ColorYellow)
-			case "PUT", "DELETE":
-				methodColor = tcell.GetColor(ColorRed)
-			}
-
-			table.SetCell(rowIdx, 0, tview.NewTableCell(" "+e.Method).SetTextColor(methodColor).SetAlign(tview.AlignCenter))
-			table.SetCell(rowIdx, 1, tview.NewTableCell(" "+e.Source).SetTextColor(tcell.GetColor(ColorLavender)))
-			table.SetCell(rowIdx, 2, tview.NewTableCell(" "+e.URL).SetTextColor(tcell.ColorWhite))
-			rowIdx++
 		}
 
 	case 5: // ROI Targets
@@ -688,7 +635,6 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 			table.SetCell(0, col, cell)
 		}
 
-		rowIdx = 1
 		for _, r := range q.roi {
 			scoreStr := fmt.Sprintf("%d", r.Score)
 			statusStr := fmt.Sprintf("%d", r.StatusCode)
@@ -704,38 +650,250 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 				continue
 			}
 			q.filteredROI = append(q.filteredROI, r)
+		}
+	}
 
-			scoreColor := tcell.GetColor(ColorGreen)
-			if r.Score >= 80 {
-				scoreColor = tcell.GetColor(ColorRed)
-			} else if r.Score >= 40 {
-				scoreColor = tcell.GetColor(ColorOrange)
-			} else if r.Score >= 20 {
-				scoreColor = tcell.GetColor(ColorYellow)
+	// Phase 2: Pagination calculations
+	count := q.getFilteredCount(tabIndex)
+	pageSize := q.pageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	totalPages := 0
+	if count > 0 {
+		totalPages = (count + pageSize - 1) / pageSize
+	}
+	if q.currentPage[tabIndex] >= totalPages {
+		q.currentPage[tabIndex] = totalPages - 1
+	}
+	if q.currentPage[tabIndex] < 0 {
+		q.currentPage[tabIndex] = 0
+	}
+
+	start := q.currentPage[tabIndex] * pageSize
+	end := start + pageSize
+	if end > count {
+		end = count
+	}
+
+	// Helper for setting dynamic table title
+	formatTitle := func(baseTitle string, tabIdx int, extra string) string {
+		if count == 0 {
+			if extra != "" {
+				return fmt.Sprintf(" %s (0 items, %s) ", baseTitle, extra)
 			}
+			return fmt.Sprintf(" %s (0 items) ", baseTitle)
+		}
+		extraStr := ""
+		if extra != "" {
+			extraStr = ", " + extra
+		}
+		return fmt.Sprintf(" %s (Page %d/%d, showing %d-%d of %d%s) ", baseTitle, q.currentPage[tabIdx]+1, totalPages, start+1, end, count, extraStr)
+	}
 
-			confColor := tcell.GetColor(ColorSubtle)
-			switch strings.ToLower(r.Confidence) {
-			case "high":
-				confColor = tcell.GetColor(ColorGreen)
-			case "medium":
-				confColor = tcell.GetColor(ColorYellow)
+	// Phase 3: Slicing and writing to Table cells
+	rowIdx := 1
+	switch tabIndex {
+	case 0:
+		extra := "All"
+		if q.showLiveOnly {
+			extra = "Live Only"
+		}
+		if filter != "" {
+			extra += ", Filtered"
+		}
+		table.SetTitle(formatTitle("SUBDOMAINS FINDINGS", 0, extra))
+
+		if count > 0 {
+			sliced := q.filteredSubdomains[start:end]
+			for _, s := range sliced {
+				liveText := "no"
+				liveColor := tcell.GetColor(ColorSubtle)
+				if s.IsLive {
+					liveText = "yes"
+					liveColor = tcell.GetColor(ColorGreen)
+				}
+				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+s.Domain).SetTextColor(tcell.ColorWhite))
+				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+liveText).SetTextColor(liveColor).SetAlign(tview.AlignCenter))
+				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+s.IPAddress).SetTextColor(tcell.GetColor(ColorLavender)))
+				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+s.Source).SetTextColor(tcell.GetColor(ColorSubtle)))
+				rowIdx++
 			}
+		}
 
-			statusColor := tcell.GetColor(ColorSubtle)
-			if r.StatusCode >= 200 && r.StatusCode < 300 {
-				statusColor = tcell.GetColor(ColorGreen)
-			} else if r.StatusCode >= 300 && r.StatusCode < 400 {
-				statusColor = tcell.GetColor(ColorYellow)
-			} else if r.StatusCode >= 400 {
-				statusColor = tcell.GetColor(ColorRed)
+	case 1:
+		extra := ""
+		if filter != "" {
+			extra = "Filtered"
+		}
+		table.SetTitle(formatTitle("OPEN PORTS", 1, extra))
+
+		if count > 0 {
+			sliced := q.filteredPorts[start:end]
+			for _, p := range sliced {
+				portStr := fmt.Sprintf("%d", p.Port)
+				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+p.Host).SetTextColor(tcell.ColorWhite))
+				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+portStr).SetTextColor(tcell.GetColor(ColorYellow)).SetAlign(tview.AlignRight))
+				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+p.Protocol).SetTextColor(tcell.GetColor(ColorBlue)).SetAlign(tview.AlignCenter))
+				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+p.Service).SetTextColor(tcell.GetColor(ColorGreen)))
+				rowIdx++
 			}
+		}
 
-			table.SetCell(rowIdx, 0, tview.NewTableCell(" "+scoreStr).SetTextColor(scoreColor).SetAlign(tview.AlignRight))
-			table.SetCell(rowIdx, 1, tview.NewTableCell(" "+r.Confidence).SetTextColor(confColor).SetAlign(tview.AlignCenter))
-			table.SetCell(rowIdx, 2, tview.NewTableCell(" "+statusStr).SetTextColor(statusColor).SetAlign(tview.AlignCenter))
-			table.SetCell(rowIdx, 3, tview.NewTableCell(" "+r.URL).SetTextColor(tcell.ColorWhite))
-			table.SetCell(rowIdx, 4, tview.NewTableCell(" "+surfaces).SetTextColor(tcell.GetColor(ColorGreen)))
+	case 2:
+		extra := "All Severities"
+		if q.vulnSeverityFilter != "" {
+			extra = strings.ToUpper(q.vulnSeverityFilter)
+		}
+		if filter != "" {
+			extra += ", Filtered"
+		}
+		table.SetTitle(formatTitle("DISCOVERED VULNERABILITIES", 2, extra))
+
+		if count > 0 {
+			sliced := q.filteredVulns[start:end]
+			for _, v := range sliced {
+				var badge string
+				var badgeColor tcell.Color
+				switch strings.ToLower(v.Severity) {
+				case "critical":
+					badge = "CRIT"
+					badgeColor = tcell.GetColor(ColorRed)
+				case "high":
+					badge = "HIGH"
+					badgeColor = tcell.GetColor(ColorOrange)
+				case "medium":
+					badge = "MED"
+					badgeColor = tcell.GetColor(ColorYellow)
+				case "low":
+					badge = "LOW"
+					badgeColor = tcell.GetColor(ColorGreen)
+				default:
+					badge = "INFO"
+					badgeColor = tcell.GetColor(ColorBlue)
+				}
+
+				table.SetCell(rowIdx, 0, tview.NewTableCell(fmt.Sprintf(" [%s] ", badge)).SetTextColor(badgeColor).SetAlign(tview.AlignCenter))
+				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+v.Host).SetTextColor(tcell.GetColor(ColorLavender)))
+				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+v.Name).SetTextColor(tcell.ColorWhite))
+				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+v.TemplateID).SetTextColor(tcell.GetColor(ColorSubtle)))
+				rowIdx++
+			}
+		}
+
+	case 3:
+		extra := ""
+		if filter != "" {
+			extra = "Filtered"
+		}
+		table.SetTitle(formatTitle("CRAWLED URLS", 3, extra))
+
+		if count > 0 {
+			sliced := q.filteredURLs[start:end]
+			for _, u := range sliced {
+				statusStr := fmt.Sprintf("%d", u.StatusCode)
+				statusColor := tcell.GetColor(ColorSubtle)
+				if u.StatusCode >= 200 && u.StatusCode < 300 {
+					statusColor = tcell.GetColor(ColorGreen)
+				} else if u.StatusCode >= 300 && u.StatusCode < 400 {
+					statusColor = tcell.GetColor(ColorYellow)
+				} else if u.StatusCode >= 400 {
+					statusColor = tcell.GetColor(ColorRed)
+				}
+
+				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+statusStr).SetTextColor(statusColor).SetAlign(tview.AlignCenter))
+				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+u.Source).SetTextColor(tcell.GetColor(ColorLavender)))
+				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+u.URL).SetTextColor(tcell.ColorWhite))
+				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+u.Title).SetTextColor(tcell.GetColor(ColorBlue)))
+
+				var techStr string
+				if u.Tech != "" {
+					var techs []string
+					if err := json.Unmarshal([]byte(u.Tech), &techs); err == nil {
+						techStr = strings.Join(techs, ", ")
+					} else {
+						techStr = u.Tech
+					}
+				}
+				table.SetCell(rowIdx, 4, tview.NewTableCell(" "+techStr).SetTextColor(tcell.GetColor(ColorGreen)))
+				rowIdx++
+			}
+		}
+
+	case 4:
+		extra := ""
+		if filter != "" {
+			extra = "Filtered"
+		}
+		table.SetTitle(formatTitle("API ENDPOINTS", 4, extra))
+
+		if count > 0 {
+			sliced := q.filteredEndpoints[start:end]
+			for _, e := range sliced {
+				methodColor := tcell.GetColor(ColorSubtle)
+				switch strings.ToUpper(e.Method) {
+				case "GET":
+					methodColor = tcell.GetColor(ColorGreen)
+				case "POST":
+					methodColor = tcell.GetColor(ColorYellow)
+				case "PUT", "DELETE":
+					methodColor = tcell.GetColor(ColorRed)
+				}
+
+				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+e.Method).SetTextColor(methodColor).SetAlign(tview.AlignCenter))
+				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+e.Source).SetTextColor(tcell.GetColor(ColorLavender)))
+				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+e.URL).SetTextColor(tcell.ColorWhite))
+				rowIdx++
+			}
+		}
+
+	case 5:
+		extra := ""
+		if filter != "" {
+			extra = "Filtered"
+		}
+		table.SetTitle(formatTitle("TESTING ROI TARGETS", 5, extra))
+
+		if count > 0 {
+			sliced := q.filteredROI[start:end]
+			for _, r := range sliced {
+				scoreStr := fmt.Sprintf("%d", r.Score)
+				statusStr := fmt.Sprintf("%d", r.StatusCode)
+				surfaces := strings.Join(r.AttackSurfaces, ", ")
+
+				scoreColor := tcell.GetColor(ColorGreen)
+				if r.Score >= 80 {
+					scoreColor = tcell.GetColor(ColorRed)
+				} else if r.Score >= 40 {
+					scoreColor = tcell.GetColor(ColorOrange)
+				} else if r.Score >= 20 {
+					scoreColor = tcell.GetColor(ColorYellow)
+				}
+
+				confColor := tcell.GetColor(ColorSubtle)
+				switch strings.ToLower(r.Confidence) {
+				case "high":
+					confColor = tcell.GetColor(ColorGreen)
+				case "medium":
+					confColor = tcell.GetColor(ColorYellow)
+				}
+
+				statusColor := tcell.GetColor(ColorSubtle)
+				if r.StatusCode >= 200 && r.StatusCode < 300 {
+					statusColor = tcell.GetColor(ColorGreen)
+				} else if r.StatusCode >= 300 && r.StatusCode < 400 {
+					statusColor = tcell.GetColor(ColorYellow)
+				} else if r.StatusCode >= 400 {
+					statusColor = tcell.GetColor(ColorRed)
+				}
+
+				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+scoreStr).SetTextColor(scoreColor).SetAlign(tview.AlignRight))
+				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+r.Confidence).SetTextColor(confColor).SetAlign(tview.AlignCenter))
+				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+statusStr).SetTextColor(statusColor).SetAlign(tview.AlignCenter))
+				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+r.URL).SetTextColor(tcell.ColorWhite))
+				table.SetCell(rowIdx, 4, tview.NewTableCell(" "+surfaces).SetTextColor(tcell.GetColor(ColorGreen)))
+				rowIdx++
+			}
 		}
 	}
 
@@ -746,10 +904,8 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 	}
 	table.ScrollToBeginning()
 
-	// Update footer text with truncation warnings (M2)
-	var footerMsg string
+	// Update footer text with dynamic match counts and page shortcuts
 	var total, shown int
-
 	switch tabIndex {
 	case 0:
 		total = q.subdomainsTotalCount
@@ -772,11 +928,27 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 	}
 
 	isTruncated := total > shown
+	
 	helpKeys := fmt.Sprintf(
-		" [%s]Tab[-] Focus Panel  |  [%s]1-6[-] Switch Tabs  |  [%s]/[-] Search  |  [%s]Esc[-] Unfocus  |  [%s]R[-] Reload  |  [%s]Q/Ctrl+C[-] Exit",
+		" [%s]Tab[-] Focus Panel  |  [%s]1-6/[/]/[-] Tabs  |  [%s]/[-] Filter  |  [%s][,] [.][-] Page  |  [%s]R[-] Reload  |  [%s]Q/Ctrl+C[-] Exit",
 		ColorActive, ColorActive, ColorActive, ColorActive, ColorActive, ColorActive,
 	)
 
+	if tabIndex == 0 {
+		statusStr := "Off"
+		if q.showLiveOnly {
+			statusStr = "On"
+		}
+		helpKeys += fmt.Sprintf("  |  [%s]L[-] Live Only: %s", ColorActive, statusStr)
+	} else if tabIndex == 2 {
+		statusStr := "All"
+		if q.vulnSeverityFilter != "" {
+			statusStr = strings.ToUpper(q.vulnSeverityFilter)
+		}
+		helpKeys += fmt.Sprintf("  |  [%s]S[-] Severity: %s", ColorActive, statusStr)
+	}
+
+	var footerMsg string
 	if isTruncated {
 		footerMsg = fmt.Sprintf("%s  |  [#f38ba8::b]⚠️ WARNING: Truncated - showing first %d of %d items[-]", helpKeys, shown, total)
 	} else {
@@ -904,6 +1076,9 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 		}
 	}
 
+	sb.WriteString(fmt.Sprintf("\n\n[%s]────────────────────────────────────────────────────────────────────────────────[-]\n", ColorBorder))
+	sb.WriteString(fmt.Sprintf(" [%s]Close:[-] [ESC/ENTER]  |  [%s]Scroll:[-] [Up/Down, PgUp/PgDn]", ColorActive, ColorActive))
+
 	// Create styled popup TextView
 	view := tview.NewTextView().
 		SetDynamicColors(true).
@@ -923,7 +1098,7 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 		return event
 	})
 
-	// Align to center overlay flex container
+	// Align to center overlay flex container (width 80, height 22)
 	modal := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(nil, 0, 1, false).
@@ -931,8 +1106,221 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 			SetDirection(tview.FlexColumn).
 			AddItem(nil, 0, 1, false).
 			AddItem(view, 80, 1, true).
-			AddItem(nil, 0, 1, false), 20, 1, true).
+			AddItem(nil, 0, 1, false), 22, 1, true).
 		AddItem(nil, 0, 1, false)
 
 	q.Pages.AddPage("detail_modal", modal, true, true)
+}
+
+// loadScanCounts loads counts of findings and updates category headers
+func (q *QueryConsole) loadScanCounts(scanID int64) {
+	stats, err := database.GetScanStats(scanID)
+	if err != nil {
+		logger.FileDebug("GetScanStats error: %v", err)
+		return
+	}
+
+	q.subdomainsTotalCount = stats.TotalSubdomains
+	q.portsTotalCount = stats.TotalPorts
+	
+	vulnTotal := 0
+	if stats.Vulnerabilities != nil {
+		for _, count := range stats.Vulnerabilities {
+			vulnTotal += count
+		}
+	}
+	q.vulnsTotalCount = vulnTotal
+	q.urlsTotalCount = stats.TotalURLs
+	q.endpointsTotalCount = stats.TotalEndpoints
+	q.roiTotalCount = stats.TotalURLs
+
+	var currentScan *database.Scan
+	for _, s := range q.scans {
+		if s.ID == scanID {
+			currentScan = &s
+			break
+		}
+	}
+
+	if q.HeaderText != nil && currentScan != nil {
+		statusSymbol := "[+]"
+		statusColor := ColorGreen
+		switch currentScan.Status {
+		case "failed":
+			statusSymbol = "[-]"
+			statusColor = ColorRed
+		case "running":
+			statusSymbol = "[*]"
+			statusColor = ColorYellow
+		case "cancelled":
+			statusSymbol = "[ ]"
+			statusColor = ColorBlue
+		}
+		
+		q.HeaderText.SetText(fmt.Sprintf(
+			" [%s::b]CHAATHAN RECON CONSOLE[-]  |  Active Scan: [#ffffff::b]%s[-] (ID: #%d)  |  Status: [%s]%s %s[-]",
+			ColorActive, currentScan.Target, currentScan.ID, statusColor, statusSymbol, strings.ToUpper(currentScan.Status),
+		))
+	}
+
+	q.drawTabs()
+}
+
+// loadActiveTab queries database for only the active tab's findings and releases others
+func (q *QueryConsole) loadActiveTab(tabIdx int) {
+	for idx := 0; idx < 6; idx++ {
+		if idx != tabIdx {
+			q.releaseTabMemory(idx)
+		}
+	}
+
+	maxRows := 50000
+	var err error
+
+	switch tabIdx {
+	case 0:
+		if q.subdomains == nil {
+			var rawSubs []database.Subdomain
+			rawSubs, err = database.GetSubdomains(q.ScanID)
+			if err == nil {
+				if len(rawSubs) > maxRows {
+					rawSubs = rawSubs[:maxRows]
+				}
+				q.subdomains = rawSubs
+			} else {
+				logger.FileDebug("GetSubdomains error: %v", err)
+			}
+		}
+
+	case 1:
+		if q.ports == nil {
+			var rawPorts []database.Port
+			rawPorts, err = database.GetPorts(q.ScanID)
+			if err == nil {
+				if len(rawPorts) > maxRows {
+					rawPorts = rawPorts[:maxRows]
+				}
+				q.ports = rawPorts
+			} else {
+				logger.FileDebug("GetPorts error: %v", err)
+			}
+		}
+
+	case 2:
+		if q.vulns == nil {
+			var rawVulns []database.Vulnerability
+			rawVulns, err = database.GetVulnerabilities(q.ScanID)
+			if err == nil {
+				if len(rawVulns) > maxRows {
+					rawVulns = rawVulns[:maxRows]
+				}
+				q.vulns = rawVulns
+			} else {
+				logger.FileDebug("GetVulnerabilities error: %v", err)
+			}
+		}
+
+	case 3:
+		if q.urls == nil {
+			var rawUrls []database.URL
+			rawUrls, err = database.GetURLs(q.ScanID)
+			if err == nil {
+				if len(rawUrls) > maxRows {
+					rawUrls = rawUrls[:maxRows]
+				}
+				q.urls = rawUrls
+			} else {
+				logger.FileDebug("GetURLs error: %v", err)
+			}
+		}
+
+	case 4:
+		if q.endpoints == nil {
+			var rawEndpoints []database.Endpoint
+			rawEndpoints, err = database.GetEndpoints(q.ScanID)
+			if err == nil {
+				if len(rawEndpoints) > maxRows {
+					rawEndpoints = rawEndpoints[:maxRows]
+				}
+				q.endpoints = rawEndpoints
+			} else {
+				logger.FileDebug("GetEndpoints error: %v", err)
+			}
+		}
+
+	case 5:
+		if q.roi == nil {
+			var rawRoi []database.URLROI
+			rawRoi, err = database.GetRankedURLs(q.ScanID, maxRows)
+			if err == nil {
+				q.roi = rawRoi
+			} else {
+				logger.FileDebug("GetRankedURLs error: %v", err)
+			}
+		}
+	}
+
+	q.populateTable(tabIdx)
+}
+
+// releaseTabMemory sets inactive tab slices to nil to reclaim memory via GC
+func (q *QueryConsole) releaseTabMemory(tabIdx int) {
+	switch tabIdx {
+	case 0:
+		q.subdomains = nil
+		q.filteredSubdomains = nil
+	case 1:
+		q.ports = nil
+		q.filteredPorts = nil
+	case 2:
+		q.vulns = nil
+		q.filteredVulns = nil
+	case 3:
+		q.urls = nil
+		q.filteredURLs = nil
+		q.techCache = nil
+	case 4:
+		q.endpoints = nil
+		q.filteredEndpoints = nil
+	case 5:
+		q.roi = nil
+		q.filteredROI = nil
+	}
+}
+
+func (q *QueryConsole) getFilteredCount(tabIdx int) int {
+	switch tabIdx {
+	case 0:
+		return len(q.filteredSubdomains)
+	case 1:
+		return len(q.filteredPorts)
+	case 2:
+		return len(q.filteredVulns)
+	case 3:
+		return len(q.filteredURLs)
+	case 4:
+		return len(q.filteredEndpoints)
+	case 5:
+		return len(q.filteredROI)
+	}
+	return 0
+}
+
+func (q *QueryConsole) nextPage() {
+	count := q.getFilteredCount(q.ActiveTab)
+	if count == 0 {
+		return
+	}
+	totalPages := (count + q.pageSize - 1) / q.pageSize
+	if q.currentPage[q.ActiveTab] < totalPages-1 {
+		q.currentPage[q.ActiveTab]++
+		q.populateTable(q.ActiveTab)
+	}
+}
+
+func (q *QueryConsole) prevPage() {
+	if q.currentPage[q.ActiveTab] > 0 {
+		q.currentPage[q.ActiveTab]--
+		q.populateTable(q.ActiveTab)
+	}
 }

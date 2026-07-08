@@ -65,9 +65,11 @@ func TestQueryConsoleLoadAndCapping(t *testing.T) {
 		t.Errorf("expected subdomainsTotalCount to be 5005, got %d", q.GetSubdomainsTotalCount())
 	}
 
-	if len(q.GetSubdomains()) != 5000 {
-		t.Errorf("expected capped subdomains slice to have length 5000, got %d", len(q.GetSubdomains()))
+	if len(q.GetSubdomains()) != 5005 {
+		t.Errorf("expected loaded subdomains slice to have length 5005, got %d", len(q.GetSubdomains()))
 	}
+
+	q.LoadActiveTab(3) // Switch to URLs tab (index 3) to lazy-load URL data
 
 	cachedTech := q.GetTechCacheValue("https://example.com/api")
 	if cachedTech == "" {
