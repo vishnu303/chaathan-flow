@@ -8,6 +8,15 @@ GOFLAGS := -buildvcs=false -ldflags "-s -w -X github.com/vishnu303/chaathan/cli.
 INSTALL_DIR := /usr/local/bin
 GO_BIN := $(shell command -v go 2>/dev/null || echo "/usr/local/go/bin/go")
 
+# ANSI Color Codes for terminal UI
+BLUE   := \033[34m
+GREEN  := \033[32m
+RED    := \033[31m
+YELLOW := \033[33m
+MAGENTA:= \033[35m
+CYAN   := \033[36m
+RESET  := \033[0m
+
 .PHONY: all build install uninstall clean test vet lint setup tools-check help dev version check-go install-go
 
 help: ## Show this help message with dynamic target listings
@@ -57,47 +66,47 @@ install-go: ## Download and install the latest Go binary globally to /usr/local/
 	echo "✅ Go installed: $$(/usr/local/go/bin/go version)"
 
 build: check-go ## Build the chaathan binary with version flags
-	@echo "Building $(BINARY_NAME) $(VERSION)..."
+	@printf "$(BLUE)[BUILD]$(RESET) Building $(BINARY_NAME) $(VERSION)...\n"
 	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) build $(GOFLAGS) -o $(BINARY_NAME) .
-	@echo "✅ Built: ./$(BINARY_NAME)"
+	@printf "$(GREEN)[BUILD]$(RESET) ✅ Built: ./$(BINARY_NAME)\n"
 
 install: build ## Build and install the chaathan binary to the system path
-	@echo "Installing to $(INSTALL_DIR)/$(BINARY_NAME)..."
+	@printf "$(BLUE)[INSTALL]$(RESET) Installing to $(INSTALL_DIR)/$(BINARY_NAME)...\n"
 	@sudo mkdir -p $(INSTALL_DIR)
 	@sudo install -m 0755 $(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
-	@echo "✅ Installed: $(INSTALL_DIR)/$(BINARY_NAME)"
+	@printf "$(GREEN)[INSTALL]$(RESET) ✅ Installed: $(INSTALL_DIR)/$(BINARY_NAME)\n"
 
 uninstall: ## Remove the chaathan binary from the system path
-	@echo "Removing $(INSTALL_DIR)/$(BINARY_NAME)..."
+	@printf "$(RED)[UNINSTALL]$(RESET) Removing $(INSTALL_DIR)/$(BINARY_NAME)...\n"
 	@sudo rm -f $(INSTALL_DIR)/$(BINARY_NAME)
-	@echo "✅ Uninstalled"
+	@printf "$(GREEN)[UNINSTALL]$(RESET) ✅ Uninstalled\n"
 
 clean: ## Remove compiled binaries and temporary build artifacts
-	@echo "Cleaning..."
+	@printf "$(YELLOW)[CLEAN]$(RESET) Cleaning...\n"
 	@rm -f $(BINARY_NAME) chaathan-flow chaathan-test main
 	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) clean
-	@echo "✅ Clean"
+	@printf "$(GREEN)[CLEAN]$(RESET) ✅ Clean completed\n"
 
 test: ## Run the Go unit test suite with race detection and coverage
-	@echo "Running tests..."
+	@printf "$(MAGENTA)[TEST]$(RESET) Running tests...\n"
 	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) test -race -count=1 -coverpkg=github.com/vishnu303/chaathan/pkg/...,github.com/vishnu303/chaathan/utils/... -coverprofile=coverage.out ./...
-	@echo "✅ Tests passed"
+	@printf "$(GREEN)[TEST]$(RESET) ✅ Tests passed\n"
 
 vet: ## Run static code analysis with go vet
-	@echo "Running go vet..."
+	@printf "$(CYAN)[VET]$(RESET) Running go vet...\n"
 	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) vet ./...
-	@echo "✅ No issues found"
+	@printf "$(GREEN)[VET]$(RESET) ✅ No issues found\n"
 
 lint: ## Run code linting audits with golangci-lint
-	@echo "Running linter..."
-	@which golangci-lint > /dev/null 2>&1 || (echo "Install golangci-lint first: https://golangci-lint.run/usage/install/" && exit 1)
+	@printf "$(YELLOW)[LINT]$(RESET) Running linter...\n"
+	@which golangci-lint > /dev/null 2>&1 || (printf "$(RED)[LINT]$(RESET) Install golangci-lint first: https://golangci-lint.run/usage/install/\n" && exit 1)
 	@golangci-lint run ./...
-	@echo "✅ Lint passed"
+	@printf "$(GREEN)[LINT]$(RESET) ✅ Lint passed\n"
 
 setup: build ## Build and execute the environment installer for third-party tools
-	@echo "Running tool setup..."
+	@printf "$(GREEN)[SETUP]$(RESET) Running tool setup...\n"
 	@./$(BINARY_NAME) setup
-	@echo "✅ Setup complete"
+	@printf "$(GREEN)[SETUP]$(RESET) ✅ Setup complete\n"
 
 tools-check: build ## Verify the path installation status of all 30 external tools
 	@./$(BINARY_NAME) tools check

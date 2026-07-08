@@ -17,7 +17,7 @@ import (
 // 3. /usr/share/wordlists/seclists
 // If not, it clones the SecLists repo to ~/.chaathan/seclists using git.
 func installSecListsSection(ctx *SetupContext) (installed, skipped, failed int) {
-	progress.Section("SecLists", "")
+	progress.Section("[7/7] Wordlists (SecLists)", "")
 
 	localPath := filepath.Join(paths.ChaathanHome(), "seclists")
 	archPath := "/usr/share/seclists"

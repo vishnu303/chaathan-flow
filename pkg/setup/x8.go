@@ -19,7 +19,7 @@ import (
 // It first attempts to download the precompiled binary from GitHub Releases.
 // If that fails, it falls back to installing via Cargo.
 func installX8Section(ctx *SetupContext) (installed, skipped, failed int) {
-	progress.Section("x8", "Parameter Discovery Tool")
+	progress.Section("[5/7] Rust Tools (x8)", "parameter discovery tool")
 
 	if !ctx.IsForceUpdate() {
 		if _, err := exec.LookPath("x8"); err == nil {
