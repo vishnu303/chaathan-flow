@@ -263,13 +263,11 @@ func createTables() error {
 	CREATE INDEX IF NOT EXISTS idx_subdomains_domain ON subdomains(domain);
 	CREATE INDEX IF NOT EXISTS idx_ports_scan ON ports(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_urls_scan ON urls(scan_id);
-	CREATE INDEX IF NOT EXISTS idx_urls_host ON urls(host);
 	CREATE INDEX IF NOT EXISTS idx_host_metadata_scan ON host_metadata(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_url_metadata_scan ON url_metadata(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_vulns_scan ON vulnerabilities(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_vulns_severity ON vulnerabilities(severity);
 	CREATE INDEX IF NOT EXISTS idx_endpoints_scan ON endpoints(scan_id);
-	CREATE INDEX IF NOT EXISTS idx_endpoints_host ON endpoints(host);
 	CREATE INDEX IF NOT EXISTS idx_gf_matches_scan ON gf_matches(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_scans_target   ON scans(target);
 	`
