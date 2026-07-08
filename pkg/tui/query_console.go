@@ -3,6 +3,8 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,6 +33,7 @@ type QueryConsole struct {
 	vulnSeverityFilter string
 	currentPage        [6]int
 	pageSize           int
+	liveSubdomains     map[string]bool
 
 	// Master raw data loaded from database
 	subdomains []database.Subdomain
@@ -296,10 +299,10 @@ func StartQueryConsole(presetScanID int64) error {
 				return nil
 			}
 		case 'l', 'L':
-			if !q.FilterInput.HasFocus() && q.ActiveTab == 0 {
+			if !q.FilterInput.HasFocus() {
 				q.showLiveOnly = !q.showLiveOnly
-				q.currentPage[0] = 0
-				q.populateTable(0)
+				q.currentPage[q.ActiveTab] = 0
+				q.populateTable(q.ActiveTab)
 				return nil
 			}
 		case 's', 'S':
@@ -484,6 +487,14 @@ func (q *QueryConsole) loadScanData(scanID int64) {
 		q.FilterInput.SetText("")
 	}
 
+	// Release all loaded slices from the old scan
+	for idx := 0; idx < 6; idx++ {
+		q.releaseTabMemory(idx)
+	}
+
+	// Load live subdomains map for filtering other tabs
+	q.loadLiveSubdomainsMap(scanID)
+
 	// Load counts (also sets header text and calls drawTabs)
 	q.loadScanCounts(scanID)
 
@@ -539,6 +550,9 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 		}
 
 		for _, p := range q.ports {
+			if q.showLiveOnly && !q.isHostLive(p.Host) {
+				continue
+			}
 			portStr := fmt.Sprintf("%d", p.Port)
 			if filter != "" && !strings.Contains(strings.ToLower(p.Host), filter) &&
 				!strings.Contains(strings.ToLower(portStr), filter) &&
@@ -563,6 +577,9 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 		}
 
 		for _, v := range q.vulns {
+			if q.showLiveOnly && !q.isHostLive(v.Host) {
+				continue
+			}
 			if q.vulnSeverityFilter != "" && strings.ToLower(v.Severity) != q.vulnSeverityFilter {
 				continue
 			}
@@ -589,6 +606,9 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 		}
 
 		for _, u := range q.urls {
+			if q.showLiveOnly && !q.isHostLive(u.Host) {
+				continue
+			}
 			statusStr := fmt.Sprintf("%d", u.StatusCode)
 			if filter != "" && !strings.Contains(statusStr, filter) &&
 				!strings.Contains(strings.ToLower(u.Source), filter) &&
@@ -614,6 +634,9 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 		}
 
 		for _, e := range q.endpoints {
+			if q.showLiveOnly && !q.isHostLive(e.Host) {
+				continue
+			}
 			if filter != "" && !strings.Contains(strings.ToLower(e.Method), filter) &&
 				!strings.Contains(strings.ToLower(e.Source), filter) &&
 				!strings.Contains(strings.ToLower(e.URL), filter) {
@@ -636,6 +659,9 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 		}
 
 		for _, r := range q.roi {
+			if q.showLiveOnly && !q.isHostLive(r.Host) {
+				continue
+			}
 			scoreStr := fmt.Sprintf("%d", r.Score)
 			statusStr := fmt.Sprintf("%d", r.StatusCode)
 			surfaces := strings.Join(r.AttackSurfaces, ", ")
@@ -934,18 +960,18 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 		ColorActive, ColorActive, ColorActive, ColorActive, ColorActive, ColorActive,
 	)
 
-	if tabIndex == 0 {
-		statusStr := "Off"
-		if q.showLiveOnly {
-			statusStr = "On"
-		}
-		helpKeys += fmt.Sprintf("  |  [%s]L[-] Live Only: %s", ColorActive, statusStr)
-	} else if tabIndex == 2 {
-		statusStr := "All"
+	statusStr := "Off"
+	if q.showLiveOnly {
+		statusStr = "On"
+	}
+	helpKeys += fmt.Sprintf("  |  [%s]L[-] Live Only: %s", ColorActive, statusStr)
+
+	if tabIndex == 2 {
+		vulnStatusStr := "All"
 		if q.vulnSeverityFilter != "" {
-			statusStr = strings.ToUpper(q.vulnSeverityFilter)
+			vulnStatusStr = strings.ToUpper(q.vulnSeverityFilter)
 		}
-		helpKeys += fmt.Sprintf("  |  [%s]S[-] Severity: %s", ColorActive, statusStr)
+		helpKeys += fmt.Sprintf("  |  [%s]S[-] Severity: %s", ColorActive, vulnStatusStr)
 	}
 
 	var footerMsg string
@@ -1337,5 +1363,36 @@ func (q *QueryConsole) prevPage() {
 	if q.currentPage[q.ActiveTab] > 0 {
 		q.currentPage[q.ActiveTab]--
 		q.populateTable(q.ActiveTab)
+	}
+}
+
+func (q *QueryConsole) isHostLive(host string) bool {
+	if q.liveSubdomains == nil {
+		return true // fallback if not loaded
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if strings.Contains(host, "://") {
+		parsed, err := url.Parse(host)
+		if err == nil {
+			host = parsed.Hostname()
+		}
+	}
+	if strings.Contains(host, ":") {
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+	}
+	return q.liveSubdomains[host]
+}
+
+func (q *QueryConsole) loadLiveSubdomainsMap(scanID int64) {
+	q.liveSubdomains = make(map[string]bool)
+	domains, err := database.GetLiveSubdomainNames(scanID)
+	if err != nil {
+		logger.FileDebug("Failed to get live subdomain names: %v", err)
+		return
+	}
+	for _, d := range domains {
+		q.liveSubdomains[strings.ToLower(strings.TrimSpace(d))] = true
 	}
 }

@@ -521,6 +521,25 @@ func UpdateSubdomainsLiveBulk(scanID int64, domains []string) error {
 	return tx.Commit()
 }
 
+func GetLiveSubdomainNames(scanID int64) ([]string, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
+	rows, err := DB.Query("SELECT domain FROM subdomains WHERE scan_id = ? AND is_live = TRUE", scanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var domains []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err == nil {
+			domains = append(domains, d)
+		}
+	}
+	return domains, nil
+}
+
 func GetSubdomains(scanID int64) ([]Subdomain, error) {
 	if DB == nil {
 		return nil, ErrDBNotInitialized
