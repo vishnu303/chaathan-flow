@@ -639,7 +639,7 @@ func (q *QueryConsole) filterVulns(filter string) {
 func (q *QueryConsole) filterURLs(filter string) {
 	q.filteredURLs = nil
 	for _, u := range q.urls {
-		if q.showLiveOnly && !q.isHostLive(u.Host) {
+		if q.showLiveOnly && (u.StatusCode <= 0 || !q.isHostLive(u.Host)) {
 			continue
 		}
 		statusStr := fmt.Sprintf("%d", u.StatusCode)
@@ -672,7 +672,7 @@ func (q *QueryConsole) filterEndpoints(filter string) {
 func (q *QueryConsole) filterROI(filter string) {
 	q.filteredROI = nil
 	for _, r := range q.roi {
-		if q.showLiveOnly && !q.isHostLive(r.Host) {
+		if q.showLiveOnly && (r.StatusCode <= 0 || !q.isHostLive(r.Host)) {
 			continue
 		}
 		scoreStr := fmt.Sprintf("%d", r.Score)
@@ -1467,29 +1467,48 @@ func (q *QueryConsole) isHostLive(host string) bool {
 func (q *QueryConsole) loadLiveSubdomainsMap(scanID int64) {
 	q.liveSubdomains = make(map[string]bool)
 
-	// 1. Get DNS-live subdomains from subdomains table
-	domains, err := database.GetLiveSubdomainNames(scanID)
+	if database.DB == nil {
+		return
+	}
+
+	// 1. Get DNS-live subdomains and their IPs from subdomains table
+	rows, err := database.DB.Query("SELECT domain, ip_address FROM subdomains WHERE scan_id = ? AND is_live = TRUE", scanID)
 	if err == nil {
-		for _, d := range domains {
-			q.liveSubdomains[strings.ToLower(strings.TrimSpace(d))] = true
+		defer rows.Close()
+		for rows.Next() {
+			var domain, ip string
+			if err := rows.Scan(&domain, &ip); err == nil {
+				domain = strings.ToLower(strings.TrimSpace(domain))
+				if domain != "" {
+					q.liveSubdomains[domain] = true
+				}
+				ip = strings.ToLower(strings.TrimSpace(ip))
+				if ip != "" {
+					// Split by comma in case multiple IPs are stored
+					for _, part := range strings.Split(ip, ",") {
+						part = strings.TrimSpace(part)
+						if part != "" {
+							q.liveSubdomains[part] = true
+						}
+					}
+				}
+			}
 		}
 	} else {
-		logger.FileDebug("Failed to get live subdomain names: %v", err)
+		logger.FileDebug("Failed to query live subdomains/IPs: %v", err)
 	}
 
 	// 2. Get HTTP-live hosts from urls table (status_code > 0)
-	if database.DB != nil {
-		rows, err := database.DB.Query("SELECT DISTINCT host FROM urls WHERE scan_id = ? AND status_code > 0 AND host IS NOT NULL AND host != ''", scanID)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var h string
-				if err := rows.Scan(&h); err == nil {
-					q.liveSubdomains[strings.ToLower(strings.TrimSpace(h))] = true
-				}
+	rows2, err := database.DB.Query("SELECT DISTINCT host FROM urls WHERE scan_id = ? AND status_code > 0 AND host IS NOT NULL AND host != ''", scanID)
+	if err == nil {
+		defer rows2.Close()
+		for rows2.Next() {
+			var h string
+			if err := rows2.Scan(&h); err == nil {
+				q.liveSubdomains[strings.ToLower(strings.TrimSpace(h))] = true
 			}
-		} else {
-			logger.FileDebug("Failed to get live hosts from urls: %v", err)
 		}
+	} else {
+		logger.FileDebug("Failed to get live hosts from urls: %v", err)
 	}
 }
