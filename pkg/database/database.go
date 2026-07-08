@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,7 @@ type URL struct {
 	ID          int64     `json:"id"`
 	ScanID      int64     `json:"scan_id"`
 	URL         string    `json:"url"`
+	Host        string    `json:"host"`
 	StatusCode  int       `json:"status_code,omitempty"`
 	ContentType string    `json:"content_type,omitempty"`
 	Title       string    `json:"title,omitempty"`
@@ -83,6 +85,7 @@ type Endpoint struct {
 	ID        int64     `json:"id"`
 	ScanID    int64     `json:"scan_id"`
 	URL       string    `json:"url"`
+	Host      string    `json:"host"`
 	Method    string    `json:"method,omitempty"`
 	Source    string    `json:"source"` // golinkfinder, katana, gospider, etc.
 	CreatedAt time.Time `json:"created_at"`
@@ -165,6 +168,7 @@ func createTables() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		scan_id INTEGER NOT NULL,
 		url TEXT NOT NULL,
+		host TEXT,
 		status_code INTEGER,
 		content_type TEXT,
 		title TEXT,
@@ -237,6 +241,7 @@ func createTables() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		scan_id INTEGER NOT NULL,
 		url TEXT NOT NULL,
+		host TEXT,
 		method TEXT,
 		source TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -258,11 +263,13 @@ func createTables() error {
 	CREATE INDEX IF NOT EXISTS idx_subdomains_domain ON subdomains(domain);
 	CREATE INDEX IF NOT EXISTS idx_ports_scan ON ports(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_urls_scan ON urls(scan_id);
+	CREATE INDEX IF NOT EXISTS idx_urls_host ON urls(host);
 	CREATE INDEX IF NOT EXISTS idx_host_metadata_scan ON host_metadata(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_url_metadata_scan ON url_metadata(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_vulns_scan ON vulnerabilities(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_vulns_severity ON vulnerabilities(severity);
 	CREATE INDEX IF NOT EXISTS idx_endpoints_scan ON endpoints(scan_id);
+	CREATE INDEX IF NOT EXISTS idx_endpoints_host ON endpoints(host);
 	CREATE INDEX IF NOT EXISTS idx_gf_matches_scan ON gf_matches(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_scans_target   ON scans(target);
 	`
@@ -286,6 +293,20 @@ func runMigrations() {
 	if _, err := DB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vulns_unique
 		ON vulnerabilities(scan_id, host, IFNULL(template_id, ''), IFNULL(url, ''))`); err != nil {
 		logger.Debug("Migration (vulnerabilities index) skipped or failed: %v", err)
+	}
+
+	// Add host column to urls and endpoints table if they do not exist
+	if _, err := DB.Exec(`ALTER TABLE urls ADD COLUMN host TEXT`); err != nil {
+		logger.Debug("Migration (urls host column) skipped: %v", err)
+	}
+	if _, err := DB.Exec(`ALTER TABLE endpoints ADD COLUMN host TEXT`); err != nil {
+		logger.Debug("Migration (endpoints host column) skipped: %v", err)
+	}
+	if _, err := DB.Exec(`CREATE INDEX IF NOT EXISTS idx_urls_host ON urls(host)`); err != nil {
+		logger.Debug("Migration (urls host index) skipped: %v", err)
+	}
+	if _, err := DB.Exec(`CREATE INDEX IF NOT EXISTS idx_endpoints_host ON endpoints(host)`); err != nil {
+		logger.Debug("Migration (endpoints host index) skipped: %v", err)
 	}
 }
 
@@ -656,13 +677,29 @@ func GetPorts(scanID int64) ([]Port, error) {
 
 // URL operations
 
-func AddURL(scanID int64, url string, statusCode int, contentType, title, tech, source string) error {
+func AddURL(scanID int64, rawURL string, statusCode int, contentType, title, tech, source string) error {
 	if DB == nil {
 		return ErrDBNotInitialized
 	}
+
+	var host string
+	if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+		host = strings.ToLower(parsed.Hostname())
+	}
+	if host == "" {
+		cleaned := rawURL
+		if !strings.Contains(cleaned, "://") {
+			cleaned = "https://" + cleaned
+		}
+		if parsed, err := url.Parse(cleaned); err == nil {
+			host = strings.ToLower(parsed.Hostname())
+		}
+	}
+
 	_, err := DB.Exec(
-		`INSERT INTO urls (scan_id, url, status_code, content_type, title, tech, source) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO urls (scan_id, url, host, status_code, content_type, title, tech, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scan_id, url) DO UPDATE SET
+			host = CASE WHEN urls.host IS NULL OR urls.host = '' THEN excluded.host ELSE urls.host END,
 			source = CASE
 				WHEN (',' || urls.source || ',') LIKE ('%,' || ? || ',%') THEN urls.source
 				ELSE urls.source || ',' || ?
@@ -671,7 +708,7 @@ func AddURL(scanID int64, url string, statusCode int, contentType, title, tech, 
 			content_type = CASE WHEN ? != '' AND urls.content_type = '' THEN ? ELSE urls.content_type END,
 			title = CASE WHEN ? != '' AND urls.title = '' THEN ? ELSE urls.title END,
 			tech = CASE WHEN ? != '' AND urls.tech = '' THEN ? ELSE urls.tech END`,
-		scanID, url, statusCode, contentType, title, tech, source,
+		scanID, rawURL, host, statusCode, contentType, title, tech, source,
 		source, source,
 		statusCode, statusCode,
 		contentType, contentType,
@@ -686,7 +723,7 @@ func GetURLs(scanID int64) ([]URL, error) {
 		return nil, ErrDBNotInitialized
 	}
 	rows, err := DB.Query(
-		`SELECT id, scan_id, url, status_code, content_type, title, tech, source, created_at 
+		`SELECT id, scan_id, url, host, status_code, content_type, title, tech, source, created_at 
 		 FROM urls WHERE scan_id = ? ORDER BY url`,
 		scanID,
 	)
@@ -698,10 +735,14 @@ func GetURLs(scanID int64) ([]URL, error) {
 	var urls []URL
 	for rows.Next() {
 		var u URL
+		var hostNull sql.NullString
 		var statusCode sql.NullInt64
 		var contentType, title, tech sql.NullString
-		if err := rows.Scan(&u.ID, &u.ScanID, &u.URL, &statusCode, &contentType, &title, &tech, &u.Source, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.ScanID, &u.URL, &hostNull, &statusCode, &contentType, &title, &tech, &u.Source, &u.CreatedAt); err != nil {
 			return nil, err
+		}
+		if hostNull.Valid {
+			u.Host = hostNull.String
 		}
 		if statusCode.Valid {
 			u.StatusCode = int(statusCode.Int64)
@@ -836,13 +877,28 @@ func CountVulnerabilities(scanID int64) (map[string]int, error) {
 
 // Endpoint operations
 
-func AddEndpoint(scanID int64, url, method, source string) error {
+func AddEndpoint(scanID int64, rawURL, method, source string) error {
 	if DB == nil {
 		return ErrDBNotInitialized
 	}
+
+	var host string
+	if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+		host = strings.ToLower(parsed.Hostname())
+	}
+	if host == "" {
+		cleaned := rawURL
+		if !strings.Contains(cleaned, "://") {
+			cleaned = "https://" + cleaned
+		}
+		if parsed, err := url.Parse(cleaned); err == nil {
+			host = strings.ToLower(parsed.Hostname())
+		}
+	}
+
 	_, err := DB.Exec(
-		`INSERT OR IGNORE INTO endpoints (scan_id, url, method, source) VALUES (?, ?, ?, ?)`,
-		scanID, url, method, source,
+		`INSERT OR IGNORE INTO endpoints (scan_id, url, host, method, source) VALUES (?, ?, ?, ?, ?)`,
+		scanID, rawURL, host, method, source,
 	)
 	return err
 }
@@ -862,14 +918,28 @@ func AddEndpoints(scanID int64, items []Endpoint) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO endpoints (scan_id, url, method, source) VALUES (?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO endpoints (scan_id, url, host, method, source) VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, e := range items {
-		if _, err := stmt.Exec(scanID, e.URL, e.Method, e.Source); err != nil {
+		var host string
+		if parsed, err := url.Parse(strings.TrimSpace(e.URL)); err == nil {
+			host = strings.ToLower(parsed.Hostname())
+		}
+		if host == "" {
+			cleaned := e.URL
+			if !strings.Contains(cleaned, "://") {
+				cleaned = "https://" + cleaned
+			}
+			if parsed, err := url.Parse(cleaned); err == nil {
+				host = strings.ToLower(parsed.Hostname())
+			}
+		}
+
+		if _, err := stmt.Exec(scanID, e.URL, host, e.Method, e.Source); err != nil {
 			return err
 		}
 	}
@@ -881,7 +951,7 @@ func GetEndpoints(scanID int64) ([]Endpoint, error) {
 		return nil, ErrDBNotInitialized
 	}
 	rows, err := DB.Query(
-		`SELECT id, scan_id, url, method, source, created_at 
+		`SELECT id, scan_id, url, host, method, source, created_at 
 		 FROM endpoints WHERE scan_id = ? ORDER BY url`,
 		scanID,
 	)
@@ -893,12 +963,15 @@ func GetEndpoints(scanID int64) ([]Endpoint, error) {
 	var endpoints []Endpoint
 	for rows.Next() {
 		var e Endpoint
-		var method sql.NullString
-		if err := rows.Scan(&e.ID, &e.ScanID, &e.URL, &method, &e.Source, &e.CreatedAt); err != nil {
+		var hostNull, methodNull sql.NullString
+		if err := rows.Scan(&e.ID, &e.ScanID, &e.URL, &hostNull, &methodNull, &e.Source, &e.CreatedAt); err != nil {
 			return nil, err
 		}
-		if method.Valid {
-			e.Method = method.String
+		if hostNull.Valid {
+			e.Host = hostNull.String
+		}
+		if methodNull.Valid {
+			e.Method = methodNull.String
 		}
 		endpoints = append(endpoints, e)
 	}
