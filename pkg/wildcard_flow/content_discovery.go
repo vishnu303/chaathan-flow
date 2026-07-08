@@ -495,7 +495,7 @@ func stepParamDiscovery(c *Ctx) bool {
 		x8Targets = append(x8Targets, loadLineSlice(c.F.FfufDiscoveredURLs, 0)...)
 	}
 
-	// Collect and add high-signal crawler endpoints (limit to 150 to keep it fast)
+	// Collect and add high-signal crawler endpoints (no limit to collect all possible targets)
 	crawlerFiles := []string{
 		c.F.WaybackOut,
 		c.F.GauOut,
@@ -503,7 +503,7 @@ func stepParamDiscovery(c *Ctx) bool {
 		c.F.GospiderOut,
 		c.F.GoLinkFinderOut,
 	}
-	highSignal := collectHighSignalEndpoints(crawlerFiles, 150)
+	highSignal := collectHighSignalEndpoints(crawlerFiles)
 	x8Targets = append(x8Targets, highSignal...)
 
 	// Deduplicate targets
@@ -577,8 +577,8 @@ func stepParamDiscovery(c *Ctx) bool {
 
 // collectHighSignalEndpoints reads raw URLs from crawler and discovery files,
 // filters for high-signal parameters/endpoints (dynamic extensions, API paths, interesting keywords),
-// deduplicates them by host+path, and returns a capped slice of URLs.
-func collectHighSignalEndpoints(files []string, limit int) []string {
+// deduplicates them by host+path, and returns a slice of URLs.
+func collectHighSignalEndpoints(files []string) []string {
 	seen := make(map[string]bool)
 	var endpoints []string
 
@@ -659,10 +659,6 @@ func collectHighSignalEndpoints(files []string, limit int) []string {
 					seen[dedupKey] = true
 					// Keep the original URL
 					endpoints = append(endpoints, rawURL)
-					if limit > 0 && len(endpoints) >= limit {
-						f.Close()
-						return endpoints
-					}
 				}
 			}
 		}
@@ -754,10 +750,10 @@ func stepURLConsolidation(c *Ctx) bool {
 
 	// ROI metadata enrichment
 	if c.ScanID > 0 && utils.FileExists(c.F.AllURLsLive) {
-		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 3, paramDiscoveryCap)
+		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 0, 0)
 		if metaTargetCount > 0 {
 			logger.SubStep("Collecting lightweight metadata for %d high-value URLs...", metaTargetCount)
-			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, paramDiscoveryCap)
+			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, 0)
 			if count, err := metadata.CollectURLMetadata(c.ScanID, metaTargets, c.Proxy); err != nil {
 				logger.Warning("URL metadata enrichment failed: %v", err)
 			} else if count > 0 {

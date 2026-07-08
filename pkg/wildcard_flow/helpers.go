@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	jsAnalysisHostCap   = 50
-	ffufHostCap         = 25
+	jsAnalysisHostCap   = 1000
+	ffufHostCap         = 1000
 	paramDiscoveryCap   = 150
 	metadataHostCap     = 250
 	jsSecretMaxMatches  = 100
