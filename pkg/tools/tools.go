@@ -447,6 +447,42 @@ func (t *ToolBox) goSpiderMaxTimeout() time.Duration {
 	return 300 * time.Minute
 }
 
+func (t *ToolBox) amassMaxTimeout() time.Duration {
+	if t.Config != nil && t.Config.Amass.Timeout > 0 {
+		return time.Duration(t.Config.Amass.Timeout) * time.Minute
+	}
+	return 60 * time.Minute
+}
+
+func (t *ToolBox) subfinderMaxTimeout() time.Duration {
+	return 15 * time.Minute
+}
+
+func (t *ToolBox) sublist3rMaxTimeout() time.Duration {
+	return 15 * time.Minute
+}
+
+func (t *ToolBox) gauMaxTimeout() time.Duration {
+	return 30 * time.Minute
+}
+
+func (t *ToolBox) waybackurlsMaxTimeout() time.Duration {
+	return 20 * time.Minute
+}
+
+func (t *ToolBox) x8MaxTimeout() time.Duration {
+	return 120 * time.Minute
+}
+
+func (t *ToolBox) uncoverMaxTimeout() time.Duration {
+	return 10 * time.Minute
+}
+
+func (t *ToolBox) githubSubdomainsMaxTimeout() time.Duration {
+	return 15 * time.Minute
+}
+
+
 // --- Passive Enumeration ---
 
 func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile string) error {
@@ -473,6 +509,7 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 		}
 	}
 
+	opts = append(opts, runner.WithTimeout(t.subfinderMaxTimeout()))
 	_, err := t.Runner.Run(ctx, "subfinder", args, opts...)
 	return err
 }
@@ -493,7 +530,7 @@ func (t *ToolBox) RunAssetfinder(ctx context.Context, domain string, outputFile 
 // Therefore, Sublist3r runs natively only; docker runner will fail due to lack of python in the alpine base.
 func (t *ToolBox) RunSublist3r(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"-d", domain, "-t", "50", "-v", "-o", outputFile}
-	_, err := t.Runner.Run(ctx, "sublist3r", args)
+	_, err := t.Runner.Run(ctx, "sublist3r", args, runner.WithTimeout(t.sublist3rMaxTimeout()))
 	return err
 }
 
@@ -504,7 +541,7 @@ func (t *ToolBox) RunAmass(ctx context.Context, domain string, outputFile string
 	if t.Config != nil && t.Config.Amass.Timeout > 0 {
 		args = append(args, "-timeout", strconv.Itoa(t.Config.Amass.Timeout))
 	}
-	_, err := t.Runner.Run(ctx, "amass", args)
+	_, err := t.Runner.Run(ctx, "amass", args, runner.WithTimeout(t.amassMaxTimeout()))
 	return err
 }
 
@@ -514,7 +551,7 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 	if t.Config != nil && t.Config.Amass.Timeout > 0 {
 		args = append(args, "-timeout", strconv.Itoa(t.Config.Amass.Timeout))
 	}
-	_, err := t.Runner.Run(ctx, "amass", args)
+	_, err := t.Runner.Run(ctx, "amass", args, runner.WithTimeout(t.amassMaxTimeout()))
 	return err
 }
 
@@ -522,7 +559,7 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"--providers", "wayback", "--subs", domain}
 	args = t.appendProxy(args, "--proxy")
-	output, err := t.Runner.Run(ctx, "gau", args)
+	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(t.gauMaxTimeout()))
 	if strings.TrimSpace(output) != "" {
 		if writeErr := writeToFile(outputFile, output); writeErr != nil {
 			return writeErr
@@ -809,7 +846,7 @@ func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile strin
 func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile string) error {
 	args := []string{}
 	// waybackurls reads the domain from standard input
-	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")))
+	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")), runner.WithTimeout(t.waybackurlsMaxTimeout()))
 	if strings.TrimSpace(output) != "" {
 		if writeErr := writeToFile(outputFile, output); writeErr != nil {
 			return writeErr
@@ -851,7 +888,7 @@ func (t *ToolBox) RunX8WithWordlist(ctx context.Context, inputFile string, outpu
 		args = append(args, "-x", p)
 	}
 
-	_, err := t.Runner.Run(ctx, "x8", args)
+	_, err := t.Runner.Run(ctx, "x8", args, runner.WithTimeout(t.x8MaxTimeout()))
 	return err
 }
 
@@ -888,7 +925,7 @@ func (t *ToolBox) RunGithubSubdomains(ctx context.Context, domain string, github
 		return fmt.Errorf("github-subdomains requires a GitHub token")
 	}
 	args := []string{"-d", domain, "-t", githubToken, "-o", outputFile}
-	_, err := t.Runner.Run(ctx, "github-subdomains", args)
+	_, err := t.Runner.Run(ctx, "github-subdomains", args, runner.WithTimeout(t.githubSubdomainsMaxTimeout()))
 	return err
 }
 
@@ -1009,6 +1046,7 @@ func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile stri
 		}
 	}
 
+	opts = append(opts, runner.WithTimeout(t.uncoverMaxTimeout()))
 	_, err := t.Runner.Run(ctx, "uncover", args, opts...)
 	return err
 }
