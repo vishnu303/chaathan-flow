@@ -962,12 +962,18 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 	var title string
 	var sb strings.Builder
 
+	pageSize := q.pageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+
 	switch tabIndex {
 	case 0:
-		if dataIndex < 0 || dataIndex >= len(q.filteredSubdomains) {
+		actualIndex := q.currentPage[0]*pageSize + dataIndex
+		if actualIndex < 0 || actualIndex >= len(q.filteredSubdomains) {
 			return
 		}
-		s := q.filteredSubdomains[dataIndex]
+		s := q.filteredSubdomains[actualIndex]
 		title = " SUBDOMAIN DETAILS "
 		sb.WriteString(fmt.Sprintf("[%s::b]Domain Context:[-]\n\n", ColorLavender))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Hostname:", s.Domain))
@@ -977,10 +983,11 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", s.CreatedAt.Format("2006-01-02 15:04:05")))
 
 	case 1:
-		if dataIndex < 0 || dataIndex >= len(q.filteredPorts) {
+		actualIndex := q.currentPage[1]*pageSize + dataIndex
+		if actualIndex < 0 || actualIndex >= len(q.filteredPorts) {
 			return
 		}
-		p := q.filteredPorts[dataIndex]
+		p := q.filteredPorts[actualIndex]
 		title = " PORT DETAILS "
 		sb.WriteString(fmt.Sprintf("[%s::b]Open Port Context:[-]\n\n", ColorLavender))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "IP/Host:", p.Host))
@@ -989,10 +996,11 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", p.CreatedAt.Format("2006-01-02 15:04:05")))
 
 	case 2:
-		if dataIndex < 0 || dataIndex >= len(q.filteredVulns) {
+		actualIndex := q.currentPage[2]*pageSize + dataIndex
+		if actualIndex < 0 || actualIndex >= len(q.filteredVulns) {
 			return
 		}
-		v := q.filteredVulns[dataIndex]
+		v := q.filteredVulns[actualIndex]
 		title = " VULNERABILITY DETAILS "
 		sb.WriteString(fmt.Sprintf("[%s::b]Discovery Finding:[-]\n\n", ColorRed))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Target Name:", v.Name))
@@ -1013,10 +1021,11 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 		}
 
 	case 3:
-		if dataIndex < 0 || dataIndex >= len(q.filteredURLs) {
+		actualIndex := q.currentPage[3]*pageSize + dataIndex
+		if actualIndex < 0 || actualIndex >= len(q.filteredURLs) {
 			return
 		}
-		u := q.filteredURLs[dataIndex]
+		u := q.filteredURLs[actualIndex]
 		title = " URL DETAILS "
 		sb.WriteString(fmt.Sprintf("[%s::b]Web Resource details:[-]\n\n", ColorLavender))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Complete URL:", u.URL))
@@ -1037,10 +1046,11 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 		}
 
 	case 4:
-		if dataIndex < 0 || dataIndex >= len(q.filteredEndpoints) {
+		actualIndex := q.currentPage[4]*pageSize + dataIndex
+		if actualIndex < 0 || actualIndex >= len(q.filteredEndpoints) {
 			return
 		}
-		e := q.filteredEndpoints[dataIndex]
+		e := q.filteredEndpoints[actualIndex]
 		title = " API ENDPOINT DETAILS "
 		sb.WriteString(fmt.Sprintf("[%s::b]Endpoint Context:[-]\n\n", ColorLavender))
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Discovered URL:", e.URL))
@@ -1049,10 +1059,11 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", e.CreatedAt.Format("2006-01-02 15:04:05")))
 
 	case 5:
-		if dataIndex < 0 || dataIndex >= len(q.filteredROI) {
+		actualIndex := q.currentPage[5]*pageSize + dataIndex
+		if actualIndex < 0 || actualIndex >= len(q.filteredROI) {
 			return
 		}
-		r := q.filteredROI[dataIndex]
+		r := q.filteredROI[actualIndex]
 		title = " ROI RATING DETAILS "
 		sb.WriteString(fmt.Sprintf("[%s::b]ROI Target Ranking:[-]\n\n", ColorLavender))
 		sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Target URL:", r.URL))
@@ -1311,7 +1322,11 @@ func (q *QueryConsole) nextPage() {
 	if count == 0 {
 		return
 	}
-	totalPages := (count + q.pageSize - 1) / q.pageSize
+	pageSize := q.pageSize
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	totalPages := (count + pageSize - 1) / pageSize
 	if q.currentPage[q.ActiveTab] < totalPages-1 {
 		q.currentPage[q.ActiveTab]++
 		q.populateTable(q.ActiveTab)
