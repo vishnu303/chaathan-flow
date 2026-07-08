@@ -44,7 +44,12 @@ func installGoToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
 			}
 		}
 		if nucleiFound {
-			_ = downloadNucleiTemplates(ctx) // best effort
+			progress.ItemPending("Updating nuclei templates...")
+			if err := downloadNucleiTemplates(ctx); err != nil {
+				progress.ItemFail("nuclei templates update", err.Error())
+			} else {
+				progress.ItemOK("nuclei templates update")
+			}
 		}
 		return 0, skippedCount, 0
 	}
@@ -73,7 +78,12 @@ func installGoToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
 		}
 	}
 	if nucleiFound {
-		_ = downloadNucleiTemplates(ctx) // best effort
+		progress.ItemPending("Updating nuclei templates...")
+		if err := downloadNucleiTemplates(ctx); err != nil {
+			progress.ItemFail("nuclei templates update", err.Error())
+		} else {
+			progress.ItemOK("nuclei templates update")
+		}
 	}
 
 	i, _, f := tracker.Stats()
