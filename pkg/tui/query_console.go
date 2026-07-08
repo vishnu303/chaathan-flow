@@ -87,6 +87,23 @@ func StartQueryConsole(presetScanID int64) error {
 		pageSize:     100,
 	}
 
+	q.initViews()
+	q.setupLayoutAndEvents()
+
+	if err := q.loadScansHistory(presetScanID); err != nil {
+		return err
+	}
+
+	q.updateBorderColors()
+
+	if err := q.App.SetRoot(q.buildRootLayout(), true).EnableMouse(true).Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// initViews initializes TUI layout components
+func (q *QueryConsole) initViews() {
 	// 1. Header Text
 	q.HeaderText = tview.NewTextView().
 		SetDynamicColors(true).
@@ -115,6 +132,7 @@ func StartQueryConsole(presetScanID int64) error {
 	// 4. Tables and Pages Container
 	q.Pages = tview.NewPages()
 	tabPages := []string{"subdomains", "ports", "vulns", "urls", "endpoints", "roi"}
+	titles := []string{" SUBDOMAINS FINDINGS ", " OPEN PORTS ", " DISCOVERED VULNERABILITIES ", " CRAWLED URLS ", " API ENDPOINTS ", " TESTING ROI TARGETS "}
 
 	for i := 0; i < 6; i++ {
 		table := tview.NewTable().
@@ -125,16 +143,13 @@ func StartQueryConsole(presetScanID int64) error {
 		table.SetBorder(true).
 			SetTitleColor(tcell.GetColor(ColorSapphire)).
 			SetBorderColor(tcell.GetColor(ColorBorder))
+		table.SetTitle(titles[i])
 		
 		// Style selection row
 		selectedStyle := tcell.StyleDefault.
 			Foreground(tcell.GetColor(ColorActive)).
 			Background(tcell.GetColor("#313244"))
 		table.SetSelectedStyle(selectedStyle)
-
-		// Set table titles matching their categories
-		titles := []string{" SUBDOMAINS FINDINGS ", " OPEN PORTS ", " DISCOVERED VULNERABILITIES ", " CRAWLED URLS ", " API ENDPOINTS ", " TESTING ROI TARGETS "}
-		table.SetTitle(titles[i])
 
 		q.Tables[i] = table
 		q.Pages.AddPage(tabPages[i], table, true, i == 0)
@@ -182,25 +197,10 @@ func StartQueryConsole(presetScanID int64) error {
 		" [%s]Tab[-] Focus Panel  |  [%s]1-6[-] Switch Tabs  |  [%s]/[-] Search  |  [%s]Esc[-] Unfocus  |  [%s]R[-] Reload  |  [%s]Q/Ctrl+C[-] Exit",
 		ColorActive, ColorActive, ColorActive, ColorActive, ColorActive, ColorActive,
 	))
+}
 
-	// Layout Flex columns and rows
-	rightFlex := tview.NewFlex().
-		SetDirection(tview.FlexRow).
-		AddItem(q.TabsText, 1, 0, false).
-		AddItem(q.Pages, 0, 1, true).
-		AddItem(q.FilterInput, 3, 0, false)
-
-	mainFlex := tview.NewFlex().
-		SetDirection(tview.FlexColumn).
-		AddItem(q.ScanList, 30, 1, true).
-		AddItem(rightFlex, 0, 2, false)
-
-	rootLayout := tview.NewFlex().
-		SetDirection(tview.FlexRow).
-		AddItem(q.HeaderText, 1, 0, false).
-		AddItem(mainFlex, 0, 1, true).
-		AddItem(q.FooterText, 1, 0, false)
-
+// setupLayoutAndEvents wires handlers and input mappings
+func (q *QueryConsole) setupLayoutAndEvents() {
 	// Sidebar scan list selection triggers data loading
 	q.ScanList.SetChangedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
 		if index < 0 || index >= len(q.scans) {
@@ -331,8 +331,10 @@ func StartQueryConsole(presetScanID int64) error {
 
 		return event
 	})
+}
 
-	// Load scans from database
+// loadScansHistory queries database for the scan runs history list
+func (q *QueryConsole) loadScansHistory(presetScanID int64) error {
 	scans, err := database.GetRecentScans(50)
 	if err != nil {
 		return fmt.Errorf("failed to fetch scans: %w", err)
@@ -366,13 +368,29 @@ func StartQueryConsole(presetScanID int64) error {
 		q.ScanList.SetCurrentItem(presetIdx)
 		q.loadScanData(q.scans[presetIdx].ID)
 	}
-
-	q.updateBorderColors()
-
-	if err := q.App.SetRoot(rootLayout, true).EnableMouse(true).Run(); err != nil {
-		return err
-	}
 	return nil
+}
+
+// buildRootLayout assembles layouts in nested flex columns and rows
+func (q *QueryConsole) buildRootLayout() *tview.Flex {
+	rightFlex := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(q.TabsText, 1, 0, false).
+		AddItem(q.Pages, 0, 1, true).
+		AddItem(q.FilterInput, 3, 0, false)
+
+	mainFlex := tview.NewFlex().
+		SetDirection(tview.FlexColumn).
+		AddItem(q.ScanList, 30, 1, true).
+		AddItem(rightFlex, 0, 2, false)
+
+	rootLayout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(q.HeaderText, 1, 0, false).
+		AddItem(mainFlex, 0, 1, true).
+		AddItem(q.FooterText, 1, 0, false)
+
+	return rootLayout
 }
 
 // updateBorderColors sets high-contrast highlights for focused widgets
@@ -510,174 +528,7 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 	filter := strings.ToLower(q.FilterText)
 
 	// Phase 1: Filter data
-	switch tabIndex {
-	case 0: // Subdomains
-		q.filteredSubdomains = nil
-		headers := []string{"DOMAIN", "LIVE", "IP ADDRESS", "SOURCE"}
-		for col, h := range headers {
-			cell := tview.NewTableCell(" " + h + " ").
-				SetTextColor(tcell.GetColor(ColorSapphire)).
-				SetSelectable(false)
-			if col == 0 {
-				cell.SetExpansion(1)
-			}
-			table.SetCell(0, col, cell)
-		}
-
-		for _, s := range q.subdomains {
-			if q.showLiveOnly && !s.IsLive {
-				continue
-			}
-			if filter != "" && !strings.Contains(strings.ToLower(s.Domain), filter) &&
-				!strings.Contains(strings.ToLower(s.IPAddress), filter) &&
-				!strings.Contains(strings.ToLower(s.Source), filter) {
-				continue
-			}
-			q.filteredSubdomains = append(q.filteredSubdomains, s)
-		}
-
-	case 1: // Ports
-		q.filteredPorts = nil
-		headers := []string{"HOST", "PORT", "PROTOCOL", "SERVICE"}
-		for col, h := range headers {
-			cell := tview.NewTableCell(" " + h + " ").
-				SetTextColor(tcell.GetColor(ColorSapphire)).
-				SetSelectable(false)
-			if col == 0 {
-				cell.SetExpansion(1)
-			}
-			table.SetCell(0, col, cell)
-		}
-
-		for _, p := range q.ports {
-			if q.showLiveOnly && !q.isHostLive(p.Host) {
-				continue
-			}
-			portStr := fmt.Sprintf("%d", p.Port)
-			if filter != "" && !strings.Contains(strings.ToLower(p.Host), filter) &&
-				!strings.Contains(strings.ToLower(portStr), filter) &&
-				!strings.Contains(strings.ToLower(p.Protocol), filter) &&
-				!strings.Contains(strings.ToLower(p.Service), filter) {
-				continue
-			}
-			q.filteredPorts = append(q.filteredPorts, p)
-		}
-
-	case 2: // Vulnerabilities
-		q.filteredVulns = nil
-		headers := []string{"SEVERITY", "HOST", "VULNERABILITY NAME", "TEMPLATE"}
-		for col, h := range headers {
-			cell := tview.NewTableCell(" " + h + " ").
-				SetTextColor(tcell.GetColor(ColorSapphire)).
-				SetSelectable(false)
-			if col == 2 {
-				cell.SetExpansion(1)
-			}
-			table.SetCell(0, col, cell)
-		}
-
-		for _, v := range q.vulns {
-			if q.showLiveOnly && !q.isHostLive(v.Host) {
-				continue
-			}
-			if q.vulnSeverityFilter != "" && strings.ToLower(v.Severity) != q.vulnSeverityFilter {
-				continue
-			}
-			if filter != "" && !strings.Contains(strings.ToLower(v.Severity), filter) &&
-				!strings.Contains(strings.ToLower(v.Host), filter) &&
-				!strings.Contains(strings.ToLower(v.Name), filter) &&
-				!strings.Contains(strings.ToLower(v.URL), filter) {
-				continue
-			}
-			q.filteredVulns = append(q.filteredVulns, v)
-		}
-
-	case 3: // URLs
-		q.filteredURLs = nil
-		headers := []string{"STATUS", "SOURCE", "URL", "TITLE", "TECH"}
-		for col, h := range headers {
-			cell := tview.NewTableCell(" " + h + " ").
-				SetTextColor(tcell.GetColor(ColorSapphire)).
-				SetSelectable(false)
-			if col == 2 {
-				cell.SetExpansion(1)
-			}
-			table.SetCell(0, col, cell)
-		}
-
-		for _, u := range q.urls {
-			if q.showLiveOnly && !q.isHostLive(u.Host) {
-				continue
-			}
-			statusStr := fmt.Sprintf("%d", u.StatusCode)
-			if filter != "" && !strings.Contains(statusStr, filter) &&
-				!strings.Contains(strings.ToLower(u.Source), filter) &&
-				!strings.Contains(strings.ToLower(u.URL), filter) &&
-				!strings.Contains(strings.ToLower(u.Title), filter) &&
-				!strings.Contains(strings.ToLower(u.Tech), filter) {
-				continue
-			}
-			q.filteredURLs = append(q.filteredURLs, u)
-		}
-
-	case 4: // Endpoints
-		q.filteredEndpoints = nil
-		headers := []string{"METHOD", "SOURCE", "URL"}
-		for col, h := range headers {
-			cell := tview.NewTableCell(" " + h + " ").
-				SetTextColor(tcell.GetColor(ColorSapphire)).
-				SetSelectable(false)
-			if col == 2 {
-				cell.SetExpansion(1)
-			}
-			table.SetCell(0, col, cell)
-		}
-
-		for _, e := range q.endpoints {
-			if q.showLiveOnly && !q.isHostLive(e.Host) {
-				continue
-			}
-			if filter != "" && !strings.Contains(strings.ToLower(e.Method), filter) &&
-				!strings.Contains(strings.ToLower(e.Source), filter) &&
-				!strings.Contains(strings.ToLower(e.URL), filter) {
-				continue
-			}
-			q.filteredEndpoints = append(q.filteredEndpoints, e)
-		}
-
-	case 5: // ROI Targets
-		q.filteredROI = nil
-		headers := []string{"SCORE", "CONF", "STATUS", "URL", "ATTACK SURFACES"}
-		for col, h := range headers {
-			cell := tview.NewTableCell(" " + h + " ").
-				SetTextColor(tcell.GetColor(ColorSapphire)).
-				SetSelectable(false)
-			if col == 3 {
-				cell.SetExpansion(1)
-			}
-			table.SetCell(0, col, cell)
-		}
-
-		for _, r := range q.roi {
-			if q.showLiveOnly && !q.isHostLive(r.Host) {
-				continue
-			}
-			scoreStr := fmt.Sprintf("%d", r.Score)
-			statusStr := fmt.Sprintf("%d", r.StatusCode)
-			surfaces := strings.Join(r.AttackSurfaces, ", ")
-			reasons := strings.Join(r.Reasons, " ")
-
-			if filter != "" && !strings.Contains(scoreStr, filter) &&
-				!strings.Contains(strings.ToLower(r.Confidence), filter) &&
-				!strings.Contains(statusStr, filter) &&
-				!strings.Contains(strings.ToLower(r.URL), filter) &&
-				!strings.Contains(strings.ToLower(surfaces), filter) &&
-				!strings.Contains(strings.ToLower(reasons), filter) {
-				continue
-			}
-			q.filteredROI = append(q.filteredROI, r)
-		}
-	}
+	q.filterDataForTab(tabIndex, filter)
 
 	// Phase 2: Pagination calculations
 	count := q.getFilteredCount(tabIndex)
@@ -702,235 +553,435 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 		end = count
 	}
 
-	// Helper for setting dynamic table title
-	formatTitle := func(baseTitle string, tabIdx int, extra string) string {
-		if count == 0 {
-			if extra != "" {
-				return fmt.Sprintf(" %s (0 items, %s) ", baseTitle, extra)
-			}
-			return fmt.Sprintf(" %s (0 items) ", baseTitle)
-		}
-		extraStr := ""
-		if extra != "" {
-			extraStr = ", " + extra
-		}
-		return fmt.Sprintf(" %s (Page %d/%d, showing %d-%d of %d%s) ", baseTitle, q.currentPage[tabIdx]+1, totalPages, start+1, end, count, extraStr)
-	}
+	// Phase 3: Render tab columns
+	q.renderTabTable(tabIndex, table, filter, start, end, count, totalPages)
 
-	// Phase 3: Slicing and writing to Table cells
-	rowIdx := 1
-	switch tabIndex {
-	case 0:
-		extra := "All"
-		if q.showLiveOnly {
-			extra = "Live Only"
-		}
-		if filter != "" {
-			extra += ", Filtered"
-		}
-		table.SetTitle(formatTitle("SUBDOMAINS FINDINGS", 0, extra))
-
-		if count > 0 {
-			sliced := q.filteredSubdomains[start:end]
-			for _, s := range sliced {
-				liveText := "no"
-				liveColor := tcell.GetColor(ColorSubtle)
-				if s.IsLive {
-					liveText = "yes"
-					liveColor = tcell.GetColor(ColorGreen)
-				}
-				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+s.Domain).SetTextColor(tcell.ColorWhite))
-				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+liveText).SetTextColor(liveColor).SetAlign(tview.AlignCenter))
-				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+s.IPAddress).SetTextColor(tcell.GetColor(ColorLavender)))
-				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+s.Source).SetTextColor(tcell.GetColor(ColorSubtle)))
-				rowIdx++
-			}
-		}
-
-	case 1:
-		extra := ""
-		if filter != "" {
-			extra = "Filtered"
-		}
-		table.SetTitle(formatTitle("OPEN PORTS", 1, extra))
-
-		if count > 0 {
-			sliced := q.filteredPorts[start:end]
-			for _, p := range sliced {
-				portStr := fmt.Sprintf("%d", p.Port)
-				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+p.Host).SetTextColor(tcell.ColorWhite))
-				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+portStr).SetTextColor(tcell.GetColor(ColorYellow)).SetAlign(tview.AlignRight))
-				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+p.Protocol).SetTextColor(tcell.GetColor(ColorBlue)).SetAlign(tview.AlignCenter))
-				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+p.Service).SetTextColor(tcell.GetColor(ColorGreen)))
-				rowIdx++
-			}
-		}
-
-	case 2:
-		extra := "All Severities"
-		if q.vulnSeverityFilter != "" {
-			extra = strings.ToUpper(q.vulnSeverityFilter)
-		}
-		if filter != "" {
-			extra += ", Filtered"
-		}
-		table.SetTitle(formatTitle("DISCOVERED VULNERABILITIES", 2, extra))
-
-		if count > 0 {
-			sliced := q.filteredVulns[start:end]
-			for _, v := range sliced {
-				var badge string
-				var badgeColor tcell.Color
-				switch strings.ToLower(v.Severity) {
-				case "critical":
-					badge = "CRIT"
-					badgeColor = tcell.GetColor(ColorRed)
-				case "high":
-					badge = "HIGH"
-					badgeColor = tcell.GetColor(ColorOrange)
-				case "medium":
-					badge = "MED"
-					badgeColor = tcell.GetColor(ColorYellow)
-				case "low":
-					badge = "LOW"
-					badgeColor = tcell.GetColor(ColorGreen)
-				default:
-					badge = "INFO"
-					badgeColor = tcell.GetColor(ColorBlue)
-				}
-
-				table.SetCell(rowIdx, 0, tview.NewTableCell(fmt.Sprintf(" [%s] ", badge)).SetTextColor(badgeColor).SetAlign(tview.AlignCenter))
-				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+v.Host).SetTextColor(tcell.GetColor(ColorLavender)))
-				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+v.Name).SetTextColor(tcell.ColorWhite))
-				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+v.TemplateID).SetTextColor(tcell.GetColor(ColorSubtle)))
-				rowIdx++
-			}
-		}
-
-	case 3:
-		extra := ""
-		if filter != "" {
-			extra = "Filtered"
-		}
-		table.SetTitle(formatTitle("CRAWLED URLS", 3, extra))
-
-		if count > 0 {
-			sliced := q.filteredURLs[start:end]
-			for _, u := range sliced {
-				statusStr := fmt.Sprintf("%d", u.StatusCode)
-				statusColor := tcell.GetColor(ColorSubtle)
-				if u.StatusCode >= 200 && u.StatusCode < 300 {
-					statusColor = tcell.GetColor(ColorGreen)
-				} else if u.StatusCode >= 300 && u.StatusCode < 400 {
-					statusColor = tcell.GetColor(ColorYellow)
-				} else if u.StatusCode >= 400 {
-					statusColor = tcell.GetColor(ColorRed)
-				}
-
-				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+statusStr).SetTextColor(statusColor).SetAlign(tview.AlignCenter))
-				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+u.Source).SetTextColor(tcell.GetColor(ColorLavender)))
-				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+u.URL).SetTextColor(tcell.ColorWhite))
-				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+u.Title).SetTextColor(tcell.GetColor(ColorBlue)))
-
-				var techStr string
-				if u.Tech != "" {
-					var techs []string
-					if err := json.Unmarshal([]byte(u.Tech), &techs); err == nil {
-						techStr = strings.Join(techs, ", ")
-					} else {
-						techStr = u.Tech
-					}
-				}
-				table.SetCell(rowIdx, 4, tview.NewTableCell(" "+techStr).SetTextColor(tcell.GetColor(ColorGreen)))
-				rowIdx++
-			}
-		}
-
-	case 4:
-		extra := ""
-		if filter != "" {
-			extra = "Filtered"
-		}
-		table.SetTitle(formatTitle("API ENDPOINTS", 4, extra))
-
-		if count > 0 {
-			sliced := q.filteredEndpoints[start:end]
-			for _, e := range sliced {
-				methodColor := tcell.GetColor(ColorSubtle)
-				switch strings.ToUpper(e.Method) {
-				case "GET":
-					methodColor = tcell.GetColor(ColorGreen)
-				case "POST":
-					methodColor = tcell.GetColor(ColorYellow)
-				case "PUT", "DELETE":
-					methodColor = tcell.GetColor(ColorRed)
-				}
-
-				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+e.Method).SetTextColor(methodColor).SetAlign(tview.AlignCenter))
-				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+e.Source).SetTextColor(tcell.GetColor(ColorLavender)))
-				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+e.URL).SetTextColor(tcell.ColorWhite))
-				rowIdx++
-			}
-		}
-
-	case 5:
-		extra := ""
-		if filter != "" {
-			extra = "Filtered"
-		}
-		table.SetTitle(formatTitle("TESTING ROI TARGETS", 5, extra))
-
-		if count > 0 {
-			sliced := q.filteredROI[start:end]
-			for _, r := range sliced {
-				scoreStr := fmt.Sprintf("%d", r.Score)
-				statusStr := fmt.Sprintf("%d", r.StatusCode)
-				surfaces := strings.Join(r.AttackSurfaces, ", ")
-
-				scoreColor := tcell.GetColor(ColorGreen)
-				if r.Score >= 80 {
-					scoreColor = tcell.GetColor(ColorRed)
-				} else if r.Score >= 40 {
-					scoreColor = tcell.GetColor(ColorOrange)
-				} else if r.Score >= 20 {
-					scoreColor = tcell.GetColor(ColorYellow)
-				}
-
-				confColor := tcell.GetColor(ColorSubtle)
-				switch strings.ToLower(r.Confidence) {
-				case "high":
-					confColor = tcell.GetColor(ColorGreen)
-				case "medium":
-					confColor = tcell.GetColor(ColorYellow)
-				}
-
-				statusColor := tcell.GetColor(ColorSubtle)
-				if r.StatusCode >= 200 && r.StatusCode < 300 {
-					statusColor = tcell.GetColor(ColorGreen)
-				} else if r.StatusCode >= 300 && r.StatusCode < 400 {
-					statusColor = tcell.GetColor(ColorYellow)
-				} else if r.StatusCode >= 400 {
-					statusColor = tcell.GetColor(ColorRed)
-				}
-
-				table.SetCell(rowIdx, 0, tview.NewTableCell(" "+scoreStr).SetTextColor(scoreColor).SetAlign(tview.AlignRight))
-				table.SetCell(rowIdx, 1, tview.NewTableCell(" "+r.Confidence).SetTextColor(confColor).SetAlign(tview.AlignCenter))
-				table.SetCell(rowIdx, 2, tview.NewTableCell(" "+statusStr).SetTextColor(statusColor).SetAlign(tview.AlignCenter))
-				table.SetCell(rowIdx, 3, tview.NewTableCell(" "+r.URL).SetTextColor(tcell.ColorWhite))
-				table.SetCell(rowIdx, 4, tview.NewTableCell(" "+surfaces).SetTextColor(tcell.GetColor(ColorGreen)))
-				rowIdx++
-			}
-		}
-	}
-
-	if rowIdx > 1 {
+	// Phase 4: Selection and Scroll Settings
+	if end > start {
 		table.Select(1, 0)
 	} else {
 		table.Select(0, 0)
 	}
 	table.ScrollToBeginning()
 
-	// Update footer text with dynamic match counts and page shortcuts
+	q.updateFooter(tabIndex)
+}
+
+// filterDataForTab delegates filtering to specific category helpers
+func (q *QueryConsole) filterDataForTab(tabIndex int, filter string) {
+	switch tabIndex {
+	case 0:
+		q.filterSubdomains(filter)
+	case 1:
+		q.filterPorts(filter)
+	case 2:
+		q.filterVulns(filter)
+	case 3:
+		q.filterURLs(filter)
+	case 4:
+		q.filterEndpoints(filter)
+	case 5:
+		q.filterROI(filter)
+	}
+}
+
+func (q *QueryConsole) filterSubdomains(filter string) {
+	q.filteredSubdomains = nil
+	for _, s := range q.subdomains {
+		if q.showLiveOnly && !s.IsLive {
+			continue
+		}
+		if filter != "" && !strings.Contains(strings.ToLower(s.Domain), filter) &&
+			!strings.Contains(strings.ToLower(s.IPAddress), filter) &&
+			!strings.Contains(strings.ToLower(s.Source), filter) {
+			continue
+		}
+		q.filteredSubdomains = append(q.filteredSubdomains, s)
+	}
+}
+
+func (q *QueryConsole) filterPorts(filter string) {
+	q.filteredPorts = nil
+	for _, p := range q.ports {
+		if q.showLiveOnly && !q.isHostLive(p.Host) {
+			continue
+		}
+		portStr := fmt.Sprintf("%d", p.Port)
+		if filter != "" && !strings.Contains(strings.ToLower(p.Host), filter) &&
+			!strings.Contains(strings.ToLower(portStr), filter) &&
+			!strings.Contains(strings.ToLower(p.Protocol), filter) &&
+			!strings.Contains(strings.ToLower(p.Service), filter) {
+			continue
+		}
+		q.filteredPorts = append(q.filteredPorts, p)
+	}
+}
+
+func (q *QueryConsole) filterVulns(filter string) {
+	q.filteredVulns = nil
+	for _, v := range q.vulns {
+		if q.showLiveOnly && !q.isHostLive(v.Host) {
+			continue
+		}
+		if q.vulnSeverityFilter != "" && strings.ToLower(v.Severity) != q.vulnSeverityFilter {
+			continue
+		}
+		if filter != "" && !strings.Contains(strings.ToLower(v.Severity), filter) &&
+			!strings.Contains(strings.ToLower(v.Host), filter) &&
+			!strings.Contains(strings.ToLower(v.Name), filter) &&
+			!strings.Contains(strings.ToLower(v.URL), filter) {
+			continue
+		}
+		q.filteredVulns = append(q.filteredVulns, v)
+	}
+}
+
+func (q *QueryConsole) filterURLs(filter string) {
+	q.filteredURLs = nil
+	for _, u := range q.urls {
+		if q.showLiveOnly && !q.isHostLive(u.Host) {
+			continue
+		}
+		statusStr := fmt.Sprintf("%d", u.StatusCode)
+		if filter != "" && !strings.Contains(statusStr, filter) &&
+			!strings.Contains(strings.ToLower(u.Source), filter) &&
+			!strings.Contains(strings.ToLower(u.URL), filter) &&
+			!strings.Contains(strings.ToLower(u.Title), filter) &&
+			!strings.Contains(strings.ToLower(u.Tech), filter) {
+			continue
+		}
+		q.filteredURLs = append(q.filteredURLs, u)
+	}
+}
+
+func (q *QueryConsole) filterEndpoints(filter string) {
+	q.filteredEndpoints = nil
+	for _, e := range q.endpoints {
+		if q.showLiveOnly && !q.isHostLive(e.Host) {
+			continue
+		}
+		if filter != "" && !strings.Contains(strings.ToLower(e.Method), filter) &&
+			!strings.Contains(strings.ToLower(e.Source), filter) &&
+			!strings.Contains(strings.ToLower(e.URL), filter) {
+			continue
+		}
+		q.filteredEndpoints = append(q.filteredEndpoints, e)
+	}
+}
+
+func (q *QueryConsole) filterROI(filter string) {
+	q.filteredROI = nil
+	for _, r := range q.roi {
+		if q.showLiveOnly && !q.isHostLive(r.Host) {
+			continue
+		}
+		scoreStr := fmt.Sprintf("%d", r.Score)
+		statusStr := fmt.Sprintf("%d", r.StatusCode)
+		surfaces := strings.Join(r.AttackSurfaces, ", ")
+		reasons := strings.Join(r.Reasons, " ")
+
+		if filter != "" && !strings.Contains(scoreStr, filter) &&
+			!strings.Contains(strings.ToLower(r.Confidence), filter) &&
+			!strings.Contains(statusStr, filter) &&
+			!strings.Contains(strings.ToLower(r.URL), filter) &&
+			!strings.Contains(strings.ToLower(surfaces), filter) &&
+			!strings.Contains(strings.ToLower(reasons), filter) {
+			continue
+		}
+		q.filteredROI = append(q.filteredROI, r)
+	}
+}
+
+// renderTabTable delegates rendering logic to specific tab helpers
+func (q *QueryConsole) renderTabTable(tabIdx int, table *tview.Table, filter string, start, end, count, totalPages int) {
+	switch tabIdx {
+	case 0:
+		q.renderSubdomainsTable(table, filter, start, end, count, totalPages)
+	case 1:
+		q.renderPortsTable(table, filter, start, end, count, totalPages)
+	case 2:
+		q.renderVulnsTable(table, filter, start, end, count, totalPages)
+	case 3:
+		q.renderURLsTable(table, filter, start, end, count, totalPages)
+	case 4:
+		q.renderEndpointsTable(table, filter, start, end, count, totalPages)
+	case 5:
+		q.renderROITable(table, filter, start, end, count, totalPages)
+	}
+}
+
+// formatTitle returns a structured standard title for findings tables
+func (q *QueryConsole) formatTitle(baseTitle string, tabIdx int, count, totalPages, start, end int, extra string) string {
+	if count == 0 {
+		if extra != "" {
+			return fmt.Sprintf(" %s (0 items, %s) ", baseTitle, extra)
+		}
+		return fmt.Sprintf(" %s (0 items) ", baseTitle)
+	}
+	extraStr := ""
+	if extra != "" {
+		extraStr = ", " + extra
+	}
+	return fmt.Sprintf(" %s (Page %d/%d, showing %d-%d of %d%s) ", baseTitle, q.currentPage[tabIdx]+1, totalPages, start+1, end, count, extraStr)
+}
+
+// setTableHeader sets structured header cells for tables
+func (q *QueryConsole) setTableHeader(table *tview.Table, headers []string, expansionCol int) {
+	for col, h := range headers {
+		cell := tview.NewTableCell(" " + h + " ").
+			SetTextColor(tcell.GetColor(ColorSapphire)).
+			SetSelectable(false)
+		if col == expansionCol {
+			cell.SetExpansion(1)
+		}
+		table.SetCell(0, col, cell)
+	}
+}
+
+func (q *QueryConsole) renderSubdomainsTable(table *tview.Table, filter string, start, end, count, totalPages int) {
+	q.setTableHeader(table, []string{"DOMAIN", "LIVE", "IP ADDRESS", "SOURCE"}, 0)
+
+	extra := "All"
+	if q.showLiveOnly {
+		extra = "Live Only"
+	}
+	if filter != "" {
+		extra += ", Filtered"
+	}
+	table.SetTitle(q.formatTitle("SUBDOMAINS FINDINGS", 0, count, totalPages, start, end, extra))
+
+	if count == 0 {
+		return
+	}
+
+	rowIdx := 1
+	sliced := q.filteredSubdomains[start:end]
+	for _, s := range sliced {
+		liveText := "no"
+		liveColor := tcell.GetColor(ColorSubtle)
+		if s.IsLive {
+			liveText = "yes"
+			liveColor = tcell.GetColor(ColorGreen)
+		}
+		table.SetCell(rowIdx, 0, tview.NewTableCell(" "+s.Domain).SetTextColor(tcell.ColorWhite))
+		table.SetCell(rowIdx, 1, tview.NewTableCell(" "+liveText).SetTextColor(liveColor).SetAlign(tview.AlignCenter))
+		table.SetCell(rowIdx, 2, tview.NewTableCell(" "+s.IPAddress).SetTextColor(tcell.GetColor(ColorLavender)))
+		table.SetCell(rowIdx, 3, tview.NewTableCell(" "+s.Source).SetTextColor(tcell.GetColor(ColorSubtle)))
+		rowIdx++
+	}
+}
+
+func (q *QueryConsole) renderPortsTable(table *tview.Table, filter string, start, end, count, totalPages int) {
+	q.setTableHeader(table, []string{"HOST", "PORT", "PROTOCOL", "SERVICE"}, 0)
+
+	extra := ""
+	if filter != "" {
+		extra = "Filtered"
+	}
+	table.SetTitle(q.formatTitle("OPEN PORTS", 1, count, totalPages, start, end, extra))
+
+	if count == 0 {
+		return
+	}
+
+	rowIdx := 1
+	sliced := q.filteredPorts[start:end]
+	for _, p := range sliced {
+		portStr := fmt.Sprintf("%d", p.Port)
+		table.SetCell(rowIdx, 0, tview.NewTableCell(" "+p.Host).SetTextColor(tcell.ColorWhite))
+		table.SetCell(rowIdx, 1, tview.NewTableCell(" "+portStr).SetTextColor(tcell.GetColor(ColorYellow)).SetAlign(tview.AlignRight))
+		table.SetCell(rowIdx, 2, tview.NewTableCell(" "+p.Protocol).SetTextColor(tcell.GetColor(ColorBlue)).SetAlign(tview.AlignCenter))
+		table.SetCell(rowIdx, 3, tview.NewTableCell(" "+p.Service).SetTextColor(tcell.GetColor(ColorGreen)))
+		rowIdx++
+	}
+}
+
+func (q *QueryConsole) renderVulnsTable(table *tview.Table, filter string, start, end, count, totalPages int) {
+	q.setTableHeader(table, []string{"SEVERITY", "HOST", "VULNERABILITY NAME", "TEMPLATE"}, 2)
+
+	extra := "All Severities"
+	if q.vulnSeverityFilter != "" {
+		extra = strings.ToUpper(q.vulnSeverityFilter)
+	}
+	if filter != "" {
+		extra += ", Filtered"
+	}
+	table.SetTitle(q.formatTitle("DISCOVERED VULNERABILITIES", 2, count, totalPages, start, end, extra))
+
+	if count == 0 {
+		return
+	}
+
+	rowIdx := 1
+	sliced := q.filteredVulns[start:end]
+	for _, v := range sliced {
+		var badge string
+		var badgeColor tcell.Color
+		switch strings.ToLower(v.Severity) {
+		case "critical":
+			badge = "CRIT"
+			badgeColor = tcell.GetColor(ColorRed)
+		case "high":
+			badge = "HIGH"
+			badgeColor = tcell.GetColor(ColorOrange)
+		case "medium":
+			badge = "MED"
+			badgeColor = tcell.GetColor(ColorYellow)
+		case "low":
+			badge = "LOW"
+			badgeColor = tcell.GetColor(ColorGreen)
+		default:
+			badge = "INFO"
+			badgeColor = tcell.GetColor(ColorBlue)
+		}
+
+		table.SetCell(rowIdx, 0, tview.NewTableCell(fmt.Sprintf(" [%s] ", badge)).SetTextColor(badgeColor).SetAlign(tview.AlignCenter))
+		table.SetCell(rowIdx, 1, tview.NewTableCell(" "+v.Host).SetTextColor(tcell.GetColor(ColorLavender)))
+		table.SetCell(rowIdx, 2, tview.NewTableCell(" "+v.Name).SetTextColor(tcell.ColorWhite))
+		table.SetCell(rowIdx, 3, tview.NewTableCell(" "+v.TemplateID).SetTextColor(tcell.GetColor(ColorSubtle)))
+		rowIdx++
+	}
+}
+
+func (q *QueryConsole) renderURLsTable(table *tview.Table, filter string, start, end, count, totalPages int) {
+	q.setTableHeader(table, []string{"STATUS", "SOURCE", "URL", "TITLE", "TECH"}, 2)
+
+	extra := ""
+	if filter != "" {
+		extra = "Filtered"
+	}
+	table.SetTitle(q.formatTitle("CRAWLED URLS", 3, count, totalPages, start, end, extra))
+
+	if count == 0 {
+		return
+	}
+
+	rowIdx := 1
+	sliced := q.filteredURLs[start:end]
+	for _, u := range sliced {
+		statusStr := fmt.Sprintf("%d", u.StatusCode)
+		statusColor := tcell.GetColor(ColorSubtle)
+		if u.StatusCode >= 200 && u.StatusCode < 300 {
+			statusColor = tcell.GetColor(ColorGreen)
+		} else if u.StatusCode >= 300 && u.StatusCode < 400 {
+			statusColor = tcell.GetColor(ColorYellow)
+		} else if u.StatusCode >= 400 {
+			statusColor = tcell.GetColor(ColorRed)
+		}
+
+		table.SetCell(rowIdx, 0, tview.NewTableCell(" "+statusStr).SetTextColor(statusColor).SetAlign(tview.AlignCenter))
+		table.SetCell(rowIdx, 1, tview.NewTableCell(" "+u.Source).SetTextColor(tcell.GetColor(ColorLavender)))
+		table.SetCell(rowIdx, 2, tview.NewTableCell(" "+u.URL).SetTextColor(tcell.ColorWhite))
+		table.SetCell(rowIdx, 3, tview.NewTableCell(" "+u.Title).SetTextColor(tcell.GetColor(ColorBlue)))
+
+		var techStr string
+		if u.Tech != "" {
+			var techs []string
+			if err := json.Unmarshal([]byte(u.Tech), &techs); err == nil {
+				techStr = strings.Join(techs, ", ")
+			} else {
+				techStr = u.Tech
+			}
+		}
+		table.SetCell(rowIdx, 4, tview.NewTableCell(" "+techStr).SetTextColor(tcell.GetColor(ColorGreen)))
+		rowIdx++
+	}
+}
+
+func (q *QueryConsole) renderEndpointsTable(table *tview.Table, filter string, start, end, count, totalPages int) {
+	q.setTableHeader(table, []string{"METHOD", "SOURCE", "URL"}, 2)
+
+	extra := ""
+	if filter != "" {
+		extra = "Filtered"
+	}
+	table.SetTitle(q.formatTitle("API ENDPOINTS", 4, count, totalPages, start, end, extra))
+
+	if count == 0 {
+		return
+	}
+
+	rowIdx := 1
+	sliced := q.filteredEndpoints[start:end]
+	for _, e := range sliced {
+		methodColor := tcell.GetColor(ColorSubtle)
+		method := e.Method
+		if method == "" {
+			method = "GET"
+		}
+		switch strings.ToUpper(method) {
+		case "GET":
+			methodColor = tcell.GetColor(ColorGreen)
+		case "POST":
+			methodColor = tcell.GetColor(ColorYellow)
+		case "PUT", "DELETE":
+			methodColor = tcell.GetColor(ColorRed)
+		}
+
+		table.SetCell(rowIdx, 0, tview.NewTableCell(" "+method).SetTextColor(methodColor).SetAlign(tview.AlignCenter))
+		table.SetCell(rowIdx, 1, tview.NewTableCell(" "+e.Source).SetTextColor(tcell.GetColor(ColorLavender)))
+		table.SetCell(rowIdx, 2, tview.NewTableCell(" "+e.URL).SetTextColor(tcell.ColorWhite))
+		rowIdx++
+	}
+}
+
+func (q *QueryConsole) renderROITable(table *tview.Table, filter string, start, end, count, totalPages int) {
+	q.setTableHeader(table, []string{"SCORE", "CONF", "STATUS", "URL", "ATTACK SURFACES"}, 3)
+
+	extra := ""
+	if filter != "" {
+		extra = "Filtered"
+	}
+	table.SetTitle(q.formatTitle("TESTING ROI TARGETS", 5, count, totalPages, start, end, extra))
+
+	if count == 0 {
+		return
+	}
+
+	rowIdx := 1
+	sliced := q.filteredROI[start:end]
+	for _, r := range sliced {
+		scoreStr := fmt.Sprintf("%d", r.Score)
+		statusStr := fmt.Sprintf("%d", r.StatusCode)
+		surfaces := strings.Join(r.AttackSurfaces, ", ")
+
+		scoreColor := tcell.GetColor(ColorGreen)
+		if r.Score >= 80 {
+			scoreColor = tcell.GetColor(ColorRed)
+		} else if r.Score >= 40 {
+			scoreColor = tcell.GetColor(ColorOrange)
+		} else if r.Score >= 20 {
+			scoreColor = tcell.GetColor(ColorYellow)
+		}
+
+		confColor := tcell.GetColor(ColorSubtle)
+		switch strings.ToLower(r.Confidence) {
+		case "high":
+			confColor = tcell.GetColor(ColorGreen)
+		case "medium":
+			confColor = tcell.GetColor(ColorYellow)
+		}
+
+		statusColor := tcell.GetColor(ColorSubtle)
+		if r.StatusCode >= 200 && r.StatusCode < 300 {
+			statusColor = tcell.GetColor(ColorGreen)
+		} else if r.StatusCode >= 300 && r.StatusCode < 400 {
+			statusColor = tcell.GetColor(ColorYellow)
+		} else if r.StatusCode >= 400 {
+			statusColor = tcell.GetColor(ColorRed)
+		}
+
+		table.SetCell(rowIdx, 0, tview.NewTableCell(" "+scoreStr).SetTextColor(scoreColor).SetAlign(tview.AlignRight))
+		table.SetCell(rowIdx, 1, tview.NewTableCell(" "+r.Confidence).SetTextColor(confColor).SetAlign(tview.AlignCenter))
+		table.SetCell(rowIdx, 2, tview.NewTableCell(" "+statusStr).SetTextColor(statusColor).SetAlign(tview.AlignCenter))
+		table.SetCell(rowIdx, 3, tview.NewTableCell(" "+r.URL).SetTextColor(tcell.ColorWhite))
+		table.SetCell(rowIdx, 4, tview.NewTableCell(" "+surfaces).SetTextColor(tcell.GetColor(ColorGreen)))
+		rowIdx++
+	}
+}
+
+// updateFooter writes contextual instructions and matching statistics to the footer widget
+func (q *QueryConsole) updateFooter(tabIndex int) {
 	var total, shown int
 	switch tabIndex {
 	case 0:
@@ -985,9 +1036,8 @@ func (q *QueryConsole) populateTable(tabIndex int) {
 
 // showDetailsPopup opens detailed overlay modal cards
 func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
-	var title string
-	var sb strings.Builder
-
+	var title, text string
+	
 	pageSize := q.pageSize
 	if pageSize <= 0 {
 		pageSize = 100
@@ -995,124 +1045,25 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 
 	switch tabIndex {
 	case 0:
-		actualIndex := q.currentPage[0]*pageSize + dataIndex
-		if actualIndex < 0 || actualIndex >= len(q.filteredSubdomains) {
-			return
-		}
-		s := q.filteredSubdomains[actualIndex]
-		title = " SUBDOMAIN DETAILS "
-		sb.WriteString(fmt.Sprintf("[%s::b]Domain Context:[-]\n\n", ColorLavender))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Hostname:", s.Domain))
-		sb.WriteString(fmt.Sprintf("  %-16s %t\n", "Resolving (Live):", s.IsLive))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "IP Address:", s.IPAddress))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Discovery Tool:", s.Source))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", s.CreatedAt.Format("2006-01-02 15:04:05")))
-
+		title, text = q.getSubdomainDetailsText(dataIndex, pageSize)
 	case 1:
-		actualIndex := q.currentPage[1]*pageSize + dataIndex
-		if actualIndex < 0 || actualIndex >= len(q.filteredPorts) {
-			return
-		}
-		p := q.filteredPorts[actualIndex]
-		title = " PORT DETAILS "
-		sb.WriteString(fmt.Sprintf("[%s::b]Open Port Context:[-]\n\n", ColorLavender))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "IP/Host:", p.Host))
-		sb.WriteString(fmt.Sprintf("  %-16s %d/%s\n", "Port Service:", p.Port, p.Protocol))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Declared Protocol:", p.Service))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", p.CreatedAt.Format("2006-01-02 15:04:05")))
-
+		title, text = q.getPortDetailsText(dataIndex, pageSize)
 	case 2:
-		actualIndex := q.currentPage[2]*pageSize + dataIndex
-		if actualIndex < 0 || actualIndex >= len(q.filteredVulns) {
-			return
-		}
-		v := q.filteredVulns[actualIndex]
-		title = " VULNERABILITY DETAILS "
-		sb.WriteString(fmt.Sprintf("[%s::b]Discovery Finding:[-]\n\n", ColorRed))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Target Name:", v.Name))
-		sb.WriteString(fmt.Sprintf("  %-16s [%s::b]%s[-]\n", "Severity Rating:", ColorRed, strings.ToUpper(v.Severity)))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Target IP/Host:", v.Host))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Trigger URL:", v.URL))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Nuclei Template:", v.TemplateID))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n\n", "Trigger Time:", v.CreatedAt.Format("2006-01-02 15:04:05")))
-
-		if v.Description != "" {
-			sb.WriteString(fmt.Sprintf("[%s::b]Description:[-]\n  %s\n\n", ColorSapphire, v.Description))
-		}
-		if v.Matcher != "" {
-			sb.WriteString(fmt.Sprintf("[%s::b]Trigger Matcher:[-]\n  %s\n\n", ColorSapphire, v.Matcher))
-		}
-		if v.Evidence != "" {
-			sb.WriteString(fmt.Sprintf("[%s::b]Matcher Evidence / Response Extract:[-]\n  %s\n", ColorSapphire, v.Evidence))
-		}
-
+		title, text = q.getVulnDetailsText(dataIndex, pageSize)
 	case 3:
-		actualIndex := q.currentPage[3]*pageSize + dataIndex
-		if actualIndex < 0 || actualIndex >= len(q.filteredURLs) {
-			return
-		}
-		u := q.filteredURLs[actualIndex]
-		title = " URL DETAILS "
-		sb.WriteString(fmt.Sprintf("[%s::b]Web Resource details:[-]\n\n", ColorLavender))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Complete URL:", u.URL))
-		sb.WriteString(fmt.Sprintf("  %-16s %d\n", "HTTP Response:", u.StatusCode))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Content Type:", u.ContentType))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Page Title:", u.Title))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Scraped Sources:", u.Source))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n\n", "Scraped At:", u.CreatedAt.Format("2006-01-02 15:04:05")))
-
-		var techs []string
-		if err := json.Unmarshal([]byte(u.Tech), &techs); err == nil && len(techs) > 0 {
-			sb.WriteString(fmt.Sprintf("[%s::b]Fingerprinted Stack:[-]\n", ColorSapphire))
-			for _, t := range techs {
-				sb.WriteString(fmt.Sprintf("  • %s\n", t))
-			}
-		} else if u.Tech != "" {
-			sb.WriteString(fmt.Sprintf("[%s::b]Fingerprinted Stack:[-]\n  %s\n", ColorSapphire, u.Tech))
-		}
-
+		title, text = q.getURLDetailsText(dataIndex, pageSize)
 	case 4:
-		actualIndex := q.currentPage[4]*pageSize + dataIndex
-		if actualIndex < 0 || actualIndex >= len(q.filteredEndpoints) {
-			return
-		}
-		e := q.filteredEndpoints[actualIndex]
-		title = " API ENDPOINT DETAILS "
-		sb.WriteString(fmt.Sprintf("[%s::b]Endpoint Context:[-]\n\n", ColorLavender))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Discovered URL:", e.URL))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "HTTP Method:", e.Method))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Parser Source:", e.Source))
-		sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", e.CreatedAt.Format("2006-01-02 15:04:05")))
-
+		title, text = q.getEndpointDetailsText(dataIndex, pageSize)
 	case 5:
-		actualIndex := q.currentPage[5]*pageSize + dataIndex
-		if actualIndex < 0 || actualIndex >= len(q.filteredROI) {
-			return
-		}
-		r := q.filteredROI[actualIndex]
-		title = " ROI RATING DETAILS "
-		sb.WriteString(fmt.Sprintf("[%s::b]ROI Target Ranking:[-]\n\n", ColorLavender))
-		sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Target URL:", r.URL))
-		sb.WriteString(fmt.Sprintf("  %-18s %d\n", "Raw ROI Score:", r.Score))
-		sb.WriteString(fmt.Sprintf("  %-18s %d/100\n", "Normalized Score:", r.NormalizedScore))
-		sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Confidence Tier:", r.Confidence))
-		sb.WriteString(fmt.Sprintf("  %-18s %d\n", "HTTP Response:", r.StatusCode))
-		if len(r.Tech) > 0 {
-			sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Tech Stack:", strings.Join(r.Tech, ", ")))
-		}
-		if len(r.AttackSurfaces) > 0 {
-			sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Attack Surfaces:", strings.Join(r.AttackSurfaces, ", ")))
-		}
-		sb.WriteString("\n")
-
-		if len(r.Reasons) > 0 {
-			sb.WriteString(fmt.Sprintf("[%s::b]ROI Point Rationale:[-]\n", ColorSapphire))
-			for _, reason := range r.Reasons {
-				sb.WriteString(fmt.Sprintf("  %s\n", reason))
-			}
-		}
+		title, text = q.getROIDetailsText(dataIndex, pageSize)
 	}
 
+	if title == "" || text == "" {
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString(text)
 	sb.WriteString(fmt.Sprintf("\n\n[%s]────────────────────────────────────────────────────────────────────────────────[-]\n", ColorBorder))
 	sb.WriteString(fmt.Sprintf(" [%s]Close:[-] [ESC/ENTER]  |  [%s]Scroll:[-] [Up/Down, PgUp/PgDn]", ColorActive, ColorActive))
 
@@ -1147,6 +1098,140 @@ func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 		AddItem(nil, 0, 1, false)
 
 	q.Pages.AddPage("detail_modal", modal, true, true)
+}
+
+func (q *QueryConsole) getSubdomainDetailsText(dataIndex, pageSize int) (string, string) {
+	actualIndex := q.currentPage[0]*pageSize + dataIndex
+	if actualIndex < 0 || actualIndex >= len(q.filteredSubdomains) {
+		return "", ""
+	}
+	s := q.filteredSubdomains[actualIndex]
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[%s::b]Domain Context:[-]\n\n", ColorLavender))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Hostname:", s.Domain))
+	sb.WriteString(fmt.Sprintf("  %-16s %t\n", "Resolving (Live):", s.IsLive))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "IP Address:", s.IPAddress))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Discovery Tool:", s.Source))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", s.CreatedAt.Format("2006-01-02 15:04:05")))
+	return " SUBDOMAIN DETAILS ", sb.String()
+}
+
+func (q *QueryConsole) getPortDetailsText(dataIndex, pageSize int) (string, string) {
+	actualIndex := q.currentPage[1]*pageSize + dataIndex
+	if actualIndex < 0 || actualIndex >= len(q.filteredPorts) {
+		return "", ""
+	}
+	p := q.filteredPorts[actualIndex]
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[%s::b]Open Port Context:[-]\n\n", ColorLavender))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "IP/Host:", p.Host))
+	sb.WriteString(fmt.Sprintf("  %-16s %d/%s\n", "Port Service:", p.Port, p.Protocol))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Declared Protocol:", p.Service))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", p.CreatedAt.Format("2006-01-02 15:04:05")))
+	return " PORT DETAILS ", sb.String()
+}
+
+func (q *QueryConsole) getVulnDetailsText(dataIndex, pageSize int) (string, string) {
+	actualIndex := q.currentPage[2]*pageSize + dataIndex
+	if actualIndex < 0 || actualIndex >= len(q.filteredVulns) {
+		return "", ""
+	}
+	v := q.filteredVulns[actualIndex]
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[%s::b]Discovery Finding:[-]\n\n", ColorRed))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Target Name:", v.Name))
+	sb.WriteString(fmt.Sprintf("  %-16s [%s::b]%s[-]\n", "Severity Rating:", ColorRed, strings.ToUpper(v.Severity)))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Target IP/Host:", v.Host))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Trigger URL:", v.URL))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Nuclei Template:", v.TemplateID))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n\n", "Trigger Time:", v.CreatedAt.Format("2006-01-02 15:04:05")))
+
+	if v.Description != "" {
+		sb.WriteString(fmt.Sprintf("[%s::b]Description:[-]\n  %s\n\n", ColorSapphire, v.Description))
+	}
+	if v.Matcher != "" {
+		sb.WriteString(fmt.Sprintf("[%s::b]Trigger Matcher:[-]\n  %s\n\n", ColorSapphire, v.Matcher))
+	}
+	if v.Evidence != "" {
+		sb.WriteString(fmt.Sprintf("[%s::b]Matcher Evidence / Response Extract:[-]\n  %s\n", ColorSapphire, v.Evidence))
+	}
+	return " VULNERABILITY DETAILS ", sb.String()
+}
+
+func (q *QueryConsole) getURLDetailsText(dataIndex, pageSize int) (string, string) {
+	actualIndex := q.currentPage[3]*pageSize + dataIndex
+	if actualIndex < 0 || actualIndex >= len(q.filteredURLs) {
+		return "", ""
+	}
+	u := q.filteredURLs[actualIndex]
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[%s::b]Web Resource details:[-]\n\n", ColorLavender))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Complete URL:", u.URL))
+	sb.WriteString(fmt.Sprintf("  %-16s %d\n", "HTTP Response:", u.StatusCode))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Content Type:", u.ContentType))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Page Title:", u.Title))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Scraped Sources:", u.Source))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n\n", "Scraped At:", u.CreatedAt.Format("2006-01-02 15:04:05")))
+
+	var techs []string
+	if err := json.Unmarshal([]byte(u.Tech), &techs); err == nil && len(techs) > 0 {
+		sb.WriteString(fmt.Sprintf("[%s::b]Fingerprinted Stack:[-]\n", ColorSapphire))
+		for _, t := range techs {
+			sb.WriteString(fmt.Sprintf("  • %s\n", t))
+		}
+	} else if u.Tech != "" {
+		sb.WriteString(fmt.Sprintf("[%s::b]Fingerprinted Stack:[-]\n  %s\n", ColorSapphire, u.Tech))
+	}
+	return " URL DETAILS ", sb.String()
+}
+
+func (q *QueryConsole) getEndpointDetailsText(dataIndex, pageSize int) (string, string) {
+	actualIndex := q.currentPage[4]*pageSize + dataIndex
+	if actualIndex < 0 || actualIndex >= len(q.filteredEndpoints) {
+		return "", ""
+	}
+	e := q.filteredEndpoints[actualIndex]
+	method := e.Method
+	if method == "" {
+		method = "GET (Default)"
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[%s::b]Endpoint Context:[-]\n\n", ColorLavender))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Discovered URL:", e.URL))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "HTTP Method:", method))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Parser Source:", e.Source))
+	sb.WriteString(fmt.Sprintf("  %-16s %s\n", "Recorded At:", e.CreatedAt.Format("2006-01-02 15:04:05")))
+	return " API ENDPOINT DETAILS ", sb.String()
+}
+
+func (q *QueryConsole) getROIDetailsText(dataIndex, pageSize int) (string, string) {
+	actualIndex := q.currentPage[5]*pageSize + dataIndex
+	if actualIndex < 0 || actualIndex >= len(q.filteredROI) {
+		return "", ""
+	}
+	r := q.filteredROI[actualIndex]
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("[%s::b]ROI Target Ranking:[-]\n\n", ColorLavender))
+	sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Target URL:", r.URL))
+	sb.WriteString(fmt.Sprintf("  %-18s %d\n", "Raw ROI Score:", r.Score))
+	sb.WriteString(fmt.Sprintf("  %-18s %d/100\n", "Normalized Score:", r.NormalizedScore))
+	sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Confidence Tier:", r.Confidence))
+	sb.WriteString(fmt.Sprintf("  %-18s %d\n", "HTTP Response:", r.StatusCode))
+	if len(r.Tech) > 0 {
+		sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Tech Stack:", strings.Join(r.Tech, ", ")))
+	}
+	if len(r.AttackSurfaces) > 0 {
+		sb.WriteString(fmt.Sprintf("  %-18s %s\n", "Attack Surfaces:", strings.Join(r.AttackSurfaces, ", ")))
+	}
+	sb.WriteString("\n")
+
+	if len(r.Reasons) > 0 {
+		sb.WriteString(fmt.Sprintf("[%s::b]ROI Point Rationale:[-]\n", ColorSapphire))
+		for _, reason := range r.Reasons {
+			sb.WriteString(fmt.Sprintf("  %s\n", reason))
+		}
+	}
+	return " ROI RATING DETAILS ", sb.String()
 }
 
 // loadScanCounts loads counts of findings and updates category headers
@@ -1203,14 +1288,8 @@ func (q *QueryConsole) loadScanCounts(scanID int64) {
 	q.drawTabs()
 }
 
-// loadActiveTab queries database for only the active tab's findings and releases others
+// loadActiveTab queries database for only the active tab's findings (optimized caching)
 func (q *QueryConsole) loadActiveTab(tabIdx int) {
-	for idx := 0; idx < 6; idx++ {
-		if idx != tabIdx {
-			q.releaseTabMemory(idx)
-		}
-	}
-
 	maxRows := 50000
 	var err error
 
@@ -1387,12 +1466,30 @@ func (q *QueryConsole) isHostLive(host string) bool {
 
 func (q *QueryConsole) loadLiveSubdomainsMap(scanID int64) {
 	q.liveSubdomains = make(map[string]bool)
+
+	// 1. Get DNS-live subdomains from subdomains table
 	domains, err := database.GetLiveSubdomainNames(scanID)
-	if err != nil {
+	if err == nil {
+		for _, d := range domains {
+			q.liveSubdomains[strings.ToLower(strings.TrimSpace(d))] = true
+		}
+	} else {
 		logger.FileDebug("Failed to get live subdomain names: %v", err)
-		return
 	}
-	for _, d := range domains {
-		q.liveSubdomains[strings.ToLower(strings.TrimSpace(d))] = true
+
+	// 2. Get HTTP-live hosts from urls table (status_code > 0)
+	if database.DB != nil {
+		rows, err := database.DB.Query("SELECT DISTINCT host FROM urls WHERE scan_id = ? AND status_code > 0 AND host IS NOT NULL AND host != ''", scanID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var h string
+				if err := rows.Scan(&h); err == nil {
+					q.liveSubdomains[strings.ToLower(strings.TrimSpace(h))] = true
+				}
+			}
+		} else {
+			logger.FileDebug("Failed to get live hosts from urls: %v", err)
+		}
 	}
 }
