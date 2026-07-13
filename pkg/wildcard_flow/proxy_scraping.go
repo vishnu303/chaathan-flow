@@ -91,7 +91,6 @@ func (c *Ctx) runProxyScrapingAndRotation() {
 	}
 
 	harvestCfg := proxy_scraping.HarvestConfig{
-		Domain:        c.Domain,
 		TimeoutMin:    timeoutMin,
 		ProxyTypes:    proxyTypes,
 		MaxConcurrent: maxConcurrent,

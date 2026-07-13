@@ -11,23 +11,27 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vishnu303/chaathan/pkg/progress"
 )
 
-// CheckGoInstalledAndAtLeast126 checks if go is in PATH and if its version is >= 1.26.
-func CheckGoInstalledAndAtLeast126() (bool, string) {
-	if runtime.GOOS == "linux" {
-		currentPath := os.Getenv("PATH")
-		goBin := "/usr/local/go/bin"
-		if !strings.Contains(currentPath, goBin) {
-			if _, err := os.Stat("/usr/local/go/bin/go"); err == nil {
-				currentPath = currentPath + string(os.PathListSeparator) + goBin
-				_ = os.Setenv("PATH", currentPath)
-			}
-		}
-	}
+// minGoVersion is the minimum required minor version of Go 1.x (e.g. 26 for Go 1.26).
+const minGoVersion = 26
 
+// goArchSuffix maps runtime.GOARCH to the architecture suffix used in Go release packages.
+// Bails on unsupported architectures.
+func goArchSuffix() (string, error) {
+	switch runtime.GOARCH {
+	case "amd64", "arm64", "386":
+		return runtime.GOARCH, nil
+	default:
+		return "", fmt.Errorf("unsupported Go architecture: %s", runtime.GOARCH)
+	}
+}
+
+// checkGoVersion checks if go is in PATH and if its version is >= 1.minGoVersion.
+func checkGoVersion() (bool, string) {
 	path, err := exec.LookPath("go")
 	if err != nil {
 		return false, ""
@@ -38,9 +42,11 @@ func CheckGoInstalledAndAtLeast126() (bool, string) {
 	if err := cmd.Run(); err != nil {
 		return false, path
 	}
-	versionStr := out.String()
-	
-	// Clean string e.g. "go version go1.26.1 linux/amd64"
+	return parseGoVersion(out.String())
+}
+
+// parseGoVersion cleans and parses a Go version output string (e.g. "go version go1.26.1 linux/amd64").
+func parseGoVersion(versionStr string) (bool, string) {
 	fields := strings.Fields(versionStr)
 	for _, f := range fields {
 		if strings.HasPrefix(f, "go") && f != "go" {
@@ -53,7 +59,7 @@ func CheckGoInstalledAndAtLeast126() (bool, string) {
 			if len(parts) >= 2 {
 				major, _ := strconv.Atoi(parts[0])
 				minor, _ := strconv.Atoi(parts[1])
-				if major > 1 || (major == 1 && minor >= 26) {
+				if major > 1 || (major == 1 && minor >= minGoVersion) {
 					return true, f
 				}
 			}
@@ -63,10 +69,38 @@ func CheckGoInstalledAndAtLeast126() (bool, string) {
 	return false, ""
 }
 
+
+// ensureSystemGoOnPath checks if Go is installed under the user-local or system directory
+// and adds it to the current process's PATH if found.
+func ensureSystemGoOnPath() {
+	if runtime.GOOS == "linux" {
+		currentPath := os.Getenv("PATH")
+		home, err := os.UserHomeDir()
+		if err == nil {
+			localGoBin := filepath.Join(home, ".local", "go", "bin")
+			if !pathListContains(currentPath, localGoBin) {
+				if _, err := os.Stat(filepath.Join(localGoBin, "go")); err == nil {
+					currentPath = localGoBin + string(os.PathListSeparator) + currentPath
+					_ = os.Setenv("PATH", currentPath)
+				}
+			}
+		}
+
+		usrGoBin := "/usr/local/go/bin"
+		if !pathListContains(currentPath, usrGoBin) {
+			if _, err := os.Stat(filepath.Join(usrGoBin, "go")); err == nil {
+				currentPath = currentPath + string(os.PathListSeparator) + usrGoBin
+				_ = os.Setenv("PATH", currentPath)
+			}
+		}
+	}
+}
+
 // downloadLatestGo fetches the latest Go version string from go.dev, falling back to go1.26.0 on failure.
 func downloadLatestGo(ctx *SetupContext) (string, error) {
 	progress.ItemPending("Checking latest Go version on go.dev...")
-	resp, err := http.Get("https://go.dev/VERSION?m=text")
+	client := setupHTTPClient(30 * time.Second)
+	resp, err := client.Get("https://go.dev/VERSION?m=text")
 	if err != nil {
 		progress.ItemInfo("Failed to check go.dev/VERSION (using go1.26.0 as fallback)")
 		return "go1.26.0", nil
@@ -89,18 +123,38 @@ func downloadLatestGo(ctx *SetupContext) (string, error) {
 	return version, nil
 }
 
-// downloadTarball downloads Go binary from go.dev to the destination path.
+// downloadTarball downloads the Go binary and its sha256 checksum from go.dev, verifies it,
+// and saves the tarball to the destination path.
 func downloadTarball(ctx *SetupContext, version, destPath string) error {
-	url := fmt.Sprintf("https://go.dev/dl/%s.linux-amd64.tar.gz", version)
-	progress.ItemPending(fmt.Sprintf("Downloading Go archive: %s", url))
-	
-	out, err := os.Create(destPath)
+	arch, err := goArchSuffix()
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	resp, err := http.Get(url)
+	url := fmt.Sprintf("https://go.dev/dl/%s.linux-%s.tar.gz", version, arch)
+	checksumURL := url + ".sha256"
+
+	progress.ItemPending(fmt.Sprintf("Downloading Go archive: %s", url))
+
+	client := setupHTTPClient(10 * time.Minute)
+
+	// Fetch checksum first
+	checksumResp, err := client.Get(checksumURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch Go checksum from %s: %w", checksumURL, err)
+	}
+	defer checksumResp.Body.Close()
+	if checksumResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("bad status code from go.dev for checksum: %s", checksumResp.Status)
+	}
+	checksumBytes, err := io.ReadAll(checksumResp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read Go checksum body: %w", err)
+	}
+	expectedChecksum := string(checksumBytes)
+
+	// Fetch tarball
+	resp, err := client.Get(url)
 	if err != nil {
 		return err
 	}
@@ -110,28 +164,62 @@ func downloadTarball(ctx *SetupContext, version, destPath string) error {
 		return fmt.Errorf("bad status code from go.dev: %s", resp.Status)
 	}
 
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
 
-// installGoBinary executes tarball extraction to /usr/local.
-func installGoBinary(ctx *SetupContext, tarPath string) error {
-	progress.ItemPending("Purging old Go installation and extracting tarball...")
-	
-	// Delete any old custom installations to avoid conflicts
-	if err := runSysCmd(ctx, "sudo", "rm", "-rf", "/usr/local/go"); err != nil {
-		return fmt.Errorf("purge /usr/local/go failed: %w", err)
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to save Go archive: %w", err)
 	}
 
-	// Extract new package to /usr/local
-	if err := runSysCmd(ctx, "sudo", "tar", "-C", "/usr/local", "-xzf", tarPath); err != nil {
-		return fmt.Errorf("tar extract to /usr/local failed: %w", err)
+	// Close the file before verifying to avoid access issues
+	_ = out.Close()
+
+	// Verify checksum
+	r, err := os.Open(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to open downloaded archive for verification: %w", err)
+	}
+	defer r.Close()
+
+	if err := verifySHA256(r, expectedChecksum); err != nil {
+		_ = os.Remove(destPath) // clean up invalid download
+		return fmt.Errorf("checksum verification failed: %w", err)
+	}
+
+	progress.ItemOK("Go archive downloaded and checksum verified successfully")
+	return nil
+}
+
+// installGoBinary extracts the tarball to ~/.local/go.
+func installGoBinary(ctx *SetupContext, tarPath string) error {
+	progress.ItemPending("Extracting Go tarball to ~/.local...")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get user home directory: %w", err)
+	}
+
+	localDir := filepath.Join(home, ".local")
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return fmt.Errorf("failed to create ~/.local directory: %w", err)
+	}
+
+	localGo := filepath.Join(localDir, "go")
+	_ = os.RemoveAll(localGo) // remove old custom installation if exists
+
+	// Extract new package to ~/.local (which creates ~/.local/go)
+	if err := runSysCmd(ctx, "tar", "-C", localDir, "-xzf", tarPath); err != nil {
+		return fmt.Errorf("tar extract to ~/.local failed: %w", err)
 	}
 
 	return nil
 }
 
-// ensureGoPATH adds /usr/local/go/bin to the configuration files of common shells.
+// ensureGoPATH adds ~/.local/go/bin to the configuration files of common shells.
 func ensureGoPATH() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -140,7 +228,7 @@ func ensureGoPATH() {
 
 	comment := "# Go installation PATH"
 	pathsToAdd := []string{
-		`export PATH=$PATH:/usr/local/go/bin`,
+		`export PATH="$HOME/.local/go/bin:$PATH"`,
 	}
 
 	rcFiles := []string{
@@ -159,16 +247,16 @@ func ensureGoPATH() {
 	fishConfig := filepath.Join(home, ".config", "fish", "config.fish")
 	if _, err := os.Stat(fishConfig); err == nil {
 		fishPaths := []string{
-			`fish_add_path -g /usr/local/go/bin`,
+			`fish_add_path -g $HOME/.local/go/bin`,
 		}
 		_, _ = appendLinesToFile(fishConfig, fishPaths, comment)
 	}
 
 	// Update PATH of the current running process so LookPath resolves immediately
 	currentPath := os.Getenv("PATH")
-	goBin := "/usr/local/go/bin"
-	if !strings.Contains(currentPath, goBin) {
-		currentPath = currentPath + string(os.PathListSeparator) + goBin
+	goBin := filepath.Join(home, ".local", "go", "bin")
+	if !pathListContains(currentPath, goBin) {
+		currentPath = goBin + string(os.PathListSeparator) + currentPath
 		_ = os.Setenv("PATH", currentPath)
 	}
 }
@@ -179,26 +267,36 @@ func EnsureGoInstalled(ctx *SetupContext) (bool, error) {
 		return false, fmt.Errorf("automated Go installation is only supported on Linux")
 	}
 
-	ok, currentVer := CheckGoInstalledAndAtLeast126()
+	ensureSystemGoOnPath()
+	ok, currentVer := checkGoVersion()
 	if ok {
 		progress.ItemOK(fmt.Sprintf("Go is ready (version: %s)", currentVer))
 		return true, nil
 	}
 
 	if currentVer != "" {
-		progress.ItemInfo(fmt.Sprintf("Go version %s is too old (minimum required: Go 1.26)", currentVer))
+		progress.ItemInfo(fmt.Sprintf("Go version %s is too old (minimum required: Go 1.%d)", currentVer, minGoVersion))
 	} else {
 		progress.ItemInfo("Go is not installed on the system")
 	}
 
 	progress.ItemPending("Preparing Go installer...")
-	
+
 	version, err := downloadLatestGo(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to detect latest Go version: %w", err)
 	}
 
-	tarPath := "/tmp/go.tar.gz"
+	// Create temp folder inside user space to avoid global /tmp pollution or permissions issues
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, fmt.Errorf("failed to get user home: %w", err)
+	}
+	tempDir := filepath.Join(home, ".chaathan", "temp")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return false, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	tarPath := filepath.Join(tempDir, "go.tar.gz")
 	defer os.Remove(tarPath)
 
 	if err := downloadTarball(ctx, version, tarPath); err != nil {
@@ -212,7 +310,8 @@ func EnsureGoInstalled(ctx *SetupContext) (bool, error) {
 	ensureGoPATH()
 
 	// Verify new Go path resolutions
-	okVerify, newVer := CheckGoInstalledAndAtLeast126()
+	ensureSystemGoOnPath()
+	okVerify, newVer := checkGoVersion()
 	if !okVerify {
 		return false, fmt.Errorf("Go installation completed but verification failed (version check resolved: %s)", newVer)
 	}

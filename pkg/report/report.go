@@ -66,13 +66,13 @@ const markdownTemplateStr = `# Chaathan Scan Report
 
 | Field | Value |
 |-------|-------|
-| **Target** | {{.Scan.Target}} |
+| **Target** | {{.Scan.Target | mdCell}} |
 | **Scan ID** | {{.Scan.ID}} |
-| **Type** | {{.Scan.Type}} |
-| **Status** | {{.Scan.Status}} |
+| **Type** | {{.Scan.Type | mdCell}} |
+| **Status** | {{.Scan.Status | mdCell}} |
 | **Started** | {{.Scan.StartedAt.Format "2006-01-02 15:04:05"}} |
 {{if .Scan.CompletedAt}}| **Completed** | {{.Scan.CompletedAt.Format "2006-01-02 15:04:05"}} |{{end}}
-| **Results Directory** | {{.Scan.ResultDir}} |
+| **Results Directory** | {{.Scan.ResultDir | mdCell}} |
 
 ---
 
@@ -90,7 +90,7 @@ const markdownTemplateStr = `# Chaathan Scan Report
 
 | Severity | Count |
 |----------|-------|
-{{range $sev, $count := .Stats.Vulnerabilities}}| **{{$sev | ToUpper}}** | {{$count}} |
+{{range $sev, $count := .Stats.Vulnerabilities}}| **{{$sev | ToUpper | mdCell}}** | {{$count}} |
 {{end}}
 
 ---
@@ -123,7 +123,7 @@ No vulnerabilities found.
 {{if .LiveSubdomains}}
 | Domain | IP Address | Source |
 |--------|------------|--------|
-{{range .LiveSubdomains}}| {{.Domain}} | {{.IPAddress}} | {{.Source}} |
+{{range .LiveSubdomains}}| {{.Domain | mdCell}} | {{.IPAddress | mdCell}} | {{.Source | mdCell}} |
 {{end}}
 {{else}}
 No live subdomains found.
@@ -136,7 +136,7 @@ No live subdomains found.
 {{if .Ports}}
 | Host | Port | Protocol | Service |
 |------|------|----------|---------|
-{{range .Ports}}| {{.Host}} | {{.Port}} | {{.Protocol}} | {{.Service}} |
+{{range .Ports}}| {{.Host | mdCell}} | {{.Port}} | {{.Protocol | mdCell}} | {{.Service | mdCell}} |
 {{end}}
 {{else}}
 No open ports found.
@@ -149,7 +149,7 @@ No open ports found.
 {{if .URLs}}
 | URL | Status | Title |
 |-----|--------|-------|
-{{range .URLs}}| {{.URL}} | {{.StatusCode}} | {{.Title}} |
+{{range .URLs}}| {{.URL | mdCell}} | {{.StatusCode}} | {{.Title | mdCell}} |
 {{end}}
 {{else}}
 No URLs discovered.
@@ -162,7 +162,7 @@ No URLs discovered.
 {{if .TopTargets}}
 | Score | URL | Why |
 |-------|-----|-----|
-{{range .TopTargets}}| {{.Score}} | {{.URL}} | {{joinReasons .Reasons}} |
+{{range .TopTargets}}| {{.Score}} | {{.URL | mdCell}} | {{joinReasons .Reasons | mdCell}} |
 {{end}}
 {{else}}
 No ROI targets available.
@@ -175,7 +175,7 @@ No ROI targets available.
 {{if .Endpoints}}
 | Endpoint | Method | Source |
 |----------|--------|--------|
-{{range .Endpoints}}| {{.URL}} | {{.Method}} | {{.Source}} |
+{{range .Endpoints}}| {{.URL | mdCell}} | {{.Method | mdCell}} | {{.Source | mdCell}} |
 {{end}}
 {{else}}
 No endpoints found.
@@ -375,10 +375,20 @@ const htmlTemplateStr = `<!DOCTYPE html>
 </body>
 </html>`
 
+func mdCell(s string) string {
+	s = strings.ReplaceAll(s, "|", "\\|")
+	s = strings.ReplaceAll(s, "`", "\\`")
+	s = strings.ReplaceAll(s, "*", "\\*")
+	s = strings.ReplaceAll(s, "\r\n", "<br>")
+	s = strings.ReplaceAll(s, "\n", "<br>")
+	return s
+}
+
 func init() {
 	markdownTemplate = template.Must(template.New("markdown").Funcs(template.FuncMap{
 		"ToUpper":     strings.ToUpper,
 		"joinReasons": joinReasons,
+		"mdCell":      mdCell,
 	}).Parse(markdownTemplateStr))
 
 	htmlTemplate = htmltemplate.Must(htmltemplate.New("html").Funcs(htmltemplate.FuncMap{
@@ -431,6 +441,28 @@ func Generate(scanID int64) (*Report, error) {
 	endpoints, err := database.GetEndpoints(scanID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get endpoints: %w", err)
+	}
+
+	if subdomains == nil {
+		subdomains = []database.Subdomain{}
+	}
+	if liveSubdomains == nil {
+		liveSubdomains = []database.Subdomain{}
+	}
+	if ports == nil {
+		ports = []database.Port{}
+	}
+	if urls == nil {
+		urls = []database.URL{}
+	}
+	if topTargets == nil {
+		topTargets = []database.URLROI{}
+	}
+	if vulns == nil {
+		vulns = []database.Vulnerability{}
+	}
+	if endpoints == nil {
+		endpoints = []database.Endpoint{}
 	}
 
 	return &Report{
@@ -536,8 +568,23 @@ func (r *Report) toText() (string, error) {
 	}
 
 	sb.WriteString("\nVulnerabilities:\n")
+	severities := []string{"critical", "high", "medium", "low", "info"}
+	for _, sev := range severities {
+		if count, ok := r.Stats.Vulnerabilities[sev]; ok {
+			sb.WriteString(fmt.Sprintf("  %s: %d\n", strings.ToUpper(sev), count))
+		}
+	}
 	for sev, count := range r.Stats.Vulnerabilities {
-		sb.WriteString(fmt.Sprintf("  %s: %d\n", strings.ToUpper(sev), count))
+		isStandard := false
+		for _, s := range severities {
+			if s == sev {
+				isStandard = true
+				break
+			}
+		}
+		if !isStandard {
+			sb.WriteString(fmt.Sprintf("  %s: %d\n", strings.ToUpper(sev), count))
+		}
 	}
 
 	if len(r.Vulnerabilities) > 0 {

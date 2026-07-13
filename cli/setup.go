@@ -27,10 +27,11 @@ var setupCmd = &cobra.Command{
 	Long: `Installs the tools required for native execution mode.
 
 Categories:
-  - Go tools:     subfinder, httpx, nuclei, katana, naabu, etc.
-  - Python tools: sublist3r
-  - Rust tools:   x8
-  - From source:  massdns (high-performance DNS resolver)
+  - Go runtime:   installed to ~/.local/go (no sudo required)
+  - Go tools:     subfinder, httpx, nuclei, katana, naabu, etc. (installed to ~/go/bin)
+  - Python tools: sublist3r (installed to ~/.local/bin)
+  - Rust tools:   x8 (installed to ~/.local/bin)
+  - From source:  massdns (installed to ~/go/bin)
 
 Already-installed tools are skipped automatically.
 Use --update to force reinstallation of every tool (useful after a version
@@ -41,7 +42,7 @@ Usage:
   chaathan setup              # Install missing tools (parallel)
   chaathan setup --update     # Reinstall ALL tools (force update)
   chaathan setup --verbose    # Show live install output`,
-	Run: runSetup,
+	RunE: runSetup,
 }
 
 func init() {
@@ -53,9 +54,10 @@ func init() {
 // runSetup — cobra handler
 // ─────────────────────────────────────────────────────────────
 
-func runSetup(cmd *cobra.Command, args []string) {
-	s.Run(s.RunConfig{
+func runSetup(cmd *cobra.Command, args []string) error {
+	return s.Run(s.RunConfig{
 		Verbose:     Verbose,
 		ForceUpdate: setupUpdate,
 	})
 }
+

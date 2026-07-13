@@ -40,6 +40,12 @@ func init() {
 }
 
 func runReportGenerate(cmd *cobra.Command, args []string) {
+	validFormats := map[string]bool{"markdown": true, "json": true, "html": true, "text": true}
+	if !validFormats[reportFormat] {
+		logger.Error("Invalid format '%s'. Valid: markdown, json, html, text", reportFormat)
+		return
+	}
+
 	scanID, ok := parseScanIDArg(args[0])
 	if !ok {
 		return

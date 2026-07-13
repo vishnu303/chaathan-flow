@@ -25,7 +25,11 @@ func run() error {
 	}
 
 	// Ensure database is properly closed on exit (flushes WAL, releases locks)
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to close database: %v\n", err)
+		}
+	}()
 
 	return cli.Execute()
 }

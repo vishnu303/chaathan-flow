@@ -10,13 +10,13 @@ import (
 	"github.com/vishnu303/chaathan/pkg/progress"
 )
 
-// installGFPatternsSection clones upstream GFpattren pack and installs the JSON files.
+// installGFPatternsSection clones upstream GFpattern pack and installs the JSON files.
 func installGFPatternsSection(ctx *SetupContext) (installed, skipped, failed int) {
-	progress.Section("gf Patterns", "cloning upstream GFpattren pack for workflow scanning")
+	progress.Section("[3/7] gf Patterns", "cloning gf patterns")
 
 	if _, err := exec.LookPath("gf"); err != nil {
-		progress.ItemInfo("gf binary not installed yet — skipping pattern install")
-		return 0, 1, 0
+		progress.ItemInfo("gf binary not installed yet — pattern install blocked")
+		return 0, 0, 0
 	}
 	if _, err := exec.LookPath("git"); err != nil {
 		progress.ItemFail("git", "git is required to install gf patterns")

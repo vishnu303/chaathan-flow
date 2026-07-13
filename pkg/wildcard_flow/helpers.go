@@ -18,6 +18,15 @@ import (
 	"github.com/vishnu303/chaathan/utils"
 )
 
+const (
+	jsAnalysisHostCap   = 1000
+	ffufHostCap         = 1000
+	paramDiscoveryCap   = 150
+	metadataHostCap     = 250
+	jsSecretMaxMatches  = 100
+	jsFileMaxBytes      = 10 * 1024 * 1024
+)
+
 var jsGFPatterns = map[string]bool{
 	"domxss":   true,
 	"execs":    true,
@@ -71,6 +80,22 @@ func (c *Ctx) markStepCompleteIfNoFailure(stepName string) {
 	if !hasFailure {
 		c.StateMgr.MarkStepComplete(c.State, stepName)
 	}
+}
+
+// markStepFailedSafe marks a step failed only when state tracking is active.
+func (c *Ctx) markStepFailedSafe(stepName string, stepErr error) {
+	if c.StateMgr == nil || c.State == nil || stepErr == nil {
+		return
+	}
+	_ = c.StateMgr.MarkStepFailed(c.State, stepName, stepErr)
+}
+
+// markStepCompleteSafe marks a step complete only when state tracking is active.
+func (c *Ctx) markStepCompleteSafe(stepName string) {
+	if c.StateMgr == nil || c.State == nil {
+		return
+	}
+	c.StateMgr.MarkStepComplete(c.State, stepName)
 }
 
 // runWithSkip executes fn in a goroutine and monitors the skip channel.
@@ -318,7 +343,7 @@ func hostFromRawURL(raw string) string {
 // hostnames (one per line) to outputFile. Returns the number written.
 // This converts Uncover's JSON format into a plain-text list that can be
 // merged into all_subdomains.txt by stepDNSConsolidation (Step 6).
-func extractUncoverHosts(uncoverJSON, outputFile string) int {
+func extractUncoverHosts(uncoverJSON, outputFile string, targetDomain string) int {
 	type uncoverLine struct {
 		Host string `json:"host"`
 		IP   string `json:"ip"`
@@ -354,6 +379,13 @@ func extractUncoverHosts(uncoverJSON, outputFile string) int {
 		}
 		host = strings.ToLower(strings.TrimSpace(host))
 		if host == "" || seen[host] {
+			continue
+		}
+		// Validate that the host is a valid domain and is in-scope
+		if utils.ValidateDomain(host) != nil {
+			continue
+		}
+		if targetDomain != "" && host != targetDomain && !strings.HasSuffix(host, "."+targetDomain) {
 			continue
 		}
 		seen[host] = true
@@ -476,7 +508,7 @@ func hasStaticExtension(rawURL string) bool {
 // to the same key.
 func pathKey(rawURL string) string {
 	parsed, err := neturl.Parse(rawURL)
-	if err != nil {
+	if err != nil || (parsed.Scheme == "" && parsed.Host == "") {
 		return rawURL
 	}
 	return strings.ToLower(parsed.Scheme + "://" + parsed.Host + parsed.Path)

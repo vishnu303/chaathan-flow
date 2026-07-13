@@ -14,9 +14,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	neturl "net/url"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/vishnu303/chaathan/pkg/database"
@@ -26,7 +26,7 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────
-// Step 6 — Consolidation & DNS Resolution
+// Step 7 — Consolidation & DNS Resolution
 // ─────────────────────────────────────────────────────────────
 
 // stepDNSConsolidation merges all passive sources and resolves them with DNSx.
@@ -48,10 +48,20 @@ func stepDNSConsolidation(c *Ctx) bool {
 	)
 	logger.FileDebug("dns_consolidation: %d passive source files available (subfinder, assetfinder, sublist3r, amass, github, hakrawler, uncover_hosts)", len(passiveSources))
 	if err := utils.MergeAndDeduplicate(passiveSources, c.F.ConsolidatedSubs); err != nil {
-		c.StateMgr.MarkStepFailed(c.State, "dns_resolution", err)
+		c.markStepFailedSafe("dns_resolution", err)
 		logger.Error("Failed to consolidate: %v", err)
 		return c.cancelled()
 	}
+
+	// Filter out invalid domains and ensure they belong to the target domain
+	_ = utils.FilterFileLines(c.F.ConsolidatedSubs, func(line string) bool {
+		line = strings.ToLower(strings.TrimSpace(line))
+		if utils.ValidateDomain(line) != nil {
+			return false
+		}
+		return line == c.Domain || strings.HasSuffix(line, "."+c.Domain)
+	})
+
 	subCount, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
 	logger.Success("Consolidated %d unique subdomains", subCount)
 	logger.FileDebug("consolidated subs total: %d -> %s", subCount, c.F.ConsolidatedSubs)
@@ -72,6 +82,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 	// Sync consolidated subdomains to DB
 	if c.ScanID > 0 {
 		if count, err := utils.ParseSubdomainsFile(c.ScanID, c.F.ConsolidatedSubs, "consolidated"); err != nil {
+			c.markStepFailedSafe("dns_resolution", err)
 			logger.Warning("Failed to sync consolidated subdomains to database: %v", err)
 		} else {
 			logger.FileDebug("synced %d consolidated subdomains to database", count)
@@ -88,7 +99,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			dnsxSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "dns_resolution", err)
+			c.markStepFailedSafe("dns_resolution", err)
 			logger.Error("DNSx failed: %v", err)
 		}
 	}
@@ -115,7 +126,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 7 — DNS Brute-force (ShuffleDNS)
+// Step 8 — DNS Brute-force (ShuffleDNS)
 // ─────────────────────────────────────────────────────────────
 
 // stepDNSBruteforce runs ShuffleDNS when a dns-wordlist is provided.
@@ -169,7 +180,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			shufflednsSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "dns_bruteforce", err)
+			c.markStepFailedSafe("dns_bruteforce", err)
 			logger.Warning("ShuffleDNS failed: %v", err)
 		}
 	} else {
@@ -178,6 +189,14 @@ func stepDNSBruteforce(c *Ctx) bool {
 			[]string{c.F.ConsolidatedSubs, c.F.ShufflednsOut},
 			c.F.ConsolidatedSubs,
 		)
+		// Filter out invalid domains and ensure they belong to the target domain
+		_ = utils.FilterFileLines(c.F.ConsolidatedSubs, func(line string) bool {
+			line = strings.ToLower(strings.TrimSpace(line))
+			if utils.ValidateDomain(line) != nil {
+				return false
+			}
+			return line == c.Domain || strings.HasSuffix(line, "."+c.Domain)
+		})
 		if merged, _ := utils.CountFileLines(c.F.ConsolidatedSubs); merged > 0 {
 			logger.FileDebug("consolidated subs after shuffledns merge: %d", merged)
 		}
@@ -204,7 +223,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 8 — Live Web Server Probing (Httpx)
+// Step 10 — Live Web Server Probing (Httpx)
 // ─────────────────────────────────────────────────────────────
 
 // stepHTTPProbing probes all consolidated subdomains with Httpx.
@@ -222,7 +241,7 @@ func stepHTTPProbing(c *Ctx) bool {
 		sources = append(sources, c.F.NaabuOut)
 	}
 	if err := utils.MergeAndDeduplicate(sources, c.F.HttpxInput); err != nil {
-		c.StateMgr.MarkStepFailed(c.State, "http_probing", err)
+		c.markStepFailedSafe("http_probing", err)
 		logger.Error("Failed to prepare Httpx input: %v", err)
 		return c.cancelled()
 	}
@@ -238,7 +257,7 @@ func stepHTTPProbing(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			httpxSkipped = true
 		} else {
-			c.StateMgr.MarkStepFailed(c.State, "http_probing", err)
+			c.markStepFailedSafe("http_probing", err)
 			logger.Error("Httpx failed: %v", err)
 		}
 	}
@@ -257,7 +276,7 @@ func stepHTTPProbing(c *Ctx) bool {
 			logger.Info("  Found %d live hosts%s", count, label)
 			logger.FileDebug("httpx output: %d live hosts -> %s", count, c.F.HttpxOut)
 		} else if httpxSkipped {
-			logger.Info("  Httpx skipped — no live host data from this scan")
+			logger.Info("  Httpx skipped — live hosts unknown")
 		} else {
 			logger.Info("  Found 0 live hosts")
 		}
@@ -268,7 +287,7 @@ func stepHTTPProbing(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 9 — TLS Certificate Analysis (tlsx) + host metadata
+// Step 11 — TLS Certificate Analysis (tlsx) + host metadata
 // ─────────────────────────────────────────────────────────────
 
 // stepTLSAnalysis examines TLS certificates and enriches host metadata.
@@ -294,7 +313,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 			if err == ErrToolSkipped {
 				tlsxSkipped = true
 			} else {
-				c.StateMgr.MarkStepFailed(c.State, "tls_analysis", err)
+				c.markStepFailedSafe("tls_analysis", err)
 				logger.Warning("tlsx failed: %v", err)
 			}
 		}
@@ -346,8 +365,10 @@ func stepTLSAnalysis(c *Ctx) bool {
 										continue
 									}
 									seen[san] = true
-									if (san == c.Domain || strings.HasSuffix(san, "."+c.Domain)) && !existingSubs[san] {
-										newSANs = append(newSANs, san)
+									if utils.ValidateDomain(san) == nil {
+										if (san == c.Domain || strings.HasSuffix(san, "."+c.Domain)) && !existingSubs[san] {
+											newSANs = append(newSANs, san)
+										}
 									}
 								}
 							}
@@ -356,9 +377,9 @@ func stepTLSAnalysis(c *Ctx) bool {
 
 					if len(newSANs) > 0 {
 						logger.SubStep("Re-probing %d new SAN-discovered subdomains...", len(newSANs))
-						sanSubsInputFile := filepath.Join(filepath.Dir(c.F.ConsolidatedSubs), "tls_san_new_subs.txt")
-						sanHttpxOutFile := filepath.Join(filepath.Dir(c.F.ConsolidatedSubs), "tls_san_httpx_out.json")
-						sanHttpxLiveFile := filepath.Join(filepath.Dir(c.F.ConsolidatedSubs), "tls_san_httpx_live.txt")
+						sanSubsInputFile := c.F.TlsSanNewSubs
+						sanHttpxOutFile := c.F.TlsSanHttpxOut
+						sanHttpxLiveFile := c.F.TlsSanHttpxLive
 
 						if fSan, err := os.Create(sanSubsInputFile); err == nil {
 							for _, san := range newSANs {
@@ -395,11 +416,13 @@ func stepTLSAnalysis(c *Ctx) bool {
 								}
 
 								// Append sanHttpxOutFile contents to c.F.HttpxOut
-								if outData, err := os.ReadFile(sanHttpxOutFile); err == nil && len(outData) > 0 {
-									if fOut, err := os.OpenFile(c.F.HttpxOut, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644); err == nil {
-										_, _ = fOut.Write(outData)
+								if fIn, err := os.Open(sanHttpxOutFile); err == nil {
+									fOut, openErr := os.OpenFile(c.F.HttpxOut, os.O_APPEND|os.O_WRONLY, 0644)
+									if openErr == nil {
+										_, _ = io.Copy(fOut, fIn)
 										fOut.Close()
 									}
+									fIn.Close()
 								}
 							}
 
@@ -412,7 +435,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 					logger.Info("  Found %d certificate issues (expired/self-signed/mismatch)%s", certVulns, label)
 				}
 			} else if tlsxSkipped {
-				logger.Info("  Tlsx skipped — no new subdomains or certificate issues found")
+				logger.Info("  Tlsx skipped — new subdomains and cert issues unknown")
 			} else {
 				logger.Info("  Discovered 0 new subdomains and 0 certificate issues")
 			}
@@ -425,20 +448,24 @@ func stepTLSAnalysis(c *Ctx) bool {
 	if c.ScanID > 0 && utils.FileExists(c.F.HttpxOut) {
 		hostTargetCount := collectLiveHostTargetsFromHttpx(c.F.HttpxOut, c.F.HttpxLiveHosts)
 		if hostTargetCount > 0 {
+			// Mark ALL live hosts in DB (uncapped) — accuracy
+			allLive := loadLineSlice(c.F.HttpxLiveHosts, 0)
+			liveHosts := make([]string, 0, len(allLive))
+			for _, h := range allLive {
+				if parsed, err := neturl.Parse(h); err == nil && parsed.Hostname() != "" {
+					liveHosts = append(liveHosts, strings.ToLower(parsed.Hostname()))
+				}
+			}
+			if err := database.UpdateSubdomainsLiveBulk(c.ScanID, liveHosts); err != nil {
+				logger.FileDebug("UpdateSubdomainsLiveBulk failed: %v", err)
+			}
+
 			logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
-			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, 250)
+			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, 0)
 			if count, err := metadata.CollectHostMetadata(c.ScanID, hostTargets, c.Proxy); err != nil {
 				logger.Warning("Host metadata enrichment failed: %v", err)
 			} else if count > 0 {
 				logger.Info("  Stored metadata for %d live hosts", count)
-				// Ensure these hosts are marked live in the subdomains table
-				for _, h := range hostTargets {
-					host := h
-					if parsed, err := neturl.Parse(h); err == nil && parsed.Hostname() != "" {
-						host = strings.ToLower(parsed.Hostname())
-					}
-					database.UpdateSubdomainLive(c.ScanID, host, true, "")
-				}
 			}
 		}
 	}
@@ -447,7 +474,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 10 — Port Scanning (Naabu)
+// Step 9 — Port Scanning (Naabu)
 // ─────────────────────────────────────────────────────────────
 
 // stepPortScanning runs Naabu against all discovered subdomains.
@@ -473,7 +500,7 @@ func stepPortScanning(c *Ctx) bool {
 			if err == ErrToolSkipped {
 				naabuSkipped = true
 			} else {
-				c.StateMgr.MarkStepFailed(c.State, "port_scanning", err)
+				c.markStepFailedSafe("port_scanning", err)
 				logger.Error("Naabu failed: %v", err)
 			}
 		}
@@ -487,7 +514,7 @@ func stepPortScanning(c *Ctx) bool {
 				}
 				logger.Info("  Found %d open ports%s", count, label)
 			} else if naabuSkipped {
-				logger.Info("  Naabu skipped — no open ports found")
+				logger.Info("  Naabu skipped — open ports unknown")
 			} else {
 				logger.Info("  Found 0 open ports")
 			}

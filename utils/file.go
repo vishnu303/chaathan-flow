@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	neturl "net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -59,7 +60,7 @@ func readFileInto(path string, dest map[string]struct{}) error {
 // FileExists checks if a file exists and is not a directory
 func FileExists(filename string) bool {
 	info, err := os.Stat(filename)
-	if os.IsNotExist(err) {
+	if err != nil {
 		return false
 	}
 	return !info.IsDir()
@@ -85,6 +86,8 @@ func CountFileLines(filePath string) (int, error) {
 }
 
 // isNonWhitespace returns true if the slice contains any non-whitespace characters.
+// Note on byte semantics: this checks ASCII spacing bytes (' ', '\t', '\n', '\r')
+// and does not handle multibyte Unicode spacing marks.
 func isNonWhitespace(b []byte) bool {
 	for _, c := range b {
 		if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
@@ -144,7 +147,8 @@ func FilterFileLines(filePath string, keep func(string) bool) error {
 }
 
 // readSanitizedURLLines reads a file and returns sanitized, distinct URLs.
-func readSanitizedURLLines(filePath string) ([]string, error) {
+// If isAllowedHost is not nil, it filters out URLs with hostnames that don't pass the check.
+func readSanitizedURLLines(filePath string, isAllowedHost func(string) bool) ([]string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -171,6 +175,18 @@ func readSanitizedURLLines(filePath string) ([]string, error) {
 			continue
 		}
 
+		// Apply host filter if provided
+		if isAllowedHost != nil {
+			parsed, err := neturl.Parse(line)
+			if err != nil {
+				continue
+			}
+			hostname := parsed.Hostname()
+			if hostname == "" || !isAllowedHost(hostname) {
+				continue
+			}
+		}
+
 		if _, ok := seen[line]; !ok {
 			seen[line] = struct{}{}
 			cleaned = append(cleaned, line)
@@ -186,8 +202,9 @@ func readSanitizedURLLines(filePath string) ([]string, error) {
 // stripping non-URL lines), and writes the result back in place.
 // This prevents downstream tools (Nuclei, Dalfox, httpx) from receiving
 // malformed URLs that contain literal \uXXXX sequences or GoSpider tags.
-func SanitizeURLFile(filePath string) error {
-	cleaned, err := readSanitizedURLLines(filePath)
+// An optional isAllowedHost filter can be provided to exclude out-of-scope hostnames.
+func SanitizeURLFile(filePath string, isAllowedHost func(string) bool) error {
+	cleaned, err := readSanitizedURLLines(filePath, isAllowedHost)
 	if err != nil {
 		return err
 	}
@@ -212,6 +229,17 @@ func UnescapeUnicodeURL(s string) string {
 			// Try to parse 4 hex digits after \u
 			hex := s[i+2 : i+6]
 			if r, ok := ParseHex4(hex); ok {
+				// Check if r is a UTF-16 high surrogate
+				if r >= 0xD800 && r <= 0xDBFF && i+11 < len(s) && s[i+6] == '\\' && s[i+7] == 'u' {
+					hex2 := s[i+8 : i+12]
+					if r2, ok2 := ParseHex4(hex2); ok2 && r2 >= 0xDC00 && r2 <= 0xDFFF {
+						// Decode UTF-16 surrogate pair
+						combined := 0x10000 + ((int32(r) - 0xD800) << 10) + (int32(r2) - 0xDC00)
+						b.WriteRune(rune(combined))
+						i += 11 // skip both \uXXXX and \uYYYY
+						continue
+					}
+				}
 				b.WriteRune(r)
 				i += 5 // skip \uXXXX (loop adds 1)
 				continue

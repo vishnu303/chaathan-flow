@@ -12,8 +12,9 @@ import (
 )
 
 // installMassDNSSection clones, compiles, and installs MassDNS from source.
+// This is done as a multi-step compilation process (Clone -> Compile -> Install).
 func installMassDNSSection(ctx *SetupContext) (installed, skipped, failed int) {
-	progress.Section("MassDNS", "")
+	progress.Section("[6/7] DNS Engines (MassDNS)", "")
 
 	if !ctx.IsForceUpdate() {
 		if _, err := exec.LookPath("massdns"); err == nil {
@@ -27,21 +28,26 @@ func installMassDNSSection(ctx *SetupContext) (installed, skipped, failed int) {
 		return 0, 0, 0
 	}
 
-	tracker := progress.NewTracker(3) // clone, compile, install
+	tracker := progress.NewTracker(3) // 3 stages: clone, compile, and install
 	tracker.RunSpinner()
 
-	goPath := resolveGOPATH()
+	goPath, err := resolveGOPATH() // L10: handle GOPATH error explicitly
+	if err != nil {
+		tracker.StopSpinner()
+		progress.ItemFail("massdns", "failed to resolve GOPATH: "+err.Error())
+		return 0, 0, 1
+	}
 	binDir := filepath.Join(goPath, "bin")
 
 	tempDir, err := os.MkdirTemp("", "massdns_*")
 	if err != nil {
 		tracker.StopSpinner()
-		progress.ItemFail("massdns", "failed to create temp dir")
+		progress.ItemFail("massdns", "failed to create temp directory")
 		return 0, 0, 1
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Step 1 — Clone
+	// Stage 1 — Clone the Git repository
 	tracker.Start("clone")
 	cloneErr := ctx.RunCommand("massdns (clone)", "git", "clone", "--depth", "1",
 		"https://github.com/blechschmidt/massdns.git", tempDir)
@@ -52,7 +58,7 @@ func installMassDNSSection(ctx *SetupContext) (installed, skipped, failed int) {
 	}
 	tracker.Complete("clone")
 
-	// Step 2 — Compile
+	// Stage 2 — Compile the source code
 	tracker.Start("compile")
 	compileErr := ctx.RunCommandInDir(tempDir, "massdns (compile)", "make", "-j", fmt.Sprintf("%d", runtime.NumCPU()))
 	if compileErr != nil {
@@ -62,7 +68,7 @@ func installMassDNSSection(ctx *SetupContext) (installed, skipped, failed int) {
 	}
 	tracker.Complete("compile")
 
-	// Step 3 — Install binary
+	// Stage 3 — Install the compiled binary to $GOPATH/bin
 	tracker.Start("install")
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		tracker.Fail("install", err.Error())

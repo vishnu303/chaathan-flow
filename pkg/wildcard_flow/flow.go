@@ -133,6 +133,11 @@ type Files struct {
 	TakeoverCandidates string
 	ProxyScrapingConfig string // intermediate_files/proxy_scraping_config.toml
 	ProxyPool          string // intermediate_files/proxy_pool.txt
+	TlsSanNewSubs      string
+	TlsSanHttpxOut     string
+	TlsSanHttpxLive    string
+	X8Input            string
+	GfSecretsMetadata  string
 }
 
 // newFiles builds all output paths from the result directory.
@@ -192,6 +197,11 @@ func newFiles(dir string) Files {
 		TakeoverCandidates: j("takeover_candidates.txt"),
 		ProxyScrapingConfig: j("proxy_scraping_config.toml"),
 		ProxyPool:          j("proxy_pool.txt"),
+		TlsSanNewSubs:      j("tls_san_new_subs.txt"),
+		TlsSanHttpxOut:     j("tls_san_httpx_out.json"),
+		TlsSanHttpxLive:    j("tls_san_httpx_live.txt"),
+		X8Input:            j("x8_input.txt"),
+		GfSecretsMetadata:  j("gf_secrets_metadata.txt"),
 	}
 }
 
@@ -316,8 +326,13 @@ func Run(cfg RunConfig) error {
 		"skip_fingerprint":   cfg.SkipFingerprint,
 		"wordlist":           cfg.WordlistPath,
 		"dns_wordlist":       cfg.DNSWordlistPath,
+		"resolvers":          cfg.ResolversPath,
 		"github":             cfg.GitHubToken != "",
 		"auto_proxy":         cfg.AutoProxy,
+		"save_log":           cfg.SaveLog,
+		"custom_cookie":      cfg.CustomCookie,
+		"custom_headers":     cfg.CustomHeaders,
+		"custom_token":       cfg.CustomToken,
 	})
 
 	dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))
@@ -364,7 +379,11 @@ func Run(cfg RunConfig) error {
 		logger.Info("Resuming scan #%d (%.1f%% complete, %d/%d steps done)",
 			scanID, scanState.Progress(), len(scanState.CompletedSteps), scanState.TotalSteps)
 	} else {
-		scanState, _ = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
+		var err error
+		scanState, err = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
+		if err != nil {
+			return fmt.Errorf("cannot create scan state: %w", err)
+		}
 	}
 
 	// ── Runner, ToolBox & Notifier ──────────────────────────
@@ -408,7 +427,9 @@ func Run(cfg RunConfig) error {
 		c.Proxy = cfg.Cfg.General.Proxy
 	}
 
-	_ = c.SetupResolvers()
+	if err := c.SetupResolvers(); err != nil {
+		logger.Warning("SetupResolvers failed: %v", err)
+	}
 
 
 	// Wire notification logging (FileDebug no-ops if --log is inactive)

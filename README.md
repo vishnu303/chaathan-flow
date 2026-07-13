@@ -56,6 +56,8 @@ make clean          # Cleans up local compilation and build artifacts
 | **Execution Logging** | `chaathan wildcard -d target.com --log` |
 | **Company Discovery** | `chaathan company -n "Acme Corporation"` |
 | **Company Discovery** *(Fast)* | `chaathan company -n "Acme Corporation" --skip-metabigor` |
+| **Company Discovery** *(With Logging)* | `chaathan company -n "Acme Corporation" --log` |
+
 
 ### 3. Database Queries & Filtering
 
@@ -149,7 +151,8 @@ chaathan diff <previous_id> <latest_id>
 Chaathan is packaged as a single static binary. It acts as an orchestration engine, launching and managing 27 third-party security utilities.
 
 > [!IMPORTANT]  
-> **Host Requirements:** Linux operating system (tested extensively on Ubuntu, Arch, and CachyOS). Go 1.26 or greater and Git must be pre-installed on the host system.
+> **Host Requirements:** Linux operating system (tested extensively on Ubuntu, Arch, and CachyOS) on AMD64, ARM64, or 386 architectures. Git must be pre-installed.
+> Go 1.26 or greater is required; if missing or outdated, the setup script automatically installs and configures it under `~/.local/go` (requiring no sudo or root privileges).
 > All external scanning engines (such as Amass, Nuclei, Httpx, Dalfox) are dynamically compiled and verified during the `make all` bootstrap process (syntax detailed in the Command Center).
 
 ---
@@ -225,6 +228,13 @@ Allows you to audit deeply nested authenticated application zones (private APIs,
 - **User-Agent Rotation:** Enabled natively by default (`ua_rotation: true` in config). Chaathan dynamically swaps standard command-line user-agent headers for authentic, rotating desktop and mobile browser signatures (Chrome, Firefox, Safari) on every request, evading signature-based blocking.
 - **Proxy Cascading:** Pipe all underlying scanning traffic through an external gateway. Pass SOCKS5 (e.g., Tor) or HTTP (e.g., Burp Suite) configurations to route execution, audit logs, or debugging sessions.
 - **Automated Proxy Rotation (`--auto-proxy`):** Scrapes and validates free proxies once at scan start (Step 1), then starts `mubeng` as a local rotating proxy server for the remainder of the scan. Every outgoing request from every tool uses a different exit IP address — no manual proxy configuration needed.
+
+### 🎯 Target Scope & Domain Filtering
+
+Chaathan supports precise filtering of target domains, IPs, and ports to restrict scanning activities. The scope configuration is defined in the `config.yaml` file under the `scope` block:
+- **Permissive by Default**: Scope configuration is strictly optional. If no scope config is defined, the scan operates in a completely permissive mode (everything is considered in-scope, all ports are allowed, and no IPs are excluded).
+- **Default Regex Anchoring**: When scope patterns (in-scope or out-of-scope) are configured, the engine automatically anchors the patterns as `^(?:PATTERN)$` (unless they already start with `^` or end with `$`) to prevent substring-bypass injection (e.g., an in-scope pattern `example.com` will not match `evil-example.com` or `example.com.attacker.io`).
+- **IP Target Behavior**: When `in_scope` patterns are active, scanning bare-IP targets (targets where the domain is empty) is blocked. If no `in_scope` patterns are defined, bare-IP targets are permitted.
 
 ---
 

@@ -77,11 +77,15 @@ func parseIPOrCIDR(input string) (*net.IPNet, error) {
 	return ipNet, err
 }
 
-// compilePatterns is a helper that compiles a slice of string regex patterns.
+// compilePatterns is a helper that compiles a slice of string regex patterns, anchoring them if not already done.
 func compilePatterns(patterns []string) ([]*regexp.Regexp, error) {
 	regexes := make([]*regexp.Regexp, 0, len(patterns))
 	for _, pattern := range patterns {
-		re, err := regexp.Compile(pattern)
+		p := pattern
+		if !strings.HasPrefix(p, "^") && !strings.HasSuffix(p, "$") {
+			p = "^(?:" + p + ")$"
+		}
+		re, err := regexp.Compile(p)
 		if err != nil {
 			return nil, err
 		}
@@ -222,6 +226,10 @@ func WildcardScope(domain string) (*Scope, error) {
 
 // ValidateTarget checks if a target should be scanned based on scope rules
 func (s *Scope) ValidateTarget(domain string, ip string, port int) bool {
+	if len(s.inScopePatterns) > 0 && domain == "" {
+		return false // IP-only target + scope rules = deny
+	}
+
 	// Check domain scope
 	if domain != "" && !s.IsInScope(domain) {
 		return false

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/database"
@@ -42,8 +43,9 @@ type Step struct {
 }
 
 // WildcardSteps defines the steps in the wildcard workflow.
-// Order matches the 5-phase execution sequence in pkg/wildcard_flow/flow.go:
+// Order matches the 6-phase execution sequence in pkg/wildcard_flow/flow.go:
 //
+//	Phase 0 (Proxy Setup):       proxy_scraping
 //	Phase 1 (Asset Discovery):   passive_enum, active_enum, github_recon, search_engine_recon, js_subdomain_discovery
 //	Phase 2 (Validation):        dns_resolution, dns_bruteforce, port_scanning, http_probing, tls_analysis
 //	Phase 3 (Content Discovery): url_discovery, web_crawling, js_analysis,
@@ -220,11 +222,9 @@ func (state *State) IsStepCompleted(stepName string) bool {
 // GetNextStep returns the next step to execute based on scan type.
 func (state *State) GetNextStep() *Step {
 	steps := StepsForType(state.Type)
-	for i, step := range steps {
+	for _, step := range steps {
 		if !state.IsStepCompleted(step.Name) {
-			if i >= state.CurrentStep {
-				return &step
-			}
+			return &step
 		}
 	}
 	return nil
@@ -232,7 +232,7 @@ func (state *State) GetNextStep() *Step {
 
 // CanResume checks if a scan can be resumed
 func (state *State) CanResume() bool {
-	return state.CurrentStep > 0 && state.CurrentStep < state.TotalSteps
+	return state.CurrentStep < state.TotalSteps
 }
 
 // Progress returns the completion percentage
@@ -243,7 +243,7 @@ func (state *State) Progress() float64 {
 	return float64(len(state.CompletedSteps)) / float64(state.TotalSteps) * 100
 }
 
-// saveState saves the state to disk
+// saveState saves the state to disk atomically using a temporary file
 func (m *Manager) saveState(state *State) error {
 	if err := os.MkdirAll(m.stateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create state directory: %w", err)
@@ -255,8 +255,12 @@ func (m *Manager) saveState(state *State) error {
 	}
 
 	path := m.statePath(state.ScanID)
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write state: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("failed to finalize state: %w", err)
 	}
 
 	return nil
@@ -286,7 +290,7 @@ func (m *Manager) ListResumableScans() ([]State, error) {
 
 	var states []State
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 
@@ -322,7 +326,7 @@ func (m *Manager) CleanupOldStates(maxAge time.Duration) error {
 	cutoff := time.Now().Add(-maxAge)
 
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 
@@ -333,7 +337,7 @@ func (m *Manager) CleanupOldStates(maxAge time.Duration) error {
 
 		if info.ModTime().Before(cutoff) {
 			path := filepath.Join(m.stateDir, entry.Name())
-			os.Remove(path)
+			_ = os.Remove(path)
 		}
 	}
 

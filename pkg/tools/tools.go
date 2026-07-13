@@ -1,18 +1,17 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/config"
+	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/runner"
 )
 
@@ -110,6 +109,7 @@ func (t *ToolBox) WithAPIKeys(keys *config.APIKeysConfig) *ToolBox {
 
 // --- User-Agent rotation pool ---
 
+// TODO(ua-refresh): The User-Agent pool is currently hardcoded and will age over time.
 // RealUserAgents contains common, high-frequency browser User-Agent strings.
 // Rotating through these prevents WAF fingerprinting from static tool UAs
 // like "httpx - Open-source project" or "Nuclei - Open-source project".
@@ -447,6 +447,42 @@ func (t *ToolBox) goSpiderMaxTimeout() time.Duration {
 	return 300 * time.Minute
 }
 
+func (t *ToolBox) amassMaxTimeout() time.Duration {
+	if t.Config != nil && t.Config.Amass.Timeout > 0 {
+		return time.Duration(t.Config.Amass.Timeout) * time.Minute
+	}
+	return 60 * time.Minute
+}
+
+func (t *ToolBox) subfinderMaxTimeout() time.Duration {
+	return 15 * time.Minute
+}
+
+func (t *ToolBox) sublist3rMaxTimeout() time.Duration {
+	return 15 * time.Minute
+}
+
+func (t *ToolBox) gauMaxTimeout() time.Duration {
+	return 30 * time.Minute
+}
+
+func (t *ToolBox) waybackurlsMaxTimeout() time.Duration {
+	return 20 * time.Minute
+}
+
+func (t *ToolBox) x8MaxTimeout() time.Duration {
+	return 120 * time.Minute
+}
+
+func (t *ToolBox) uncoverMaxTimeout() time.Duration {
+	return 10 * time.Minute
+}
+
+func (t *ToolBox) githubSubdomainsMaxTimeout() time.Duration {
+	return 15 * time.Minute
+}
+
+
 // --- Passive Enumeration ---
 
 func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile string) error {
@@ -473,6 +509,7 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 		}
 	}
 
+	opts = append(opts, runner.WithTimeout(t.subfinderMaxTimeout()))
 	_, err := t.Runner.Run(ctx, "subfinder", args, opts...)
 	return err
 }
@@ -481,14 +518,19 @@ func (t *ToolBox) RunAssetfinder(ctx context.Context, domain string, outputFile 
 	args := []string{"--subs-only", domain}
 	output, err := t.Runner.Run(ctx, "assetfinder", args)
 	if strings.TrimSpace(output) != "" {
-		_ = writeToFile(outputFile, output)
+		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
 	}
 	return err
 }
 
+// RunSublist3r runs Sublist3r.
+// Note: Sublist3r is a python tool, and the docker image (alpine) doesn't have python.
+// Therefore, Sublist3r runs natively only; docker runner will fail due to lack of python in the alpine base.
 func (t *ToolBox) RunSublist3r(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"-d", domain, "-t", "50", "-v", "-o", outputFile}
-	_, err := t.Runner.Run(ctx, "sublist3r", args)
+	_, err := t.Runner.Run(ctx, "sublist3r", args, runner.WithTimeout(t.sublist3rMaxTimeout()))
 	return err
 }
 
@@ -499,16 +541,30 @@ func (t *ToolBox) RunAmass(ctx context.Context, domain string, outputFile string
 	if t.Config != nil && t.Config.Amass.Timeout > 0 {
 		args = append(args, "-timeout", strconv.Itoa(t.Config.Amass.Timeout))
 	}
-	_, err := t.Runner.Run(ctx, "amass", args)
+	_, err := t.Runner.Run(ctx, "amass", args, runner.WithTimeout(t.amassMaxTimeout()))
 	return err
 }
 
+// RunAmassIntel runs `amass intel -whois` to discover root domains owned by an org.
+func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile string) error {
+	args := []string{"intel", "-whois", "-d", org, "-o", outputFile}
+	if t.Config != nil && t.Config.Amass.Timeout > 0 {
+		args = append(args, "-timeout", strconv.Itoa(t.Config.Amass.Timeout))
+	}
+	_, err := t.Runner.Run(ctx, "amass", args, runner.WithTimeout(t.amassMaxTimeout()))
+	return err
+}
+
+
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
-	// Use the long --output form: some flag libraries reject "--o" as an
-	// ambiguous/invalid abbreviation, which would silently produce an empty file.
-	args := []string{domain, "--providers", "wayback", "--subs", "--output", outputFile}
+	args := []string{"--providers", "wayback", "--subs", domain}
 	args = t.appendProxy(args, "--proxy")
-	_, err := t.Runner.Run(ctx, "gau", args)
+	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(t.gauMaxTimeout()))
+	if strings.TrimSpace(output) != "" {
+		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
+	}
 	return err
 }
 
@@ -593,14 +649,7 @@ func (t *ToolBox) RunGoSpider(ctx context.Context, inputFile string, outputFile 
 			return writeErr
 		}
 	}
-	if err != nil {
-		// On skip/cancel: preserve any partial output already written
-		if ctx.Err() != nil {
-			return err
-		}
-		return err
-	}
-	return nil
+	return err
 }
 
 func (t *ToolBox) RunKatana(ctx context.Context, inputFile string, outputFile string) error {
@@ -610,9 +659,12 @@ func (t *ToolBox) RunKatana(ctx context.Context, inputFile string, outputFile st
 		"-jc",
 		"-timeout", "10", // seconds per request
 	}
-	args = t.appendUAHeader(args)
-	args = t.appendTLSOpSec(args)
-	args = t.appendCustomHeaders(args, "-H")
+	args = t.appendCommon(args, appendOptions{
+		uaHeader:    true,
+		tlsOpSec:    true,
+		customHFlag: "-H",
+		proxyFlag:   "-proxy",
+	})
 	if t.CustomCookie != "" {
 		args = append(args, "-H", "Cookie: "+t.CustomCookie)
 	}
@@ -623,10 +675,7 @@ func (t *ToolBox) RunKatana(ctx context.Context, inputFile string, outputFile st
 	return err
 }
 
-func (t *ToolBox) RunFfuf(ctx context.Context, url string, wordlist string, outputFile string) error {
-	if wordlist == "" {
-		return fmt.Errorf("ffuf requires a wordlist path")
-	}
+func (t *ToolBox) buildFfufArgs(url string, wordlist string, outputFile string) []string {
 	args := []string{
 		"-u", url,
 		"-w", wordlist,
@@ -645,6 +694,14 @@ func (t *ToolBox) RunFfuf(ctx context.Context, url string, wordlist string, outp
 	if rps := t.globalRPS(); rps > 0 {
 		args = append(args, "-rate", strconv.Itoa(rps))
 	}
+	return args
+}
+
+func (t *ToolBox) RunFfuf(ctx context.Context, url string, wordlist string, outputFile string) error {
+	if wordlist == "" {
+		return fmt.Errorf("ffuf requires a wordlist path")
+	}
+	args := t.buildFfufArgs(url, wordlist, outputFile)
 	_, err := t.Runner.Run(ctx, "ffuf", args, runner.WithTimeout(t.ffufMaxTimeout()))
 	return err
 }
@@ -659,24 +716,7 @@ func (t *ToolBox) RunFfufWithFUZZ(ctx context.Context, baseURL string, wordlist 
 	if !strings.Contains(url, "FUZZ") {
 		url = baseURL + "/FUZZ"
 	}
-	args := []string{
-		"-u", url,
-		"-w", wordlist,
-		"-mc", t.ffufMatchCodes(),
-		"-o", outputFile,
-		"-of", "json",
-		"-t", strconv.Itoa(t.ffufThreads()),
-		"-timeout", strconv.Itoa(t.ffufTimeout()),
-	}
-	args = t.appendCommon(args, appendOptions{
-		uaHeader:    true,
-		customHFlag: "-H",
-		cookieFlag:  "-b",
-		proxyFlag:   "-x",
-	})
-	if rps := t.globalRPS(); rps > 0 {
-		args = append(args, "-rate", strconv.Itoa(rps))
-	}
+	args := t.buildFfufArgs(url, wordlist, outputFile)
 	_, err := t.Runner.Run(ctx, "ffuf", args, runner.WithTimeout(t.ffufMaxTimeout()))
 	return err
 }
@@ -762,97 +802,65 @@ func (t *ToolBox) RunMetabigorNet(ctx context.Context, org string, outputFile st
 	args := []string{"net", "--org", "-v", org}
 	output, err := t.Runner.Run(ctx, "metabigor", args)
 	if strings.TrimSpace(output) != "" {
-		_ = writeToFile(outputFile, output)
+		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
 	}
 	return err
 }
 
 func (t *ToolBox) RunCloudEnum(ctx context.Context, keyword string, outputFile string) error {
-	args := []string{"-k", keyword, "-f", "json", "-l", outputFile}
+	// Note: cloud_enum automatically appends ".json" to the log path specified by -l,
+	// so the actual output file created will be outputFile + ".json".
+	args := []string{"-k", keyword, "-l", outputFile}
 	_, err := t.Runner.Run(ctx, "cloud_enum", args)
 	return err
 }
 
-func runBypassedCmd(ctx context.Context, cmd *exec.Cmd) error {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
 
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		// Wait up to 2 seconds for clean exit
-		select {
-		case err := <-done:
-			if err == nil {
-				return ctx.Err()
-			}
-			return err
-		case <-time.After(2 * time.Second):
-			return ctx.Err()
-		}
-	}
+// TODO(config): Add General.HakrawlerTimeout to config.go and use it here.
+func (t *ToolBox) hakrawlerMaxTimeout() time.Duration {
+	return 30 * time.Minute
 }
 
 func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile string) error {
-	// hakrawler reads target URLs from stdin (echo URL | hakrawler).
-	// We bypass the Runner here so we can wire stdin correctly.
-	// hakrawler is a local binary — no network auth, no Docker concern.
 	args := []string{"-subs", "-u", "-d", "3"}
-	if rps := t.globalRPS(); rps > 0 {
-		// hakrawler has no rate-limit flag; skip silently
+	if t.uaEnabled() {
+		args = append(args, "-h", "User-Agent: "+t.getUA())
 	}
+	args = t.appendProxy(args, "-proxy")
 
-	cmd := exec.CommandContext(ctx, "hakrawler", args...)
-	cmd.Stdin = strings.NewReader(url + "\n")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := runBypassedCmd(ctx, cmd)
-	if stdout.Len() > 0 {
-		_ = writeToFile(outputFile, stdout.String())
-	}
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	output, err := t.Runner.Run(ctx, "hakrawler", args, runner.WithStdin(strings.NewReader(url+"\n")), runner.WithTimeout(t.hakrawlerMaxTimeout()))
+	if strings.TrimSpace(output) != "" {
+		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+			return writeErr
 		}
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%v: %s", err, stderr.String())
-		}
-		return err
 	}
-	return nil
+	return err
 }
 
 // --- URL Discovery ---
 
 // RunWaybackurls fetches historical URLs from Wayback Machine
 func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile string) error {
-	args := []string{domain}
-	output, err := t.Runner.Run(ctx, "waybackurls", args)
+	args := []string{}
+	// waybackurls reads the domain from standard input
+	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")), runner.WithTimeout(t.waybackurlsMaxTimeout()))
 	if strings.TrimSpace(output) != "" {
-		_ = writeToFile(outputFile, output)
+		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
 	}
 	return err
 }
 
 // RunGoLinkFinder extracts endpoints from JavaScript files found at the given URL.
 func (t *ToolBox) RunGoLinkFinder(ctx context.Context, url string, outputFile string) error {
-	args := []string{"-d", url, "-o", outputFile}
+	args := []string{"-d", url, "-o", outputFile, "--silent", "--timeout", "10"}
 	// GoLinkFinder does not have a built-in proxy flag, but if it runs in docker we could pass HTTP_PROXY.
 	// We'll pass it as a runner env var later if needed, but for now it's skipped as there's no native flag.
-	_, err := t.Runner.Run(ctx, "GoLinkFinder", args)
+	_, err := t.Runner.Run(ctx, "GoLinkFinder", args, runner.WithNoRetry())
 	return err
 }
 
@@ -865,9 +873,13 @@ func (t *ToolBox) RunX8(ctx context.Context, inputFile string, outputFile string
 func (t *ToolBox) RunX8WithWordlist(ctx context.Context, inputFile string, outputFile string, wordlist string) error {
 	args := []string{"-u", inputFile, "-o", outputFile, "-O", "json"}
 	if wordlist != "" {
-		args = append(args, "-w", wordlist)
+		if _, err := os.Stat(wordlist); err == nil {
+			args = append(args, "-w", wordlist)
+		}
 	} else if t.General != nil && t.General.Wordlists.Parameters != "" {
-		args = append(args, "-w", t.General.Wordlists.Parameters)
+		if _, err := os.Stat(t.General.Wordlists.Parameters); err == nil {
+			args = append(args, "-w", t.General.Wordlists.Parameters)
+		}
 	}
 
 	args = t.appendX8Headers(args)
@@ -876,12 +888,12 @@ func (t *ToolBox) RunX8WithWordlist(ctx context.Context, inputFile string, outpu
 		args = append(args, "-x", p)
 	}
 
-	_, err := t.Runner.Run(ctx, "x8", args)
+	_, err := t.Runner.Run(ctx, "x8", args, runner.WithTimeout(t.x8MaxTimeout()))
 	return err
 }
 
 // RunHttpxURLCheck live-checks a list of URLs (not subdomains) and outputs only live URLs.
-// Intentionally omits -status-code to prevent format poisoning in downstream gf/nuclei runs.
+// Intentionally omits -status-code to prevent format poisoning in downstream nuclei runs and in-process gf-pattern matching.
 func (t *ToolBox) RunHttpxURLCheck(ctx context.Context, urlsFile string, outputFile string) error {
 	args := []string{
 		"-l", urlsFile,
@@ -907,49 +919,13 @@ func (t *ToolBox) RunHttpxURLCheck(ctx context.Context, urlsFile string, outputF
 	return err
 }
 
-// RunGFPattern filters an input file with a single gf pattern and writes matches.
-//
-// INTENTIONAL RUNNER BYPASS: gf is a local text-filtering utility that reads
-// JSON pattern definitions from the host's ~/.gf/ directory. It does NOT make
-// network requests and is not available as a Docker image. Running it through
-// t.Runner.Run() would fail in Docker mode because the container wouldn't have
-// access to the host's ~/.gf/ patterns. Therefore this function uses
-// exec.CommandContext directly. This is a deliberate design choice, not a bug.
-//
-// Implications:
-//   - gf always runs natively regardless of the runner mode (native/docker)
-//   - Retry logic from the Runner is not applied (gf is a pure text filter — retries are meaningless)
-//   - Verbose logging from the Runner is not applied (gf output is captured into the output file)
-func (t *ToolBox) RunGFPattern(ctx context.Context, pattern string, inputFile string, outputFile string) error {
-	if pattern == "" {
-		return fmt.Errorf("gf requires a pattern name")
-	}
-	if inputFile == "" {
-		return fmt.Errorf("gf requires an input file")
-	}
-
-	cmd := exec.CommandContext(ctx, "gf", pattern, inputFile)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := runBypassedCmd(ctx, cmd)
-	if err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%v: %s", err, stderr.String())
-		}
-		return err
-	}
-	return writeToFile(outputFile, stdout.String())
-}
-
 // RunGithubSubdomains searches GitHub for subdomains
 func (t *ToolBox) RunGithubSubdomains(ctx context.Context, domain string, githubToken string, outputFile string) error {
 	if githubToken == "" {
 		return fmt.Errorf("github-subdomains requires a GitHub token")
 	}
 	args := []string{"-d", domain, "-t", githubToken, "-o", outputFile}
-	_, err := t.Runner.Run(ctx, "github-subdomains", args)
+	_, err := t.Runner.Run(ctx, "github-subdomains", args, runner.WithTimeout(t.githubSubdomainsMaxTimeout()))
 	return err
 }
 
@@ -1002,7 +978,10 @@ func (t *ToolBox) RunDalfox(ctx context.Context, inputFile string, outputFile st
 	if err != nil {
 		return err
 	}
-	return s.Scan(ctx, inputFile, outputFile, ScanOptions{})
+	concurrency := 20 // Default parallel worker threads for XSS fuzzing
+	return s.Scan(ctx, inputFile, outputFile, ScanOptions{
+		Concurrency: concurrency,
+	})
 }
 
 // --- TLS/SSL Analysis ---
@@ -1031,6 +1010,10 @@ func (t *ToolBox) RunTlsx(ctx context.Context, inputFile string, outputFile stri
 // 100% passive — no packets sent to the target.
 // Returns ErrNoAPIKeys if no API keys are configured for any engine.
 func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile string) error {
+	if t.APIKeys != nil && t.APIKeys.Fofa != "" {
+		logger.Warning("FOFA is configured but not wired (missing FofaEmail). Skipping FOFA engine.")
+	}
+
 	engines := t.uncoverEngines()
 	if len(engines) == 0 {
 		return fmt.Errorf("no uncover API keys configured — set shodan/censys/fofa keys in config.yaml")
@@ -1044,12 +1027,33 @@ func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile stri
 		"-e", strings.Join(engines, ","),
 	}
 
-	_, err := t.Runner.Run(ctx, "uncover", args)
+	var opts []runner.Option
+	if t.APIKeys != nil {
+		var envVars []string
+		if t.APIKeys.Shodan != "" {
+			envVars = append(envVars, "SHODAN_API_KEY="+t.APIKeys.Shodan)
+		}
+		if t.APIKeys.CensysID != "" && t.APIKeys.CensysSecret != "" {
+			envVars = append(envVars, "CENSYS_API_ID="+t.APIKeys.CensysID, "CENSYS_API_SECRET="+t.APIKeys.CensysSecret)
+		} else if t.APIKeys.Censys != "" {
+			parts := strings.SplitN(t.APIKeys.Censys, ":", 2)
+			if len(parts) == 2 {
+				envVars = append(envVars, "CENSYS_API_ID="+parts[0], "CENSYS_API_SECRET="+parts[1])
+			}
+		}
+		if len(envVars) > 0 {
+			opts = append(opts, runner.WithEnv(envVars...))
+		}
+	}
+
+	opts = append(opts, runner.WithTimeout(t.uncoverMaxTimeout()))
+	_, err := t.Runner.Run(ctx, "uncover", args, opts...)
 	return err
 }
 
 // uncoverEngines returns only the engines for which API keys are configured.
 // If no keys are set, returns an empty slice so RunUncover can skip gracefully.
+// TODO: Add support for fofa once FofaEmail field is added to APIKeysConfig.
 func (t *ToolBox) uncoverEngines() []string {
 	if t.APIKeys == nil {
 		return nil
@@ -1060,9 +1064,6 @@ func (t *ToolBox) uncoverEngines() []string {
 	}
 	if t.APIKeys.Censys != "" || (t.APIKeys.CensysID != "" && t.APIKeys.CensysSecret != "") {
 		engines = append(engines, "censys")
-	}
-	if t.APIKeys.Fofa != "" {
-		engines = append(engines, "fofa")
 	}
 	return engines
 }
@@ -1119,11 +1120,16 @@ func (t *ToolBox) RunNucleiWAF(ctx context.Context, inputFile string, outputFile
 
 // Helper
 func writeToFile(path string, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	_, err = f.WriteString(content)
-	return err
+	if _, err = f.WriteString(content); err != nil {
+		return err
+	}
+	return f.Sync()
 }

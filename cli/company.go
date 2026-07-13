@@ -26,7 +26,6 @@ var (
 	skipAmassIntel   bool
 	companyProxy     string
 	companyRateLimit int
-	companyAutoProxy bool
 )
 
 // ─────────────────────────────────────────────────────────────
@@ -54,7 +53,7 @@ func init() {
 	companyCmd.Flags().BoolVar(&skipCloudEnum, "skip-cloud-enum", false, "Skip Cloud Enum cloud enumeration")
 	companyCmd.Flags().StringVar(&companyProxy, "proxy", "", "Proxy URL for target-facing tools (e.g., socks5://127.0.0.1:9050)")
 	companyCmd.Flags().IntVar(&companyRateLimit, "rate-limit", 0, "Global rate limit (requests/sec) for all tools (0 = per-tool defaults)")
-	companyCmd.Flags().BoolVar(&companyAutoProxy, "auto-proxy", false, "Auto-scrape free proxies, validate against target, and rotate IPs during scan")
+	companyCmd.Flags().BoolVar(&saveLog, "log", false, "Save scan output to ~/.chaathan/logs/ (plain text, ANSI stripped)")
 	companyCmd.MarkFlagRequired("name")
 	rootCmd.AddCommand(companyCmd)
 }
@@ -93,6 +92,7 @@ func runCompany(cmd *cobra.Command, args []string) {
 		SkipMetabigor:  skipMetabigor,
 		SkipAmassIntel: skipAmassIntel,
 		SkipCloudEnum:  skipCloudEnum,
+		SaveLog:        saveLog,
 	}); err != nil {
 		logger.Error("Company scan failed: %v", err)
 	}

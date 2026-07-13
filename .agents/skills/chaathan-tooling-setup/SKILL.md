@@ -32,6 +32,7 @@ All installers within `pkg/setup/` (e.g., `go_tools.go`, `python_tools.go`, `mas
 1. **Piped Output Wrappers:** Run command executions inside setup routines via `SetupContext.RunCommand` or `SetupContext.RunCommandInDir`. These helpers automatically capture standard output/error, writing them to `~/.chaathan/setup.log`.
 2. **Never hardcode paths:** Install Go tools via `go install <url>@latest`, letting Go resolve path environments. Install Python utilities via custom cloned directories or pip installations matching config paths.
 3. **Prerequisite Checkers:** System utilities (such as Python pip, git, make, gcc compiler tools) must be checked in `prereqs.go` before beginning binary compilations.
+4. **Go Runtime Provisioning:** If the host Go version is missing or older than 1.26, the setup package automatically installs Go to `~/.local/go` (no `sudo` required), validates the download archive using its official SHA256 checksum file, and registers the local path. The setup process returns a non-zero exit code on terminal failures.
 
 ---
 
@@ -66,7 +67,7 @@ If an external installation fails:
 ### Verification Pipeline:
 ```bash
 # Validate installer packages
-wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./pkg/setup/..."
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./test/pkg/setup/..."
 
 # Compile binary verification
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go build -buildvcs=false -o chaathan ."

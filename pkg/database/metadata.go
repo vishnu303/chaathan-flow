@@ -1,6 +1,7 @@
 package database
 
 import (
+	"database/sql"
 	"strings"
 	"time"
 )
@@ -47,6 +48,9 @@ type URLMetadata struct {
 }
 
 func UpsertHostMetadata(scanID int64, meta HostMetadata) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	meta.Host = strings.ToLower(strings.TrimSpace(meta.Host))
 	_, err := DB.Exec(
 		`INSERT INTO host_metadata (
@@ -103,6 +107,9 @@ func UpsertHostMetadata(scanID int64, meta HostMetadata) error {
 }
 
 func UpsertURLMetadata(scanID int64, meta URLMetadata) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	meta.URL = strings.TrimSpace(meta.URL)
 	meta.Host = strings.ToLower(strings.TrimSpace(meta.Host))
 	_, err := DB.Exec(
@@ -158,6 +165,9 @@ func UpsertURLMetadata(scanID int64, meta URLMetadata) error {
 }
 
 func GetHostMetadata(scanID int64) ([]HostMetadata, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT scan_id, host, base_url, headers_json, has_csp, has_cache_headers,
 		        login_surface, response_bytes, ssl_expired, ssl_self_signed,
@@ -175,11 +185,12 @@ func GetHostMetadata(scanID int64) ([]HostMetadata, error) {
 	var metas []HostMetadata
 	for rows.Next() {
 		var meta HostMetadata
+		var baseURLNull, headersJSONNull sql.NullString
 		if err := rows.Scan(
 			&meta.ScanID,
 			&meta.Host,
-			&meta.BaseURL,
-			&meta.HeadersJSON,
+			&baseURLNull,
+			&headersJSONNull,
 			&meta.HasCSP,
 			&meta.HasCacheHeaders,
 			&meta.LoginSurface,
@@ -198,6 +209,12 @@ func GetHostMetadata(scanID int64) ([]HostMetadata, error) {
 		); err != nil {
 			return nil, err
 		}
+		if baseURLNull.Valid {
+			meta.BaseURL = baseURLNull.String
+		}
+		if headersJSONNull.Valid {
+			meta.HeadersJSON = headersJSONNull.String
+		}
 		metas = append(metas, meta)
 	}
 	if err := rows.Err(); err != nil {
@@ -208,6 +225,9 @@ func GetHostMetadata(scanID int64) ([]HostMetadata, error) {
 }
 
 func GetURLMetadata(scanID int64) ([]URLMetadata, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT scan_id, url, host, headers_json, has_csp, has_cache_headers,
 		        login_surface, response_bytes, form_count, has_file_upload,
@@ -223,11 +243,12 @@ func GetURLMetadata(scanID int64) ([]URLMetadata, error) {
 	var metas []URLMetadata
 	for rows.Next() {
 		var meta URLMetadata
+		var hostNull, headersJSONNull sql.NullString
 		if err := rows.Scan(
 			&meta.ScanID,
 			&meta.URL,
-			&meta.Host,
-			&meta.HeadersJSON,
+			&hostNull,
+			&headersJSONNull,
 			&meta.HasCSP,
 			&meta.HasCacheHeaders,
 			&meta.LoginSurface,
@@ -240,6 +261,12 @@ func GetURLMetadata(scanID int64) ([]URLMetadata, error) {
 			&meta.UpdatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if hostNull.Valid {
+			meta.Host = hostNull.String
+		}
+		if headersJSONNull.Valid {
+			meta.HeadersJSON = headersJSONNull.String
 		}
 		metas = append(metas, meta)
 	}

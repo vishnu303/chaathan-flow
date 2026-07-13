@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -148,6 +147,9 @@ func (n *Notifier) ShouldNotify(severity string) bool {
 
 // SendFinding sends a notification about a finding
 func (n *Notifier) SendFinding(finding Finding) error {
+	if finding.Timestamp.IsZero() {
+		finding.Timestamp = time.Now()
+	}
 	if !n.ShouldNotify(finding.Severity) {
 		n.logf("notify_finding SKIPPED [%s] %s (below min_severity %s)", finding.Severity, finding.Name, n.cfg.MinSeverity)
 		return nil
@@ -242,6 +244,15 @@ func (n *Notifier) SendScanComplete(scan ScanComplete) error {
 		}
 	}
 
+	if n.cfg.WebhookURL != "" {
+		if err := n.sendWebhookScanComplete(scan); err != nil {
+			n.logf("notify_scan_complete FAILED webhook: %v", err)
+			errors = append(errors, fmt.Sprintf("webhook: %v", err))
+		} else {
+			n.logf("notify_scan_complete OK webhook")
+		}
+	}
+
 	if len(errors) > 0 {
 		return fmt.Errorf("notification errors: %s", strings.Join(errors, "; "))
 	}
@@ -251,6 +262,9 @@ func (n *Notifier) SendScanComplete(scan ScanComplete) error {
 
 // SendStepComplete sends a notification when a workflow step completes
 func (n *Notifier) SendStepComplete(step StepComplete) error {
+	if step.Timestamp.IsZero() {
+		step.Timestamp = time.Now()
+	}
 	if !n.cfg.Enabled || !n.cfg.StepComplete {
 		n.logf("notify_step_complete SKIPPED step=%s (%d/%d) target=%s (notifications/step_complete disabled)", step.StepName, step.StepNumber, step.TotalSteps, step.Target)
 		return nil
@@ -610,6 +624,15 @@ func (n *Notifier) sendWebhookStepComplete(step StepComplete) error {
 	return n.postJSON(n.cfg.WebhookURL, payload)
 }
 
+func (n *Notifier) sendWebhookScanComplete(scan ScanComplete) error {
+	payload := map[string]any{
+		"event": "scan_complete",
+		"scan":  scan,
+	}
+
+	return n.postJSON(n.cfg.WebhookURL, payload)
+}
+
 // Helper functions
 
 // postJSON sends a JSON payload with retry logic for transient failures.
@@ -627,7 +650,7 @@ func (n *Notifier) postJSON(url string, payload any) error {
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(attempt) * time.Second
-			log.Printf("[WARN] notification retry %d/%d after %v", attempt, maxRetries, backoff)
+			n.logf("[WARN] notification retry %d/%d after %v", attempt, maxRetries, backoff)
 			time.Sleep(backoff)
 		}
 

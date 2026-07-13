@@ -17,14 +17,25 @@ import (
 // 3. /usr/share/wordlists/seclists
 // If not, it clones the SecLists repo to ~/.chaathan/seclists using git.
 func installSecListsSection(ctx *SetupContext) (installed, skipped, failed int) {
-	progress.Section("SecLists", "")
+	progress.Section("[7/7] Wordlists (SecLists)", "")
 
 	localPath := filepath.Join(paths.ChaathanHome(), "seclists")
 	archPath := "/usr/share/seclists"
 	debianPath := "/usr/share/wordlists/seclists"
 
 	if !ctx.IsForceUpdate() {
-		for _, path := range []string{localPath, archPath, debianPath} {
+		home, _ := os.UserHomeDir()
+		candidates := []string{
+			localPath,
+			filepath.Join(paths.ChaathanHome(), "SecLists"),
+			filepath.Join(home, "seclists"),
+			filepath.Join(home, "SecLists"),
+			archPath,
+			"/usr/share/SecLists",
+			debianPath,
+			"/usr/share/wordlists/SecLists",
+		}
+		for _, path := range candidates {
 			if info, err := os.Stat(path); err == nil && info.IsDir() {
 				// Check for the Discovery subfolder
 				discPath := filepath.Join(path, "Discovery")
@@ -50,6 +61,17 @@ func installSecListsSection(ctx *SetupContext) (installed, skipped, failed int) 
 	// For force updates, remove the existing local directory first
 	if ctx.IsForceUpdate() {
 		_ = os.RemoveAll(localPath)
+		// Warn if system-wide copies exist (M7)
+		for _, path := range []string{archPath, debianPath} {
+			if info, err := os.Stat(path); err == nil && info.IsDir() {
+				progress.ItemInfo(fmt.Sprintf("Warning: System SecLists copy at %s is left untouched by update. Run apt/pacman update to update it.", path))
+			}
+		}
+	} else {
+		// Clean up any incomplete/broken previous clones in localPath so git clone can succeed
+		if _, err := os.Stat(localPath); err == nil {
+			_ = os.RemoveAll(localPath)
+		}
 	}
 
 	err := ctx.RunCommand("seclists (clone)", "git", "clone", "--depth", "1",

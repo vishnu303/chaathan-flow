@@ -1,8 +1,10 @@
-package wildcard_flow
+package wildcard_flow_test
 
 import (
 	"reflect"
 	"testing"
+
+	"github.com/vishnu303/chaathan/pkg/wildcard_flow"
 )
 
 func TestFilterAndDeduplicateHosts(t *testing.T) {
@@ -63,7 +65,7 @@ func TestFilterAndDeduplicateHosts(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := filterAndDeduplicateHosts(tc.input)
+			got := wildcard_flow.FilterAndDeduplicateHosts(tc.input)
 			// Deduplication order is sorted, so we compare got vs expected.
 			// The expected slice should also be sorted.
 			if len(got) != len(tc.expected) {

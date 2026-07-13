@@ -27,7 +27,6 @@ var (
 	skipDalfox        bool
 	skipUncover       bool
 	skipTlsx          bool
-	skipArjun         bool // legacy alias
 	skipX8            bool
 	skipShuffleDNS    bool
 	skipHakrawler     bool
@@ -111,8 +110,6 @@ func init() {
 	wildcardCmd.Flags().BoolVar(&skipUncover, "skip-uncover", false, "Skip search engine dorking (Uncover)")
 	wildcardCmd.Flags().BoolVar(&skipTlsx, "skip-tlsx", false, "Skip TLS certificate analysis")
 	wildcardCmd.Flags().BoolVar(&skipX8, "skip-x8", false, "Skip x8 parameter discovery")
-	wildcardCmd.Flags().BoolVar(&skipArjun, "skip-arjun", false, "Skip x8 parameter discovery (legacy alias)")
-	_ = wildcardCmd.Flags().MarkHidden("skip-arjun")
 	wildcardCmd.Flags().BoolVar(&skipShuffleDNS, "skip-shuffledns", false, "Skip ShuffleDNS brute-force")
 	wildcardCmd.Flags().BoolVar(&skipHakrawler, "skip-hakrawler", false, "Skip Hakrawler JS crawling")
 	wildcardCmd.Flags().BoolVar(&skipFingerprint, "skip-fingerprint", false, "Skip Technology & WAF Fingerprinting step")
@@ -193,7 +190,7 @@ func runWildcard(cmd *cobra.Command, args []string) {
 		SkipDalfox:        skipDalfox,
 		SkipUncover:       skipUncover,
 		SkipTlsx:          skipTlsx,
-		SkipX8:            skipX8 || skipArjun,
+		SkipX8:            skipX8,
 		SkipShuffleDNS:    skipShuffleDNS,
 		SkipHakrawler:     skipHakrawler,
 		SkipFingerprint:   skipFingerprint,

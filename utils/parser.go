@@ -1,44 +1,140 @@
 package utils
 
+// Note: Per-line json.Unmarshal is used for file parsers. While sequential
+// unmarshaling incurs some allocation overhead, it is simple and robust. Defer
+// more complex optimizations (e.g., json.RawMessage or custom scanning) unless
+// profiling shows it is a hot performance path.
+
 import (
 	"bufio"
 	"encoding/json"
 	"net"
 	neturl "net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/logger"
 )
 
 // maxScanBufferSize is the buffer size limit used when scanning large output files (4MB)
 const maxScanBufferSize = 4 * 1024 * 1024
 
-// ParseSubdomainsFile reads a file with one subdomain per line and adds to database
+// getTargetDomain gets the target domain of a scan from database if it's a valid domain
+func getTargetDomain(scanID int64) string {
+	if scanID <= 0 {
+		return ""
+	}
+	scan, err := database.GetScan(scanID)
+	if err != nil || scan == nil {
+		return ""
+	}
+	t := strings.ToLower(strings.TrimSpace(scan.Target))
+	if ValidateDomain(t) == nil {
+		return t
+	}
+	return ""
+}
+
+// isDomainInScope checks if a given domain/hostname is within the target domain scope
+func isDomainInScope(domain, targetDomain string) bool {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if targetDomain == "" {
+		return ValidateDomain(domain) == nil
+	}
+	return domain == targetDomain || strings.HasSuffix(domain, "."+targetDomain)
+}
+
+// isURLInScope checks if a given URL is within the target domain scope
+func isURLInScope(urlStr, targetDomain string) bool {
+	if targetDomain == "" {
+		return true
+	}
+	u, err := neturl.Parse(urlStr)
+	if err != nil {
+		return false
+	}
+	return isDomainInScope(u.Hostname(), targetDomain)
+}
+
+// extractDomainsFromLine extracts potential domains from a line (including Amass relation lines)
+func extractDomainsFromLine(line string) []string {
+	var found []string
+	
+	// Remove common amass suffixes
+	line = strings.ReplaceAll(line, " (FQDN)", "")
+	line = strings.ReplaceAll(line, "(FQDN)", "")
+	line = strings.ReplaceAll(line, " (IPAddress)", "")
+	line = strings.ReplaceAll(line, "(IPAddress)", "")
+
+	words := strings.Fields(line)
+	for _, w := range words {
+		w = strings.Trim(w, ",.;:()<>\"'")
+		
+		// If it looks like a URL, extract the hostname
+		if strings.HasPrefix(strings.ToLower(w), "http://") || strings.HasPrefix(strings.ToLower(w), "https://") {
+			if u, err := neturl.Parse(w); err == nil && u.Hostname() != "" {
+				w = u.Hostname()
+			}
+		}
+
+		if ValidateDomain(w) == nil {
+			found = append(found, w)
+		}
+	}
+	return found
+}
+
+// ParseSubdomainsFile reads a file with one subdomain per line, extracts valid domains
+// (including from Amass relationship lines), inserts them into the database,
+// and rewrites the file in-place to only contain the unique, validated subdomains.
 func ParseSubdomainsFile(scanID int64, filePath, source string) (int, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	var domains []string
+	seen := make(map[string]bool)
+
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, maxScanBufferSize)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line != "" && !strings.HasPrefix(line, "#") {
-			domains = append(domains, line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Extract any valid domains from the line (e.g. Amass graph relation lines)
+		extracted := extractDomainsFromLine(line)
+		for _, d := range extracted {
+			if !isDomainInScope(d, targetDomain) {
+				continue
+			}
+			dLower := strings.ToLower(d)
+			if !seen[dLower] {
+				seen[dLower] = true
+				domains = append(domains, d)
+			}
 		}
 	}
+	file.Close() // Close before rewrite
 
 	if err := scanner.Err(); err != nil {
 		return 0, err
 	}
 
-	if len(domains) > 0 {
+	// Rewrite the file in-place with clean, sorted subdomains
+	slices.Sort(domains)
+	if err := writeLines(filePath, domains); err != nil {
+		logger.Warning("failed to rewrite subdomains file %s: %v", filePath, err)
+	}
+
+	if len(domains) > 0 && scanID > 0 {
 		if err := database.AddSubdomains(scanID, domains, source); err != nil {
 			return 0, err
 		}
@@ -67,6 +163,7 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 	}
 	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	count := 0
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -82,6 +179,12 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 			continue
 		}
 
+		if targetDomain != "" {
+			if !isURLInScope(result.URL, targetDomain) {
+				continue
+			}
+		}
+
 		tech := ""
 		if len(result.Technologies) > 0 {
 			techJSON, _ := json.Marshal(result.Technologies)
@@ -89,16 +192,35 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 		}
 
 		if err := database.AddURL(scanID, result.URL, result.StatusCode, result.ContentType, result.Title, tech, "httpx"); err != nil {
+			logger.FileDebug("parser: AddURL failed for %s: %v", result.URL, err)
 			continue
 		}
 
 		// Also mark subdomain as live
-		host := result.Host
-		if host == "" {
-			host = result.Input
+		subdomain := ""
+		if parsed, err := neturl.Parse(result.URL); err == nil && parsed.Hostname() != "" {
+			subdomain = strings.ToLower(parsed.Hostname())
+		} else {
+			subdomain = strings.ToLower(result.Input)
+			if idx := strings.LastIndex(subdomain, ":"); idx != -1 {
+				subdomain = subdomain[:idx]
+			}
 		}
-		if host != "" {
-			database.UpdateSubdomainLive(scanID, host, true, "")
+
+		if subdomain != "" {
+			ipAddr := result.Host
+			// Remove port if present in IP address
+			if idx := strings.LastIndex(ipAddr, ":"); idx != -1 {
+				// Ensure it's not a bare IPv6 address without brackets
+				if !strings.Contains(ipAddr, "]") && strings.Count(ipAddr, ":") == 1 {
+					ipAddr = ipAddr[:idx]
+				} else if strings.Contains(ipAddr, "]") {
+					ipAddr = ipAddr[:idx]
+				}
+			}
+			if err := database.UpdateSubdomainLive(scanID, subdomain, true, ipAddr); err != nil {
+				logger.FileDebug("parser: UpdateSubdomainLive failed for %s: %v", subdomain, err)
+			}
 		}
 
 		count++
@@ -154,6 +276,13 @@ func ParseNucleiOutput(scanID int64, filePath string) (int, error) {
 		if len(result.Extracted) > 0 {
 			evidence = strings.Join(result.Extracted, "\n")
 		}
+		if result.ExtractorName != "" {
+			if evidence != "" {
+				evidence = "Extractor: " + result.ExtractorName + "\n" + evidence
+			} else {
+				evidence = "Extractor: " + result.ExtractorName
+			}
+		}
 
 		name := result.Info.Name
 		if name == "" {
@@ -181,10 +310,12 @@ func ParseNucleiOutput(scanID int64, filePath string) (int, error) {
 }
 
 // NaabuResult represents a line from naabu output
+// NaabuResult represents a line from naabu output
 type NaabuResult struct {
-	Host string `json:"host"`
-	IP   string `json:"ip"`
-	Port int    `json:"port"`
+	Host     string `json:"host"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
 }
 
 // FfufResult represents a single ffuf discovery item.
@@ -215,6 +346,7 @@ func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
 
 		var host string
 		var port int
+		var proto string
 
 		// Try JSON first
 		var result NaabuResult
@@ -224,6 +356,7 @@ func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
 				host = result.IP
 			}
 			port = result.Port
+			proto = result.Protocol
 		} else {
 			// Try host:port format using net.SplitHostPort to support IPv6 correctly
 			if h, pStr, err := net.SplitHostPort(line); err == nil {
@@ -234,8 +367,13 @@ func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
 			}
 		}
 
+		if proto == "" {
+			proto = "tcp"
+		}
+
 		if host != "" && port > 0 {
-			if err := database.AddPort(scanID, host, port, "tcp", ""); err != nil {
+			if err := database.AddPort(scanID, host, port, proto, ""); err != nil {
+				logger.FileDebug("parser: AddPort failed for %s:%d: %v", host, port, err)
 				continue
 			}
 			count++
@@ -253,6 +391,7 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 	}
 	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	count := 0
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -273,6 +412,12 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 			url = parts[1]
 		}
 
+		if targetDomain != "" {
+			if !isURLInScope(url, targetDomain) {
+				continue
+			}
+		}
+
 		if err := database.AddEndpoint(scanID, url, method, source); err != nil {
 			continue
 		}
@@ -290,6 +435,7 @@ func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 	}
 	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	count := 0
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -298,6 +444,12 @@ func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
+		}
+
+		if targetDomain != "" {
+			if !isURLInScope(line, targetDomain) {
+				continue
+			}
 		}
 
 		if err := database.AddURL(scanID, line, 0, "", "", "", source); err != nil {
@@ -320,6 +472,7 @@ func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 	}
 	defer file.Close()
 
+	targetDomain := getTargetDomain(scanID)
 	seen := make(map[string]bool)
 	count := 0
 	scanner := bufio.NewScanner(file)
@@ -338,6 +491,13 @@ func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 		if url == "" || seen[url] {
 			continue
 		}
+
+		if targetDomain != "" {
+			if !isURLInScope(url, targetDomain) {
+				continue
+			}
+		}
+
 		seen[url] = true
 		if err := database.AddURL(scanID, url, 0, "", "", "", source); err != nil {
 			continue
@@ -439,47 +599,64 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 		}
 		for _, san := range sans {
 			san = strings.TrimPrefix(san, "*.")
-			if !seenSANs[san] && (san == targetDomain || strings.HasSuffix(san, "."+targetDomain)) {
-				seenSANs[san] = true
-				database.AddSubdomains(scanID, []string{san}, "tlsx-san")
-				newSubs++
+			if ValidateDomain(san) == nil {
+				if targetDomain != "" && !seenSANs[san] && (san == targetDomain || strings.HasSuffix(san, "."+targetDomain)) {
+					seenSANs[san] = true
+					if err := database.AddSubdomains(scanID, []string{san}, "tlsx-san"); err != nil {
+						logger.FileDebug("parser: AddSubdomains failed for %s: %v", san, err)
+					} else {
+						newSubs++
+					}
+				}
 			}
 		}
 
 		// Flag expired certificates
 		if result.Expired {
-			database.AddVulnerability(
+			err := database.AddVulnerability(
 				scanID, result.Host, "", "expired-ssl",
 				"Expired SSL Certificate",
 				"medium",
 				"Certificate expired: "+result.NotAfter,
 				"", "Issuer: "+result.Issuer,
 			)
-			vulns++
+			if err != nil {
+				logger.FileDebug("parser: AddVulnerability failed for %s: %v", result.Host, err)
+			} else {
+				vulns++
+			}
 		}
 
 		// Flag self-signed certificates
 		if result.SelfSigned {
-			database.AddVulnerability(
+			err := database.AddVulnerability(
 				scanID, result.Host, "", "self-signed-ssl",
 				"Self-Signed SSL Certificate",
 				"low",
 				"Self-signed certificate detected",
 				"", "CN: "+result.SubjectCN,
 			)
-			vulns++
+			if err != nil {
+				logger.FileDebug("parser: AddVulnerability failed for %s: %v", result.Host, err)
+			} else {
+				vulns++
+			}
 		}
 
 		// Flag mismatched certificates
 		if result.MisMatched {
-			database.AddVulnerability(
+			err := database.AddVulnerability(
 				scanID, result.Host, "", "ssl-mismatch",
 				"SSL Certificate Hostname Mismatch",
 				"medium",
 				"Certificate CN/SAN does not match hostname",
 				"", "CN: "+result.SubjectCN,
 			)
-			vulns++
+			if err != nil {
+				logger.FileDebug("parser: AddVulnerability failed for %s: %v", result.Host, err)
+			} else {
+				vulns++
+			}
 		}
 
 		host := NormalizeHostValue(result.Host)
@@ -500,15 +677,16 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 
 // UncoverResult represents a line from uncover JSON output
 type UncoverResult struct {
-	Host   string `json:"host"`
-	IP     string `json:"ip"`
-	Port   int    `json:"port"`
-	URL    string `json:"url"`
-	Source string `json:"source"`
+	Host     string `json:"host"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port"`
+	URL      string `json:"url"`
+	Source   string `json:"source"`
+	Protocol string `json:"protocol"`
 }
 
 // ParseUncoverOutput parses uncover JSON output and extracts subdomains/ports.
-func ParseUncoverOutput(scanID int64, filePath string) (subs int, ports int, err error) {
+func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (subs int, ports int, err error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, 0, err
@@ -537,14 +715,26 @@ func ParseUncoverOutput(scanID int64, filePath string) (subs int, ports int, err
 		}
 		if host != "" && !seenHosts[host] {
 			seenHosts[host] = true
-			database.AddSubdomains(scanID, []string{host}, "uncover-"+result.Source)
-			subs++
+			if ValidateDomain(host) == nil && (targetDomain == "" || host == targetDomain || strings.HasSuffix(host, "."+targetDomain)) {
+				if err := database.AddSubdomains(scanID, []string{host}, "uncover-"+result.Source); err != nil {
+					logger.FileDebug("parser: AddSubdomains failed for %s: %v", host, err)
+				} else {
+					subs++
+				}
+			}
 		}
 
 		// Add port if found
 		if result.Port > 0 && host != "" {
-			database.AddPort(scanID, host, result.Port, "tcp", "")
-			ports++
+			proto := result.Protocol
+			if proto == "" {
+				proto = "tcp"
+			}
+			if err := database.AddPort(scanID, host, result.Port, proto, ""); err != nil {
+				logger.FileDebug("parser: AddPort failed for %s:%d: %v", host, result.Port, err)
+			} else {
+				ports++
+			}
 		}
 	}
 
@@ -644,14 +834,29 @@ func ParseDalfoxOutput(scanID int64, filePath string) (int, error) {
 			}
 			count++
 		} else if strings.Contains(line, "[POC]") || strings.Contains(line, "[V]") {
-			// Text format fallback
+			// Text format fallback: extract host/URL from line
+			var targetURL string
+			var host string
+			
+			// Find token starting with http:// or https://
+			if idx := strings.Index(line, "http://"); idx != -1 {
+				targetURL = extractURLFromToken(line[idx:])
+			} else if idx := strings.Index(line, "https://"); idx != -1 {
+				targetURL = extractURLFromToken(line[idx:])
+			}
+			
+			if targetURL != "" {
+				host = NormalizeHostValue(targetURL)
+			}
+
 			err := database.AddVulnerability(
-				scanID, line, "", "xss",
+				scanID, host, targetURL, "xss",
 				"XSS Finding", "medium",
 				"Potential XSS detected by Dalfox",
 				"", line,
 			)
 			if err != nil {
+				logger.FileDebug("parser: AddVulnerability failed for %s: %v", host, err)
 				continue
 			}
 			count++
@@ -687,4 +892,15 @@ func IsWeakTLSVersion(version string) bool {
 		strings.Contains(version, "tls11") ||
 		strings.Contains(version, "tls1.1") ||
 		strings.Contains(version, "ssl3")
+}
+
+func extractURLFromToken(s string) string {
+	endIdx := len(s)
+	for i, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == ']' || r == '[' || r == '"' || r == '\'' || r == '`' || r == '>' || r == '<' {
+			endIdx = i
+			break
+		}
+	}
+	return s[:endIdx]
 }

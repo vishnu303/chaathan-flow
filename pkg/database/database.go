@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,11 +11,15 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 )
 
 // DB is the global database connection
 var DB *sql.DB
+
+// ErrDBNotInitialized is returned when a database operation is attempted but the database has not been initialized.
+var ErrDBNotInitialized = fmt.Errorf("database not initialized")
 
 // Models
 
@@ -53,6 +58,7 @@ type URL struct {
 	ID          int64     `json:"id"`
 	ScanID      int64     `json:"scan_id"`
 	URL         string    `json:"url"`
+	Host        string    `json:"host"`
 	StatusCode  int       `json:"status_code,omitempty"`
 	ContentType string    `json:"content_type,omitempty"`
 	Title       string    `json:"title,omitempty"`
@@ -79,6 +85,7 @@ type Endpoint struct {
 	ID        int64     `json:"id"`
 	ScanID    int64     `json:"scan_id"`
 	URL       string    `json:"url"`
+	Host      string    `json:"host"`
 	Method    string    `json:"method,omitempty"`
 	Source    string    `json:"source"` // golinkfinder, katana, gospider, etc.
 	CreatedAt time.Time `json:"created_at"`
@@ -109,6 +116,9 @@ func Initialize(dbPath string) error {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
 
+	// Best-effort database file permissions Chmod to 0600
+	_ = os.Chmod(dbPath, 0600)
+
 	// Best-effort schema migrations — won't fail init if data constraints
 	// can't be met on an existing database (e.g. pre-existing duplicates).
 	runMigrations()
@@ -116,6 +126,7 @@ func Initialize(dbPath string) error {
 	return nil
 }
 
+// Foreign-key constraints are declared for documentation but NOT enforced (PRAGMA foreign_keys is off by default in SQLite and not enabled here). DeleteScan performs explicit child-first deletes. Do not rely on FK enforcement for orphan prevention.
 func createTables() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS scans (
@@ -157,6 +168,7 @@ func createTables() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		scan_id INTEGER NOT NULL,
 		url TEXT NOT NULL,
+		host TEXT,
 		status_code INTEGER,
 		content_type TEXT,
 		title TEXT,
@@ -229,6 +241,7 @@ func createTables() error {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		scan_id INTEGER NOT NULL,
 		url TEXT NOT NULL,
+		host TEXT,
 		method TEXT,
 		source TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -267,26 +280,32 @@ func createTables() error {
 // on existing databases where constraints cannot be satisfied (e.g. prior
 // duplicate vulnerabilities). All errors are intentionally swallowed so that
 // existing installs keep working without a hard migration step.
+//
+// NOTE: migrations are additive-only (IF NOT EXISTS + ignored ADD COLUMN);
+// column renames or type changes require a schema-version table + conditional
+// migration path, which is not yet implemented.
 func runMigrations() {
 	// Unique compound index on vulnerabilities — prevents duplicates when a scan
 	// is resumed or the same nuclei template fires on the same host+URL twice.
 	// IFNULL() normalises NULL → '' so empty strings and NULLs compare equal.
-	_, _ = DB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vulns_unique
-		ON vulnerabilities(scan_id, host, IFNULL(template_id, ''), IFNULL(url, ''))`)
+	if _, err := DB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vulns_unique
+		ON vulnerabilities(scan_id, host, IFNULL(template_id, ''), IFNULL(url, ''))`); err != nil {
+		logger.Debug("Migration (vulnerabilities index) skipped or failed: %v", err)
+	}
 
-	// Game-changer columns — safe to fail on fresh installs where columns already exist.
-	_, _ = DB.Exec(`ALTER TABLE host_metadata ADD COLUMN has_js_secrets BOOLEAN DEFAULT FALSE`)
-	_, _ = DB.Exec(`ALTER TABLE url_metadata ADD COLUMN form_count INTEGER DEFAULT 0`)
-	_, _ = DB.Exec(`ALTER TABLE url_metadata ADD COLUMN has_file_upload BOOLEAN DEFAULT FALSE`)
-	_, _ = DB.Exec(`ALTER TABLE url_metadata ADD COLUMN hidden_input_count INTEGER DEFAULT 0`)
-
-	// Phase 4 columns — CORS, cookie security, dangerous methods, parameter counts.
-	_, _ = DB.Exec(`ALTER TABLE host_metadata ADD COLUMN cors_wildcard BOOLEAN DEFAULT FALSE`)
-	_, _ = DB.Exec(`ALTER TABLE host_metadata ADD COLUMN has_insecure_cookies BOOLEAN DEFAULT FALSE`)
-	_, _ = DB.Exec(`ALTER TABLE host_metadata ADD COLUMN has_session_cookie BOOLEAN DEFAULT FALSE`)
-	_, _ = DB.Exec(`ALTER TABLE host_metadata ADD COLUMN has_dangerous_methods BOOLEAN DEFAULT FALSE`)
-	_, _ = DB.Exec(`ALTER TABLE url_metadata ADD COLUMN arjun_param_count INTEGER DEFAULT 0`)
-	_, _ = DB.Exec(`ALTER TABLE url_metadata ADD COLUMN param_count INTEGER DEFAULT 0`)
+	// Add host column to urls and endpoints table if they do not exist
+	if _, err := DB.Exec(`ALTER TABLE urls ADD COLUMN host TEXT`); err != nil {
+		logger.Debug("Migration (urls host column) skipped: %v", err)
+	}
+	if _, err := DB.Exec(`ALTER TABLE endpoints ADD COLUMN host TEXT`); err != nil {
+		logger.Debug("Migration (endpoints host column) skipped: %v", err)
+	}
+	if _, err := DB.Exec(`CREATE INDEX IF NOT EXISTS idx_urls_host ON urls(host)`); err != nil {
+		logger.Debug("Migration (urls host index) skipped: %v", err)
+	}
+	if _, err := DB.Exec(`CREATE INDEX IF NOT EXISTS idx_endpoints_host ON endpoints(host)`); err != nil {
+		logger.Debug("Migration (endpoints host index) skipped: %v", err)
+	}
 }
 
 // Close closes the database connection
@@ -300,6 +319,9 @@ func Close() error {
 // Scan operations
 
 func CreateScan(target, scanType, resultDir, config string) (*Scan, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	result, err := DB.Exec(
 		`INSERT INTO scans (target, type, result_dir, config, status) VALUES (?, ?, ?, ?, 'running')`,
 		target, scanType, resultDir, config,
@@ -321,6 +343,9 @@ func CreateScan(target, scanType, resultDir, config string) (*Scan, error) {
 }
 
 func UpdateScanStatus(scanID int64, status string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	var query string
 	if status == "completed" || status == "failed" || status == "cancelled" {
 		query = `UPDATE scans SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
@@ -332,6 +357,9 @@ func UpdateScanStatus(scanID int64, status string) error {
 }
 
 func GetScan(scanID int64) (*Scan, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	scan := &Scan{}
 	var completedAt sql.NullTime
 	err := DB.QueryRow(
@@ -348,6 +376,9 @@ func GetScan(scanID int64) (*Scan, error) {
 }
 
 func GetRecentScans(limit int) ([]Scan, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT id, target, type, status, started_at, completed_at, result_dir, config 
 		 FROM scans ORDER BY started_at DESC LIMIT ?`,
@@ -377,6 +408,9 @@ func GetRecentScans(limit int) ([]Scan, error) {
 }
 
 func GetScansByTarget(target string) ([]Scan, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT id, target, type, status, started_at, completed_at, result_dir, config 
 		 FROM scans WHERE target = ? ORDER BY started_at DESC`,
@@ -408,6 +442,9 @@ func GetScansByTarget(target string) ([]Scan, error) {
 // Subdomain operations
 
 func AddSubdomain(scanID int64, domain, source string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	_, err := DB.Exec(
 		`INSERT OR IGNORE INTO subdomains (scan_id, domain, source) VALUES (?, ?, ?)`,
@@ -417,11 +454,14 @@ func AddSubdomain(scanID int64, domain, source string) error {
 }
 
 func AddSubdomains(scanID int64, domains []string, source string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	tx, err := DB.Begin()
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO subdomains (scan_id, domain, source) VALUES (?, ?, ?)`)
 	if err != nil {
@@ -440,6 +480,9 @@ func AddSubdomains(scanID int64, domains []string, source string) error {
 }
 
 func UpdateSubdomainLive(scanID int64, domain string, isLive bool, ipAddress string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	_, err := DB.Exec(
 		`UPDATE subdomains SET is_live = ?, ip_address = ? WHERE scan_id = ? AND domain = ?`,
@@ -448,7 +491,59 @@ func UpdateSubdomainLive(scanID int64, domain string, isLive bool, ipAddress str
 	return err
 }
 
+// UpdateSubdomainsLiveBulk marks the given domains as live for a scan in a single transaction.
+func UpdateSubdomainsLiveBulk(scanID int64, domains []string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
+	if len(domains) == 0 {
+		return nil
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`UPDATE subdomains SET is_live = TRUE WHERE scan_id = ? AND domain = ?`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, domain := range domains {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if _, err := stmt.Exec(scanID, domain); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func GetLiveSubdomainNames(scanID int64) ([]string, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
+	rows, err := DB.Query("SELECT domain FROM subdomains WHERE scan_id = ? AND is_live = TRUE", scanID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var domains []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err == nil {
+			domains = append(domains, d)
+		}
+	}
+	return domains, nil
+}
+
 func GetSubdomains(scanID int64) ([]Subdomain, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT id, scan_id, domain, source, is_live, ip_address, created_at 
 		 FROM subdomains WHERE scan_id = ? ORDER BY domain`,
@@ -478,6 +573,9 @@ func GetSubdomains(scanID int64) ([]Subdomain, error) {
 }
 
 func GetLiveSubdomains(scanID int64) ([]Subdomain, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT id, scan_id, domain, source, is_live, ip_address, created_at 
 		 FROM subdomains WHERE scan_id = ? AND is_live = TRUE ORDER BY domain`,
@@ -507,6 +605,9 @@ func GetLiveSubdomains(scanID int64) ([]Subdomain, error) {
 }
 
 func CountSubdomains(scanID int64) (total int, live int, err error) {
+	if DB == nil {
+		return 0, 0, ErrDBNotInitialized
+	}
 	// Single round-trip: COUNT(*) for total, conditional SUM for live hosts.
 	// COALESCE handles the NULL SUM that SQLite returns when no rows match.
 	err = DB.QueryRow(
@@ -520,6 +621,9 @@ func CountSubdomains(scanID int64) (total int, live int, err error) {
 // Port operations
 
 func AddPort(scanID int64, host string, port int, protocol, service string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	_, err := DB.Exec(
 		`INSERT OR IGNORE INTO ports (scan_id, host, port, protocol, service) VALUES (?, ?, ?, ?, ?)`,
 		scanID, host, port, protocol, service,
@@ -530,6 +634,9 @@ func AddPort(scanID int64, host string, port int, protocol, service string) erro
 // AddPorts inserts a slice of ports in a single transaction,
 // skipping duplicates (INSERT OR IGNORE). Mirrors AddSubdomains pattern.
 func AddPorts(scanID int64, items []Port) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	if len(items) == 0 {
 		return nil
 	}
@@ -537,7 +644,7 @@ func AddPorts(scanID int64, items []Port) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO ports (scan_id, host, port, protocol, service) VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
@@ -554,6 +661,9 @@ func AddPorts(scanID int64, items []Port) error {
 }
 
 func GetPorts(scanID int64) ([]Port, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT id, scan_id, host, port, protocol, service, created_at 
 		 FROM ports WHERE scan_id = ? ORDER BY host, port`,
@@ -584,10 +694,29 @@ func GetPorts(scanID int64) ([]Port, error) {
 
 // URL operations
 
-func AddURL(scanID int64, url string, statusCode int, contentType, title, tech, source string) error {
+func AddURL(scanID int64, rawURL string, statusCode int, contentType, title, tech, source string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
+
+	var host string
+	if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+		host = strings.ToLower(parsed.Hostname())
+	}
+	if host == "" {
+		cleaned := rawURL
+		if !strings.Contains(cleaned, "://") {
+			cleaned = "https://" + cleaned
+		}
+		if parsed, err := url.Parse(cleaned); err == nil {
+			host = strings.ToLower(parsed.Hostname())
+		}
+	}
+
 	_, err := DB.Exec(
-		`INSERT INTO urls (scan_id, url, status_code, content_type, title, tech, source) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO urls (scan_id, url, host, status_code, content_type, title, tech, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(scan_id, url) DO UPDATE SET
+			host = CASE WHEN urls.host IS NULL OR urls.host = '' THEN excluded.host ELSE urls.host END,
 			source = CASE
 				WHEN (',' || urls.source || ',') LIKE ('%,' || ? || ',%') THEN urls.source
 				ELSE urls.source || ',' || ?
@@ -596,7 +725,7 @@ func AddURL(scanID int64, url string, statusCode int, contentType, title, tech, 
 			content_type = CASE WHEN ? != '' AND urls.content_type = '' THEN ? ELSE urls.content_type END,
 			title = CASE WHEN ? != '' AND urls.title = '' THEN ? ELSE urls.title END,
 			tech = CASE WHEN ? != '' AND urls.tech = '' THEN ? ELSE urls.tech END`,
-		scanID, url, statusCode, contentType, title, tech, source,
+		scanID, rawURL, host, statusCode, contentType, title, tech, source,
 		source, source,
 		statusCode, statusCode,
 		contentType, contentType,
@@ -607,8 +736,11 @@ func AddURL(scanID int64, url string, statusCode int, contentType, title, tech, 
 }
 
 func GetURLs(scanID int64) ([]URL, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
-		`SELECT id, scan_id, url, status_code, content_type, title, tech, source, created_at 
+		`SELECT id, scan_id, url, host, status_code, content_type, title, tech, source, created_at 
 		 FROM urls WHERE scan_id = ? ORDER BY url`,
 		scanID,
 	)
@@ -620,10 +752,14 @@ func GetURLs(scanID int64) ([]URL, error) {
 	var urls []URL
 	for rows.Next() {
 		var u URL
+		var hostNull sql.NullString
 		var statusCode sql.NullInt64
 		var contentType, title, tech sql.NullString
-		if err := rows.Scan(&u.ID, &u.ScanID, &u.URL, &statusCode, &contentType, &title, &tech, &u.Source, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.ScanID, &u.URL, &hostNull, &statusCode, &contentType, &title, &tech, &u.Source, &u.CreatedAt); err != nil {
 			return nil, err
+		}
+		if hostNull.Valid {
+			u.Host = hostNull.String
 		}
 		if statusCode.Valid {
 			u.StatusCode = int(statusCode.Int64)
@@ -648,6 +784,9 @@ func GetURLs(scanID int64) ([]URL, error) {
 // Vulnerability operations
 
 func AddVulnerability(scanID int64, host, url, templateID, name, severity, description, matcher, evidence string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	_, err := DB.Exec(
 		`INSERT OR IGNORE INTO vulnerabilities (scan_id, host, url, template_id, name, severity, description, matcher, evidence)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -657,6 +796,9 @@ func AddVulnerability(scanID int64, host, url, templateID, name, severity, descr
 }
 
 func GetVulnerabilities(scanID int64) ([]Vulnerability, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT id, scan_id, host, url, template_id, name, severity, description, matcher, evidence, created_at 
 		 FROM vulnerabilities WHERE scan_id = ? ORDER BY 
@@ -677,6 +819,9 @@ func GetVulnerabilities(scanID int64) ([]Vulnerability, error) {
 }
 
 func GetVulnerabilitiesBySeverity(scanID int64, severity string) ([]Vulnerability, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT id, scan_id, host, url, template_id, name, severity, description, matcher, evidence, created_at 
 		 FROM vulnerabilities WHERE scan_id = ? AND severity = ?`,
@@ -720,6 +865,9 @@ func scanVulnRows(rows *sql.Rows) ([]Vulnerability, error) {
 }
 
 func CountVulnerabilities(scanID int64) (map[string]int, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
 		`SELECT severity, COUNT(*) FROM vulnerabilities WHERE scan_id = ? GROUP BY severity`,
 		scanID,
@@ -746,10 +894,28 @@ func CountVulnerabilities(scanID int64) (map[string]int, error) {
 
 // Endpoint operations
 
-func AddEndpoint(scanID int64, url, method, source string) error {
+func AddEndpoint(scanID int64, rawURL, method, source string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
+
+	var host string
+	if parsed, err := url.Parse(strings.TrimSpace(rawURL)); err == nil {
+		host = strings.ToLower(parsed.Hostname())
+	}
+	if host == "" {
+		cleaned := rawURL
+		if !strings.Contains(cleaned, "://") {
+			cleaned = "https://" + cleaned
+		}
+		if parsed, err := url.Parse(cleaned); err == nil {
+			host = strings.ToLower(parsed.Hostname())
+		}
+	}
+
 	_, err := DB.Exec(
-		`INSERT OR IGNORE INTO endpoints (scan_id, url, method, source) VALUES (?, ?, ?, ?)`,
-		scanID, url, method, source,
+		`INSERT OR IGNORE INTO endpoints (scan_id, url, host, method, source) VALUES (?, ?, ?, ?, ?)`,
+		scanID, rawURL, host, method, source,
 	)
 	return err
 }
@@ -757,6 +923,9 @@ func AddEndpoint(scanID int64, url, method, source string) error {
 // AddEndpoints inserts a slice of endpoints in a single transaction,
 // skipping duplicates (INSERT OR IGNORE). Mirrors AddSubdomains pattern.
 func AddEndpoints(scanID int64, items []Endpoint) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	if len(items) == 0 {
 		return nil
 	}
@@ -764,16 +933,30 @@ func AddEndpoints(scanID int64, items []Endpoint) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO endpoints (scan_id, url, method, source) VALUES (?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO endpoints (scan_id, url, host, method, source) VALUES (?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, e := range items {
-		if _, err := stmt.Exec(scanID, e.URL, e.Method, e.Source); err != nil {
+		var host string
+		if parsed, err := url.Parse(strings.TrimSpace(e.URL)); err == nil {
+			host = strings.ToLower(parsed.Hostname())
+		}
+		if host == "" {
+			cleaned := e.URL
+			if !strings.Contains(cleaned, "://") {
+				cleaned = "https://" + cleaned
+			}
+			if parsed, err := url.Parse(cleaned); err == nil {
+				host = strings.ToLower(parsed.Hostname())
+			}
+		}
+
+		if _, err := stmt.Exec(scanID, e.URL, host, e.Method, e.Source); err != nil {
 			return err
 		}
 	}
@@ -781,8 +964,11 @@ func AddEndpoints(scanID int64, items []Endpoint) error {
 }
 
 func GetEndpoints(scanID int64) ([]Endpoint, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(
-		`SELECT id, scan_id, url, method, source, created_at 
+		`SELECT id, scan_id, url, host, method, source, created_at 
 		 FROM endpoints WHERE scan_id = ? ORDER BY url`,
 		scanID,
 	)
@@ -794,12 +980,15 @@ func GetEndpoints(scanID int64) ([]Endpoint, error) {
 	var endpoints []Endpoint
 	for rows.Next() {
 		var e Endpoint
-		var method sql.NullString
-		if err := rows.Scan(&e.ID, &e.ScanID, &e.URL, &method, &e.Source, &e.CreatedAt); err != nil {
+		var hostNull, methodNull sql.NullString
+		if err := rows.Scan(&e.ID, &e.ScanID, &e.URL, &hostNull, &methodNull, &e.Source, &e.CreatedAt); err != nil {
 			return nil, err
 		}
-		if method.Valid {
-			e.Method = method.String
+		if hostNull.Valid {
+			e.Host = hostNull.String
+		}
+		if methodNull.Valid {
+			e.Method = methodNull.String
 		}
 		endpoints = append(endpoints, e)
 	}
@@ -821,6 +1010,9 @@ type ScanStats struct {
 }
 
 func GetScanStats(scanID int64) (*ScanStats, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	stats := &ScanStats{}
 
 	// One round-trip for all numeric counts via correlated subqueries.
@@ -853,11 +1045,14 @@ func GetDefaultDBPath() string {
 
 // DeleteScan deletes a scan and all its related data
 func DeleteScan(scanID int64) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	tx, err := DB.Begin()
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Delete from all related tables (order matters: child rows before parent).
 	// Each statement is explicit — no string interpolation into SQL.
@@ -887,6 +1082,9 @@ func DeleteScan(scanID int64) error {
 
 // DeleteScansByTarget deletes all scans and related data for a specific target
 func DeleteScansByTarget(target string) (int, error) {
+	if DB == nil {
+		return 0, ErrDBNotInitialized
+	}
 	// Collect IDs first, then close the cursor before starting destructive writes.
 	rows, err := DB.Query("SELECT id FROM scans WHERE target = ?", target)
 	if err != nil {
@@ -925,6 +1123,9 @@ func DeleteScansByTarget(target string) (int, error) {
 
 // GetAllTargets returns a list of all unique targets in the database
 func GetAllTargets() ([]string, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query("SELECT DISTINCT target FROM scans ORDER BY target")
 	if err != nil {
 		return nil, err
@@ -947,6 +1148,9 @@ func GetAllTargets() ([]string, error) {
 
 // GetTargetStats returns statistics for a specific target across all scans
 func GetTargetStats(target string) (map[string]int, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	stats := make(map[string]int)
 
 	// Count scans
@@ -1029,6 +1233,9 @@ func GetTargetStats(target string) (map[string]int, error) {
 
 // PurgeOldScans deletes scans older than the specified number of days
 func PurgeOldScans(daysOld int) (int, error) {
+	if DB == nil {
+		return 0, ErrDBNotInitialized
+	}
 	// Collect IDs first, then close the cursor before starting destructive writes.
 	rows, err := DB.Query(
 		"SELECT id FROM scans WHERE started_at < datetime('now', ? || ' days')",
@@ -1065,6 +1272,9 @@ func PurgeOldScans(daysOld int) (int, error) {
 
 // VacuumDatabase runs VACUUM to reclaim space after deletions
 func VacuumDatabase() error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	_, err := DB.Exec("VACUUM")
 	return err
 }
@@ -1073,7 +1283,7 @@ func VacuumDatabase() error {
 
 func getCount(query string) (int, error) {
 	if DB == nil {
-		return 0, nil
+		return 0, ErrDBNotInitialized
 	}
 	var count int
 	err := DB.QueryRow(query).Scan(&count)
@@ -1113,10 +1323,53 @@ func GetTotalPortsCount() (int, error) {
 // backwards compatibility with existing databases.
 // ─────────────────────────────────────────────────────────────
 
+// GFMatch holds URL and gf pattern match details.
+type GFMatch struct {
+	URL     string
+	Pattern string
+}
+
+// InsertGFMatches stores gf pattern matches for a scan.
+// It uses INSERT OR IGNORE to honor the existing UNIQUE(scan_id, url, pattern) constraint.
+func InsertGFMatches(scanID int64, matches []GFMatch) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO gf_matches (scan_id, url, pattern) VALUES (?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, m := range matches {
+		urlStr := strings.TrimSpace(m.URL)
+		patternStr := strings.TrimSpace(m.Pattern)
+		if urlStr == "" || patternStr == "" {
+			continue
+		}
+		if _, err := stmt.Exec(scanID, urlStr, patternStr); err != nil {
+			return fmt.Errorf("failed to insert gf match for %q pattern %q: %w", urlStr, patternStr, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // GetGFMatchesByScan returns all gf pattern matches for a scan, grouped by URL.
 // The returned map keys are raw URLs; the values are slices of pattern names
 // (e.g. "sqli", "xss", "rce").
 func GetGFMatchesByScan(scanID int64) (map[string][]string, error) {
+	if DB == nil {
+		return nil, ErrDBNotInitialized
+	}
 	rows, err := DB.Query(`SELECT url, pattern FROM gf_matches WHERE scan_id = ?`, scanID)
 	if err != nil {
 		return nil, err
@@ -1141,6 +1394,9 @@ func GetGFMatchesByScan(scanID int64) (map[string][]string, error) {
 // MarkHostsJSSecrets flags the given hosts as having exposed secrets in their
 // JavaScript files. If a host_metadata row doesn't exist yet, one is created.
 func MarkHostsJSSecrets(scanID int64, hosts []string) error {
+	if DB == nil {
+		return ErrDBNotInitialized
+	}
 	if len(hosts) == 0 {
 		return nil
 	}
@@ -1148,7 +1404,7 @@ func MarkHostsJSSecrets(scanID int64, hosts []string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	for _, host := range hosts {
 		host = strings.TrimSpace(strings.ToLower(host))

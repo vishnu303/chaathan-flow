@@ -3,12 +3,14 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 	"github.com/vishnu303/chaathan/pkg/scan"
 )
@@ -123,63 +125,69 @@ func StartDashboard() error {
 
 	// Function to reload data from database
 	reloadData := func() {
-		// System global statistics
-		totalScans, _ := database.GetTotalScansCount()
-		totalSubs, _ := database.GetTotalSubdomainsCount()
-		totalPorts, _ := database.GetTotalPortsCount()
-		totalVulns, _ := database.GetTotalVulnerabilitiesCount()
+		go func() {
+			totalScans, _ := database.GetTotalScansCount()
+			totalSubs, _ := database.GetTotalSubdomainsCount()
+			totalPorts, _ := database.GetTotalPortsCount()
+			totalVulns, _ := database.GetTotalVulnerabilitiesCount()
+			scans, err := database.GetRecentScans(15)
 
-		statsText := fmt.Sprintf(
-			" GLOBAL STATS: [%s]Scans ran:[-] [#cdd6f4]%d[-]    [%s]Domains found:[-] [#cdd6f4]%d[-]    [%s]Ports open:[-] [#cdd6f4]%d[-]    [%s]Vulnerabilities:[-] [#cdd6f4]%d[-]",
-			ColorBlue, totalScans, ColorBlue, totalSubs, ColorBlue, totalPorts, ColorBlue, totalVulns,
-		)
-		topStats.SetText(statsText)
+			app.QueueUpdateDraw(func() {
+				statsText := fmt.Sprintf(
+					" GLOBAL STATS: [%s]Scans ran:[-] [#cdd6f4]%d[-]    [%s]Domains found:[-] [#cdd6f4]%d[-]    [%s]Ports open:[-] [#cdd6f4]%d[-]    [%s]Vulnerabilities:[-] [#cdd6f4]%d[-]",
+					ColorBlue, totalScans, ColorBlue, totalSubs, ColorBlue, totalPorts, ColorBlue, totalVulns,
+				)
+				topStats.SetText(statsText)
 
-		// Recent 15 scans
-		scans, err := database.GetRecentScans(15)
-		if err != nil {
-			middleText.SetText(fmt.Sprintf(" [red]Database error: %v[-]", err))
-			return
-		}
-		scansList = scans
+				if err != nil {
+					middleText.SetText(fmt.Sprintf(" [red]Database error: %v[-]", err))
+					return
+				}
+				scansList = scans
 
-		leftList.Clear()
-		if len(scansList) == 0 {
-			leftList.AddItem("No scans recorded.", "Run a scan first.", 0, nil)
-			middleText.SetText(" Select a scan run to view properties.")
-			rightText.SetText(" Select a scan to inspect findings.")
-			return
-		}
+				leftList.Clear()
+				if len(scansList) == 0 {
+					leftList.AddItem("No scans recorded.", "Run a scan first.", 0, nil)
+					middleText.SetText(" Select a scan run to view properties.")
+					rightText.SetText(" Select a scan to inspect findings.")
+					return
+				}
 
-		for _, s := range scansList {
-			statusSymbol := "[ ]"
-			var statusColor string
-			switch s.Status {
-			case "completed":
-				statusSymbol = "[+]"
-				statusColor = ColorGreen
-			case "failed":
-				statusSymbol = "[-]"
-				statusColor = ColorRed
-			case "running":
-				statusSymbol = "[*]"
-				statusColor = ColorYellow
-			case "cancelled":
-				statusSymbol = "[ ]"
-				statusColor = ColorBlue
-			}
+				for _, s := range scansList {
+					statusSymbol := "[ ]"
+					var statusColor string
+					switch s.Status {
+					case "completed":
+						statusSymbol = "[+]"
+						statusColor = ColorGreen
+					case "failed":
+						statusSymbol = "[-]"
+						statusColor = ColorRed
+					case "running":
+						statusSymbol = "[*]"
+						statusColor = ColorYellow
+					case "cancelled":
+						statusSymbol = "[ ]"
+						statusColor = ColorBlue
+					}
 
-			age := time.Since(s.StartedAt).Round(time.Minute)
-			ageStr := fmt.Sprintf("%dm ago", int(age.Minutes()))
-			if age.Hours() >= 24 {
-				ageStr = fmt.Sprintf("%.0fd ago", age.Hours()/24)
-			} else if age.Hours() >= 1 {
-				ageStr = fmt.Sprintf("%.0fh ago", age.Hours())
-			}
+					age := time.Since(s.StartedAt).Round(time.Minute)
+					ageStr := fmt.Sprintf("%dm ago", int(age.Minutes()))
+					if age.Hours() >= 24 {
+						ageStr = fmt.Sprintf("%.0fd ago", age.Hours()/24)
+					} else if age.Hours() >= 1 {
+						ageStr = fmt.Sprintf("%.0fh ago", age.Hours())
+					}
 
-			rowText := fmt.Sprintf("[%s]%s[-] #%d %s", statusColor, statusSymbol, s.ID, s.Target)
-			leftList.AddItem(rowText, "Started "+ageStr, 0, nil)
-		}
+					rowText := fmt.Sprintf("[%s]%s[-] #%d %s", statusColor, statusSymbol, s.ID, s.Target)
+					leftList.AddItem(rowText, "Started "+ageStr, 0, nil)
+				}
+
+				if leftList.GetItemCount() > 0 {
+					leftList.SetCurrentItem(0)
+				}
+			})
+		}()
 	}
 
 	// Function to update details when scan is selected
@@ -189,161 +197,175 @@ func StartDashboard() error {
 		}
 		s := scansList[index]
 
-		// Update middle panel properties
-		var midSB strings.Builder
-		statusColor := ColorBlue
-		switch s.Status {
-		case "completed":
-			statusColor = ColorGreen
-		case "failed":
-			statusColor = ColorRed
-		case "running":
-			statusColor = ColorYellow
-		}
-		statusBadge := fmt.Sprintf("[%s::b] %s [-]", statusColor, strings.ToUpper(s.Status))
+		middleText.SetText("  Loading details...")
+		rightText.SetText("  Loading findings...")
 
-		midSB.WriteString(fmt.Sprintf("  [%s::b]Target: %s[-]\n\n", ColorLavender, s.Target))
-		midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Type:", strings.ToUpper(s.Type)))
-		midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Status:", statusBadge))
-		midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Started:", s.StartedAt.Format("15:04:05")))
+		go func(sID int64, sType string, sStatus string, sTarget string, sStartedAt time.Time, sCompletedAt *time.Time, sResultDir string) {
+			ports, errPorts := database.GetPorts(sID)
+			stats, errStats := database.GetScanStats(sID)
+			techs := getTopTechnologies(sID)
+			vulns, errVulns := database.GetVulnerabilities(sID)
 
-		durStr := "Active..."
-		if s.CompletedAt != nil {
-			durStr = s.CompletedAt.Sub(s.StartedAt).Round(time.Second).String()
-		} else if s.Status != "running" {
-			durStr = "Unknown"
-		} else {
-			durStr = time.Since(s.StartedAt).Round(time.Second).String()
-		}
-		midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Duration:", durStr))
-		midSB.WriteString(fmt.Sprintf("  [%s]Folder:[-] %s\n\n", ColorSubtle, s.ResultDir))
-
-		// Render live running scan progress if applicable
-		if s.Status == "running" {
-			stateMgr := scan.NewManager(paths.StateDir())
-			if state, err := stateMgr.LoadState(s.ID); err == nil {
-				midSB.WriteString(fmt.Sprintf("  [%s::b]RUNTIME PROGRESS[-]\n", ColorYellow))
-				completed := len(state.CompletedSteps)
-				total := state.TotalSteps
-				if total == 0 {
-					total = 1
-				}
-				pct := float64(completed) / float64(total) * 100
-
-				barWidth := 20
-				filled := int(float64(barWidth) * pct / 100)
-				bar := ""
-				for i := 0; i < barWidth; i++ {
-					if i < filled {
-						bar += "█"
-					} else {
-						bar += "░"
+			var runtimeProgressText string
+			if sStatus == "running" {
+				stateMgr := scan.NewManager(paths.StateDir())
+				if state, err := stateMgr.LoadState(sID); err == nil {
+					var midSB strings.Builder
+					midSB.WriteString(fmt.Sprintf("  [%s::b]RUNTIME PROGRESS[-]\n", ColorYellow))
+					completed := len(state.CompletedSteps)
+					total := state.TotalSteps
+					if total == 0 {
+						total = 1
 					}
+					pct := float64(completed) / float64(total) * 100
+
+					barWidth := 20
+					filled := int(float64(barWidth) * pct / 100)
+					bar := ""
+					for i := 0; i < barWidth; i++ {
+						if i < filled {
+							bar += "█"
+						} else {
+							bar += "░"
+						}
+					}
+					midSB.WriteString(fmt.Sprintf("  [%s]%.0f%%[-] Current: %d/%d steps\n", ColorYellow, pct, completed, total))
+					steps := pickStepsForType(sType)
+					if state.CurrentStep < len(steps) {
+						midSB.WriteString(fmt.Sprintf("  Current: %s\n\n", steps[state.CurrentStep].Description))
+					} else {
+						midSB.WriteString("  Current: Finalizing...\n\n")
+					}
+					runtimeProgressText = midSB.String()
 				}
-				midSB.WriteString(fmt.Sprintf("  [%s]%.0f%%[-] Current: %d/%d steps\n", ColorYellow, pct, completed, total))
-				if state.CurrentStep < len(scan.WildcardSteps) {
-					midSB.WriteString(fmt.Sprintf("  Current: %s\n\n", scan.WildcardSteps[state.CurrentStep].Description))
+			}
+
+			app.QueueUpdateDraw(func() {
+				// Verify selection hasn't changed
+				currIdx := leftList.GetCurrentItem()
+				if currIdx < 0 || currIdx >= len(scansList) || scansList[currIdx].ID != sID {
+					return
+				}
+
+				var midSB strings.Builder
+				statusColor := ColorBlue
+				switch sStatus {
+				case "completed":
+					statusColor = ColorGreen
+				case "failed":
+					statusColor = ColorRed
+				case "running":
+					statusColor = ColorYellow
+				}
+				statusBadge := fmt.Sprintf("[%s::b] %s [-]", statusColor, strings.ToUpper(sStatus))
+
+				midSB.WriteString(fmt.Sprintf("  [%s::b]Target: %s[-]\n\n", ColorLavender, sTarget))
+				midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Type:", strings.ToUpper(sType)))
+				midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Status:", statusBadge))
+				midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Started:", sStartedAt.Format("15:04:05")))
+
+				durStr := "Active..."
+				if sCompletedAt != nil {
+					durStr = sCompletedAt.Sub(sStartedAt).Round(time.Second).String()
+				} else if sStatus != "running" {
+					durStr = "Unknown"
 				} else {
-					midSB.WriteString("  Current: Finalizing...\n\n")
+					durStr = time.Since(sStartedAt).Round(time.Second).String()
 				}
-			}
-		}
+				midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Duration:", durStr))
+				midSB.WriteString(fmt.Sprintf("  [%s]Folder:[-] %s\n\n", ColorSubtle, sResultDir))
 
-		// List open ports
-		midSB.WriteString(fmt.Sprintf("  [%s::b]DISCOVERED OPEN PORTS[-]\n", ColorSapphire))
-		ports, err := database.GetPorts(s.ID)
-		if err == nil && len(ports) > 0 {
-			midSB.WriteString(fmt.Sprintf("  [%s]Host                Port/Proto  Service[-]\n", ColorSubtle))
-			
-			displayLimit := 8
-			if len(ports) < displayLimit {
-				displayLimit = len(ports)
-			}
-			for i := 0; i < displayLimit; i++ {
-				p := ports[i]
-				proto := p.Protocol
-				if proto == "" {
-					proto = "tcp"
-				}
-				portStr := fmt.Sprintf("%d/%s", p.Port, proto)
-				srv := p.Service
-				if srv == "" {
-					srv = "unknown"
-				}
-				// Pad output cleanly using formatting tags
-				midSB.WriteString(fmt.Sprintf("  %-19s %-11s %s\n", truncateText(p.Host, 18), portStr, truncateText(srv, 8)))
-			}
-			if len(ports) > displayLimit {
-				midSB.WriteString(fmt.Sprintf("  [%s::i]...and %d more ports[-]\n", ColorSubtle, len(ports)-displayLimit))
-			}
-		} else {
-			midSB.WriteString(fmt.Sprintf("  [%s]No open ports discovered.[-]\n", ColorSubtle))
-		}
-		middleText.SetText(midSB.String())
-
-		// Update right panel findings
-		var rightSB strings.Builder
-		rightSB.WriteString(fmt.Sprintf("  [%s::b]SCOPE COUNTS[-]\n", ColorSapphire))
-		stats, err := database.GetScanStats(s.ID)
-		if err == nil && stats != nil {
-			colSub := fmt.Sprintf("%d", stats.TotalSubdomains)
-			colLive := fmt.Sprintf("%d", stats.LiveSubdomains)
-			rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%s[-]\n", "Subdomains:", ColorSapphire, colSub))
-			rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%s[-]\n", "Live Hosts:", ColorSapphire, colLive))
-			rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%d[-]\n", "URLs Crawled:", ColorSapphire, stats.TotalURLs))
-			rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%d[-]\n\n", "Endpoints:", ColorSapphire, stats.TotalEndpoints))
-		} else {
-			rightSB.WriteString(fmt.Sprintf("  [%s]No counters compiled.[-]\n\n", ColorSubtle))
-		}
-
-		// Top technologies list aggregation
-		techs := getTopTechnologies(s.ID)
-		if len(techs) > 0 {
-			rightSB.WriteString(fmt.Sprintf("  [%s::b]TOP TECHNOLOGIES DETECTED[-]\n", ColorSapphire))
-			for _, t := range techs {
-				rightSB.WriteString(fmt.Sprintf("  • %s\n", t))
-			}
-			rightSB.WriteString("\n")
-		}
-
-		// Vulnerability discoveries list
-		rightSB.WriteString(fmt.Sprintf("  [%s::b]VULNERABILITY DISCOVERIES[-]\n", ColorActive))
-		vulns, err := database.GetVulnerabilities(s.ID)
-		if err == nil && len(vulns) > 0 {
-			displayLimit := 5
-			if len(vulns) < displayLimit {
-				displayLimit = len(vulns)
-			}
-			for i := 0; i < displayLimit; i++ {
-				v := vulns[i]
-				var badge string
-				switch strings.ToLower(v.Severity) {
-				case "critical":
-					badge = fmt.Sprintf("[%s][CRIT][-]", ColorRed)
-				case "high":
-					badge = fmt.Sprintf("[%s][HIGH][-]", ColorOrange)
-				case "medium":
-					badge = fmt.Sprintf("[%s][MED ][-]", ColorYellow)
-				case "low":
-					badge = fmt.Sprintf("[%s][LOW ][-]", ColorGreen)
-				default:
-					badge = fmt.Sprintf("[%s][INFO][-]", ColorBlue)
+				if runtimeProgressText != "" {
+					midSB.WriteString(runtimeProgressText)
 				}
 
-				vTitle := truncateText(v.Name, 26)
-				vHost := truncateText(v.Host, 14)
-				rightSB.WriteString(fmt.Sprintf("  %s %s [%s]%s[-]\n", badge, vHost, ColorSubtle, vTitle))
-				if v.URL != "" {
-					rightSB.WriteString(fmt.Sprintf("    [%s]↳ URL: %s[-]\n", ColorSubtle, truncateText(v.URL, 80)))
+				midSB.WriteString(fmt.Sprintf("  [%s::b]DISCOVERED OPEN PORTS[-]\n", ColorSapphire))
+				if errPorts == nil && len(ports) > 0 {
+					midSB.WriteString(fmt.Sprintf("  [%s]Host                Port/Proto  Service[-]\n", ColorSubtle))
+					displayLimit := 8
+					if len(ports) < displayLimit {
+						displayLimit = len(ports)
+					}
+					for i := 0; i < displayLimit; i++ {
+						p := ports[i]
+						proto := p.Protocol
+						if proto == "" {
+							proto = "tcp"
+						}
+						portStr := fmt.Sprintf("%d/%s", p.Port, proto)
+						srv := p.Service
+						if srv == "" {
+							srv = "unknown"
+						}
+						midSB.WriteString(fmt.Sprintf("  %-19s %-11s %s\n", truncateText(p.Host, 18), portStr, truncateText(srv, 8)))
+					}
+					if len(ports) > displayLimit {
+						midSB.WriteString(fmt.Sprintf("  [%s::i]...and %d more ports[-]\n", ColorSubtle, len(ports)-displayLimit))
+					}
+				} else {
+					midSB.WriteString(fmt.Sprintf("  [%s]No open ports discovered.[-]\n", ColorSubtle))
 				}
-			}
-			if len(vulns) > displayLimit {
-				rightSB.WriteString(fmt.Sprintf("  [%s::i]...and %d more vulnerabilities[-]\n", ColorSubtle, len(vulns)-displayLimit))
-			}
-		} else {
-			rightSB.WriteString(fmt.Sprintf("\n  [%s]Clean Scan - No vulnerabilities found.[-]\n", ColorGreen))
-		}
-		rightText.SetText(rightSB.String())
+				middleText.SetText(midSB.String())
+
+				var rightSB strings.Builder
+				rightSB.WriteString(fmt.Sprintf("  [%s::b]SCOPE COUNTS[-]\n", ColorSapphire))
+				if errStats == nil && stats != nil {
+					colSub := fmt.Sprintf("%d", stats.TotalSubdomains)
+					colLive := fmt.Sprintf("%d", stats.LiveSubdomains)
+					rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%s[-]\n", "Subdomains:", ColorSapphire, colSub))
+					rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%s[-]\n", "Live Hosts:", ColorSapphire, colLive))
+					rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%d[-]\n", "URLs Crawled:", ColorSapphire, stats.TotalURLs))
+					rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%d[-]\n\n", "Endpoints:", ColorSapphire, stats.TotalEndpoints))
+				} else {
+					rightSB.WriteString(fmt.Sprintf("  [%s]No counters compiled.[-]\n\n", ColorSubtle))
+				}
+
+				if len(techs) > 0 {
+					rightSB.WriteString(fmt.Sprintf("  [%s::b]TOP TECHNOLOGIES DETECTED[-]\n", ColorSapphire))
+					for _, t := range techs {
+						rightSB.WriteString(fmt.Sprintf("  • %s\n", t))
+					}
+					rightSB.WriteString("\n")
+				}
+
+				rightSB.WriteString(fmt.Sprintf("  [%s::b]VULNERABILITY DISCOVERIES[-]\n", ColorActive))
+				if errVulns == nil && len(vulns) > 0 {
+					displayLimit := 5
+					if len(vulns) < displayLimit {
+						displayLimit = len(vulns)
+					}
+					for i := 0; i < displayLimit; i++ {
+						v := vulns[i]
+						var badge string
+						switch strings.ToLower(v.Severity) {
+						case "critical":
+							badge = fmt.Sprintf("[%s][CRIT][-]", ColorRed)
+						case "high":
+							badge = fmt.Sprintf("[%s][HIGH][-]", ColorOrange)
+						case "medium":
+							badge = fmt.Sprintf("[%s][MED ][-]", ColorYellow)
+						case "low":
+							badge = fmt.Sprintf("[%s][LOW ][-]", ColorGreen)
+						default:
+							badge = fmt.Sprintf("[%s][INFO][-]", ColorBlue)
+						}
+
+						vTitle := truncateText(v.Name, 26)
+						vHost := truncateText(v.Host, 14)
+						rightSB.WriteString(fmt.Sprintf("  %s %s [%s]%s[-]\n", badge, vHost, ColorSubtle, vTitle))
+						if v.URL != "" {
+							rightSB.WriteString(fmt.Sprintf("    [%s]↳ URL: %s[-]\n", ColorSubtle, truncateText(v.URL, 80)))
+						}
+					}
+					if len(vulns) > displayLimit {
+						rightSB.WriteString(fmt.Sprintf("  [%s::i]...and %d more vulnerabilities[-]\n", ColorSubtle, len(vulns)-displayLimit))
+					}
+				} else {
+					rightSB.WriteString(fmt.Sprintf("\n  [%s]Clean Scan - No vulnerabilities found.[-]\n", ColorGreen))
+				}
+				rightText.SetText(rightSB.String())
+			})
+		}(s.ID, s.Type, s.Status, s.Target, s.StartedAt, s.CompletedAt, s.ResultDir)
 	})
 
 	// Setup input captures (Global hotkeys)
@@ -367,6 +389,17 @@ func StartDashboard() error {
 						if buttonLabel == "Yes" {
 							if err := database.DeleteScan(s.ID); err == nil {
 								reloadData()
+							} else {
+								logger.FileDebug("failed to delete scan %d: %v", s.ID, err)
+								errorModal := tview.NewModal().
+									SetText(fmt.Sprintf("Failed to delete scan #%d: %v", s.ID, err)).
+									AddButtons([]string{"OK"}).
+									SetDoneFunc(func(bIdx int, bLabel string) {
+										pages.RemovePage("delete_error")
+										app.SetFocus(leftList)
+									})
+								pages.AddPage("delete_error", errorModal, true, true)
+								return
 							}
 						}
 						pages.RemovePage("delete_confirm")
@@ -387,9 +420,6 @@ func StartDashboard() error {
 
 		if event.Key() == tcell.KeyCtrlR || event.Key() == tcell.KeyF5 {
 			reloadData()
-			if leftList.GetItemCount() > 0 {
-				leftList.SetCurrentItem(0)
-			}
 			return nil
 		}
 
@@ -403,9 +433,6 @@ func StartDashboard() error {
 
 	// Initial data reload
 	reloadData()
-	if leftList.GetItemCount() > 0 {
-		leftList.SetCurrentItem(0)
-	}
 
 	// Draw full screen layout container
 	if err := app.SetRoot(pages, true).EnableMouse(true).Run(); err != nil {
@@ -449,14 +476,12 @@ func getTopTechnologies(scanID int64) []string {
 	for k, v := range techCounts {
 		list = append(list, techCount{k, v})
 	}
-	// Sort descending
-	for i := 0; i < len(list); i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[j].count > list[i].count {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
+	
+	// Sort descending using sort.Slice (L3)
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].count > list[j].count
+	})
+
 	var result []string
 	limit := 4
 	if len(list) < limit {
@@ -469,11 +494,19 @@ func getTopTechnologies(scanID int64) []string {
 }
 
 func truncateText(str string, limit int) string {
-	if len(str) <= limit {
+	runes := []rune(str)
+	if len(runes) <= limit {
 		return str
 	}
 	if limit <= 3 {
-		return str[:limit]
+		return string(runes[:limit])
 	}
-	return str[:limit-3] + "..."
+	return string(runes[:limit-3]) + "..."
+}
+
+func pickStepsForType(scanType string) []scan.Step {
+	if scanType == "company" {
+		return scan.CompanySteps
+	}
+	return scan.WildcardSteps
 }

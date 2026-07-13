@@ -226,6 +226,23 @@ func resumeScanByID(scanID int64) {
 		v, _ := opts[key].(string)
 		return v
 	}
+	sliceOpt := func(key string) []string {
+		raw, exists := opts[key]
+		if !exists {
+			return nil
+		}
+		interfaces, ok := raw.([]interface{})
+		if !ok {
+			return nil
+		}
+		var result []string
+		for _, item := range interfaces {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result
+	}
 
 	switch state.Type {
 	case "wildcard":
@@ -251,13 +268,21 @@ func resumeScanByID(scanID int64) {
 			SkipDalfox:        boolOpt("skip_dalfox"),
 			SkipUncover:       boolOpt("skip_uncover"),
 			SkipTlsx:          boolOpt("skip_tlsx"),
-			SkipX8:            boolOpt("skip_x8") || boolOpt("skip_arjun"),
+			SkipX8:            boolOpt("skip_x8"),
 			SkipShuffleDNS:    boolOpt("skip_shuffledns"),
+			SkipHakrawler:     boolOpt("skip_hakrawler"),
+			SkipFingerprint:   boolOpt("skip_fingerprint"),
 			WordlistPath:      strOpt("wordlist"),
 			DNSWordlistPath:   strOpt("dns_wordlist"),
+			ResolversPath:     strOpt("resolvers"),
 			GitHubToken:       token,
 			ResumeScanID:      scanID,
 			GenerateReport:    true,
+			SaveLog:           boolOpt("save_log"),
+			CustomCookie:      strOpt("custom_cookie"),
+			CustomHeaders:     sliceOpt("custom_headers"),
+			CustomToken:       strOpt("custom_token"),
+			AutoProxy:         boolOpt("auto_proxy"),
 		}); err != nil {
 			logger.Error("Resume failed: %v", err)
 		}

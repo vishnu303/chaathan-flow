@@ -32,7 +32,7 @@ chaathan-flow/
 │   ├── report/                Report assembly and multi-format export
 │   ├── scan/                  Scan state, resume, step definitions
 │   ├── setup/                 External tool installation and verification
-│   ├── tools/                 Tool registry and wrappers (30 tools)
+│   ├── tools/                 Tool registry and wrappers (27 tools)
 │   ├── proxy_scraping/         Automated proxy scraping and IP rotation (mubeng)
 │   ├── runner/                External command execution, retry, docker mode
 │   ├── config/                YAML config loading and defaults

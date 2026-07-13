@@ -74,3 +74,31 @@ func TestGetDefaultConfigPath(t *testing.T) {
 		t.Errorf("expected default config path %q, got %q", expected, path)
 	}
 }
+
+func TestUnknownKeysWarning(t *testing.T) {
+	tempDir := t.TempDir()
+	configContent := `
+general:
+  mode: native
+nuclie:
+  concurrency: 5
+`
+	configFilePath := filepath.Join(tempDir, "invalid_config.yaml")
+	err := os.WriteFile(configFilePath, []byte(configContent), 0644)
+	if err != nil {
+		t.Fatalf("failed to write invalid config file: %v", err)
+	}
+
+	cfg, err := config.Load(configFilePath)
+	if err != nil {
+		t.Fatalf("expected Load to succeed even with unknown keys, got error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config")
+	}
+	if cfg.General.Mode != "native" {
+		t.Errorf("expected General.Mode to be native, got %q", cfg.General.Mode)
+	}
+}
+
+

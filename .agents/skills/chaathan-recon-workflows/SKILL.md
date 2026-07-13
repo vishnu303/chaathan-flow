@@ -59,15 +59,15 @@ Phase 5: Fingerprinting (Step 23)      ──► Output: WAF/Tech JSON
 - **Step 7: `dns_resolution`** (dnsx validation of gathered subdomains).
 - **Step 8: `dns_bruteforce`** (shuffledns + massdns brute forcing; skip with `--skip-shuffledns`).
 - **Step 9: `port_scanning`** (naabu TCP scan; skip with `--skip-naabu`). Open ports are merged into the target list for subsequent probing.
-- **Step 10: `http_probing`** (httpx probing for live web servers on both standard ports and naabu-discovered ports; runs Origin IP Bypass if `--origin-bypass` enabled).
+- **Step 10: `http_probing`** (httpx probing for live web servers on both standard ports and naabu-discovered ports).
 - **Step 11: `tls_analysis`** (tlsx certificate extraction; skip with `--skip-tlsx`). Extracts newly discovered subdomains from SANs, probes them, and merges them back.
 
 ### Phase 3 — Content Discovery (`content_discovery.go`)
 - **Step 12: `url_discovery`** (waybackurls + gau passive crawl).
 - **Step 13: `web_crawling`** (katana + gospider crawling; skip with `--skip-crawl`).
-- **Step 14: `js_analysis`** (GoLinkFinder parsing of JS links on all live hosts, capped at top 50).
-- **Step 15: `dir_fuzzing`** (ffuf directory fuzzing on up to 25 live hosts; requires `--wordlist`). Fuzzing results write to `ffuf_discovered_urls.txt`.
-- **Step 16: `param_discovery`** (x8 parameter discovery; skip with `--skip-x8` or `--skip-arjun`). Natively routes through the rotating proxy using direct proxy arguments `-x`. Targets ONLY curated dynamic endpoints (up to 150 extracted from crawls) and fuzzed directory URLs, completely bypassing flat live hostlists.
+- **Step 14: `js_analysis`** (GoLinkFinder parsing of JS links on all live hosts, capped at top 1000).
+- **Step 15: `dir_fuzzing`** (ffuf directory fuzzing on up to 1000 live hosts; requires `--wordlist`). Fuzzing results write to `ffuf_discovered_urls.txt`.
+- **Step 16: `param_discovery`** (x8 parameter discovery; skip with `--skip-x8` or `--skip-arjun`). Natively routes through the rotating proxy using direct proxy arguments `-x`. Targets ONLY curated dynamic endpoints (extracted from crawls) and fuzzed directory URLs, completely bypassing flat live hostlists.
 - **Step 17: `url_consolidation`** (httpx live URL validation and ROI metadata collection).
 - **Step 18: `js_secret_scan`** (downloads JS files, runs gf secret search pattern).
 
@@ -90,19 +90,14 @@ To process huge URL lists (100k+ inputs) without crashing VPS systems:
 - Deduplicate URL paths by formatting path keys (`pathKey()`), storing only unique query formats in memory maps.
 - Maintain a bounded min-heap priority queue via the standard `"container/heap"` package to cap URL sets (e.g. `dalfox.max_urls` limit). When the queue is full, lower-scoring items (determined by heuristics such as static file suffixes or missing query parameters) are evicted.
 
-### 2. Universal WAF/CDN Origin IP Bypass (`--origin-bypass`)
-Implemented in validation phases:
-- Partition resolved domains into WAF-protected candidates (checked against Cloudflare, CloudFront, Incapsula, Fastly CIDRs) vs direct IP lists.
-- Query candidate direct IPs using spoofed TLS client connections, forcing connection negotiation using browser TLS signatures.
-- Inject the protected subdomain target as a raw Host header:
-  ```go
-  req.Host = protectedHostHeader
-  ```
-- If the direct IP returns a response identical to the WAF-protected endpoint, save it to the SQLite database as a **High** severity bypass finding and fire a notification.
-
-### 3. Authenticated Session Fuzzing
+### 2. Authenticated Session Fuzzing
 - Support `--cookie`, `--header` (`-H`), and `--token` (sends Bearer token headers) flags.
 - Configured globally inside `RunConfig` $\rightarrow$ injected into the command parameters formulating functions inside `pkg/tools/` for Httpx, Katana, ffuf, Nuclei, and Dalfox.
+
+### 3. Scope Rules & Constraints
+- **Optional Nature**: Scope configuration is strictly optional. If no scope config is defined, the scan operates in permissive mode (everything is in-scope, all ports are allowed, no IP exclusions).
+- **Default Anchoring**: User-provided scope patterns are automatically anchored as `^(?:PATTERN)$` (unless they already start with `^` or end with `$`) to prevent substring-bypass injection (e.g. `example.com` matching `evil-example.com`).
+- **IP Target Filtering**: Bare-IP targets are denied if `in_scope` patterns are defined but the target domain is empty. If no `in_scope` patterns are configured, bare-IP targets are permitted.
 
 ---
 

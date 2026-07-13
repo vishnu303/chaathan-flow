@@ -61,3 +61,22 @@ func TestPaths(t *testing.T) {
 		t.Errorf("expected logs dir %q, got %q", expectedLogs, logs)
 	}
 }
+
+func TestEnvHomeDirectoryCreation(t *testing.T) {
+	paths.ResetForTest()
+
+	tempDir := t.TempDir()
+	nonExistentSubdir := filepath.Join(tempDir, "new_home_env")
+	os.Setenv("CHAATHAN_HOME", nonExistentSubdir)
+	defer os.Unsetenv("CHAATHAN_HOME")
+
+	err := paths.Init()
+	if err != nil {
+		t.Fatalf("unexpected error during paths.Init(): %v", err)
+	}
+
+	// Verify that the directory was created successfully
+	if _, err := os.Stat(nonExistentSubdir); os.IsNotExist(err) {
+		t.Errorf("expected directory %q to be created, but it does not exist", nonExistentSubdir)
+	}
+}

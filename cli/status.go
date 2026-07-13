@@ -37,7 +37,6 @@ func runStatus(cmd *cobra.Command, args []string) {
 	if !showPlainStatus {
 		if err := tui.StartDashboard(); err != nil {
 			if resumeSig, ok := err.(tui.ResumeSignal); ok {
-				database.Close()
 				resumeScanByID(resumeSig.ScanID)
 				return
 			}

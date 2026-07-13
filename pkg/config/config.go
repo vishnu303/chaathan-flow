@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 )
 
@@ -155,8 +156,9 @@ type NucleiConfig struct {
 }
 
 type DalfoxConfig struct {
-	MaxURLs        int  `yaml:"max_urls"`         // cap parameterized URLs (default: 500)
+	MaxURLs        int   `yaml:"max_urls"`         // cap parameterized URLs (default: 500)
 	SkipThirdParty *bool `yaml:"skip_third_party"` // filter non-target domains (default: true)
+	MaxTimeout     int   `yaml:"max_timeout_min"`  // hard process timeout per run in minutes (default: 120)
 }
 
 type HttpxConfig struct {
@@ -170,6 +172,8 @@ type NaabuConfig struct {
 	Threads int    `yaml:"threads"` // concurrent scanning threads (default: 25)
 	Rate    int    `yaml:"rate"`    // packets per second (default: 1000)
 	Ports   string `yaml:"ports"`   // port spec: "top-1000", "80,443,8080", or range (default: top-1000)
+	// Timeout represents the maximum runtime in minutes for Naabu.
+	// For backwards compatibility, it is kept as "Timeout" rather than "MaxTimeout".
 	Timeout int    `yaml:"timeout"` // max runtime in minutes for Naabu (default: 240)
 }
 
@@ -181,10 +185,14 @@ type FfufConfig struct {
 }
 
 type KatanaConfig struct {
+	// Timeout represents the maximum runtime in minutes for Katana.
+	// For backwards compatibility, it is kept as "Timeout" rather than "MaxTimeout".
 	Timeout int `yaml:"timeout"` // max runtime in minutes for Katana (default: 300)
 }
 
 type GoSpiderConfig struct {
+	// Timeout represents the maximum runtime in minutes for GoSpider.
+	// For backwards compatibility, it is kept as "Timeout" rather than "MaxTimeout".
 	Timeout int `yaml:"timeout"` // max runtime in minutes for GoSpider (default: 300)
 }
 
@@ -255,11 +263,187 @@ type ProxyScrapingConfig struct {
 // Global config instance
 var Cfg *Config
 
+var expectedKeys = map[string]interface{}{
+	"": map[string]interface{}{
+		"general":       "GeneralConfig",
+		"api_keys":      "APIKeysConfig",
+		"tools":         "ToolsConfig",
+		"notifications": "NotificationConfig",
+		"scope":         "ScopeConfig",
+		"rate_limits":   "RateLimitConfig",
+	},
+	"general": map[string]interface{}{
+		"mode":            "string",
+		"verbose":         "bool",
+		"max_retries":     "int",
+		"retry_delay_sec": "int",
+		"ua_rotation":     "bool",
+		"user_agent":      "string",
+		"proxy":           "string",
+		"resolvers_file":  "string",
+		"output_dir":      "string",
+		"database_path":   "string",
+		"wordlists":       "WordlistsConfig",
+		"js_limit":        "int",
+		"proxy_scraping":  "ProxyScrapingConfig",
+	},
+	"general.wordlists": map[string]interface{}{
+		"subdomains":  "string",
+		"directories": "string",
+		"parameters":  "string",
+	},
+	"general.proxy_scraping": map[string]interface{}{
+		"timeout_min":    "int",
+		"max_concurrent": "int",
+		"proxy_types":    "slice",
+		"rotate_method":  "string",
+		"rotate_every":   "int",
+	},
+	"api_keys": map[string]interface{}{
+		"shodan":         "string",
+		"censys":         "string",
+		"censys_id":      "string",
+		"censys_secret":  "string",
+		"fofa":           "string",
+		"github":         "string",
+		"securitytrails": "string",
+		"virustotal":     "string",
+		"chaos":          "string",
+	},
+	"tools": map[string]interface{}{
+		"subfinder": "SubfinderConfig",
+		"amass":     "AmassConfig",
+		"nuclei":    "NucleiConfig",
+		"httpx":     "HttpxConfig",
+		"naabu":     "NaabuConfig",
+		"ffuf":      "FfufConfig",
+		"dalfox":    "DalfoxConfig",
+		"katana":    "KatanaConfig",
+		"gospider":  "GoSpiderConfig",
+	},
+	"tools.subfinder": map[string]interface{}{
+		"threads": "int",
+		"timeout": "int",
+	},
+	"tools.amass": map[string]interface{}{
+		"timeout": "int",
+	},
+	"tools.nuclei": map[string]interface{}{
+		"concurrency":     "int",
+		"rate_limit":      "int",
+		"exclude_tags":    "slice",
+		"severity":        "slice",
+		"disable_oob":     "bool",
+		"max_timeout_min": "int",
+		"dast_aggression": "string",
+	},
+	"tools.httpx": map[string]interface{}{
+		"threads":          "int",
+		"timeout":          "int",
+		"ports":            "slice",
+		"follow_redirects": "bool",
+	},
+	"tools.naabu": map[string]interface{}{
+		"threads": "int",
+		"rate":    "int",
+		"ports":   "string",
+		"timeout": "int",
+	},
+	"tools.ffuf": map[string]interface{}{
+		"threads":         "int",
+		"timeout":         "int",
+		"match_codes":     "slice",
+		"max_timeout_min": "int",
+	},
+	"tools.dalfox": map[string]interface{}{
+		"max_urls":         "int",
+		"skip_third_party": "bool",
+		"max_timeout_min":  "int",
+	},
+	"tools.katana": map[string]interface{}{
+		"timeout": "int",
+	},
+	"tools.gospider": map[string]interface{}{
+		"timeout": "int",
+	},
+	"notifications": map[string]interface{}{
+		"enabled":            "bool",
+		"step_complete":      "bool",
+		"min_severity":       "string",
+		"discord_webhook":    "string",
+		"slack_webhook":      "string",
+		"telegram_bot_token": "string",
+		"telegram_chat_id":   "string",
+		"webhook_url":        "string",
+	},
+	"scope": map[string]interface{}{
+		"in_scope":      "slice",
+		"out_of_scope":  "slice",
+		"exclude_ips":   "slice",
+		"allowed_ports": "slice",
+	},
+	"rate_limits": map[string]interface{}{
+		"global_rps": "int",
+	},
+}
+
+func validateYAMLNode(node *yaml.Node, path string) []string {
+	var warnings []string
+	if node.Kind == yaml.DocumentNode {
+		for _, content := range node.Content {
+			warnings = append(warnings, validateYAMLNode(content, path)...)
+		}
+		return warnings
+	}
+
+	if node.Kind == yaml.MappingNode {
+		expected, exists := expectedKeys[path]
+		if !exists {
+			return warnings
+		}
+		expectedMap, ok := expected.(map[string]interface{})
+		if !ok {
+			return warnings
+		}
+
+		for i := 0; i < len(node.Content); i += 2 {
+			keyNode := node.Content[i]
+			valNode := node.Content[i+1]
+			key := keyNode.Value
+
+			_, keyValid := expectedMap[key]
+			if !keyValid {
+				displayPath := key
+				if path != "" {
+					displayPath = path + "." + key
+				}
+				warnings = append(warnings, fmt.Sprintf("unknown config key: %s", displayPath))
+			} else {
+				childPath := key
+				if path != "" {
+					childPath = path + "." + key
+				}
+				warnings = append(warnings, validateYAMLNode(valNode, childPath)...)
+			}
+		}
+	}
+	return warnings
+}
+
 // Load loads configuration from a YAML file
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// First pass: validate YAML keys
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err == nil {
+		warnings := validateYAMLNode(&root, "")
+		for _, w := range warnings {
+			logger.Warning("%s", w)
+		}
 	}
 
 	cfg := &Config{}
@@ -425,6 +609,8 @@ func defaultInt(val *int, def int) {
 func applyDefaults(cfg *Config) {
 	defaultString(&cfg.General.Mode, "native")
 	defaultInt(&cfg.General.JSLimit, 2000)
+	defaultInt(&cfg.General.MaxRetries, 1)
+	defaultInt(&cfg.General.RetryDelaySec, 3)
 	defaultInt(&cfg.Tools.Nuclei.Concurrency, 25)
 	defaultInt(&cfg.Tools.Nuclei.RateLimit, 150)
 	defaultInt(&cfg.Tools.Nuclei.MaxTimeout, 180)
@@ -436,11 +622,30 @@ func applyDefaults(cfg *Config) {
 	if cfg.Tools.Dalfox.SkipThirdParty == nil {
 		cfg.Tools.Dalfox.SkipThirdParty = newBool(true)
 	}
+	defaultInt(&cfg.Tools.Dalfox.MaxTimeout, 120)
 	defaultInt(&cfg.Tools.Naabu.Timeout, 240)
 	defaultInt(&cfg.Tools.Ffuf.MaxTimeout, 180)
 	defaultInt(&cfg.Tools.Katana.Timeout, 300)
 	defaultInt(&cfg.Tools.GoSpider.Timeout, 300)
 	defaultString(&cfg.Notifications.MinSeverity, "high")
+
+	// Dynamic fallback for wordlist paths if the configured paths do not exist on disk
+	resolveWordlist := func(configuredPath, subpath string) string {
+		if configuredPath != "" {
+			if _, err := os.Stat(configuredPath); err == nil {
+				return configuredPath
+			}
+		}
+		resolved := filepath.Join(resolveSeclistsBase(), subpath)
+		if _, err := os.Stat(resolved); err == nil {
+			return resolved
+		}
+		return configuredPath
+	}
+
+	cfg.General.Wordlists.Subdomains = resolveWordlist(cfg.General.Wordlists.Subdomains, filepath.Join("Discovery", "DNS", "subdomains-top1million-5000.txt"))
+	cfg.General.Wordlists.Directories = resolveWordlist(cfg.General.Wordlists.Directories, filepath.Join("Discovery", "Web-Content", "common.txt"))
+	cfg.General.Wordlists.Parameters = resolveWordlist(cfg.General.Wordlists.Parameters, filepath.Join("Discovery", "Web-Content", "burp-parameter-names.txt"))
 
 	// Proxy scraping defaults
 	defaultInt(&cfg.General.ProxyScraping.TimeoutMin, 10)
@@ -496,15 +701,25 @@ func (c *Config) GetAPIKey(name string) string {
 // and finally Debian/Kali (/usr/share/wordlists/seclists).
 // Returns whichever path exists, falling back to the Debian path.
 func resolveSeclistsBase() string {
-	localPath := filepath.Join(paths.ChaathanHome(), "seclists")
-	archPath := "/usr/share/seclists"
-	debianPath := "/usr/share/wordlists/seclists"
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(paths.ChaathanHome(), "seclists"),
+		filepath.Join(paths.ChaathanHome(), "SecLists"),
+		filepath.Join(home, "seclists"),
+		filepath.Join(home, "SecLists"),
+		"/usr/share/seclists",
+		"/usr/share/SecLists",
+		"/usr/share/wordlists/seclists",
+		"/usr/share/wordlists/SecLists",
+	}
 
-	if info, err := os.Stat(localPath); err == nil && info.IsDir() {
-		return localPath
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if info, err := os.Stat(filepath.Join(p, "Discovery")); err == nil && info.IsDir() {
+			return p
+		}
 	}
-	if info, err := os.Stat(archPath); err == nil && info.IsDir() {
-		return archPath
-	}
-	return debianPath
+	return "/usr/share/wordlists/seclists"
 }

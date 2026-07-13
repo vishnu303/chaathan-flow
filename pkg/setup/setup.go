@@ -2,6 +2,7 @@
 package setup
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,23 +34,28 @@ func (c *SetupContext) IsForceUpdate() bool {
 	return c.Config.ForceUpdate
 }
 
-// RunCommand executes a command without any timeout, streaming/logging via SetupLogger.
+// RunCommand executes a command with a default timeout, streaming/logging via SetupLogger.
 func (c *SetupContext) RunCommand(displayName string, name string, args ...string) error {
 	return c.RunCommandInDir("", displayName, name, args...)
 }
 
-// RunCommandInDir executes a command in a specified directory without timeout, streaming/logging via SetupLogger.
+// RunCommandInDir executes a command in a specified directory with a default timeout, streaming/logging via SetupLogger.
 func (c *SetupContext) RunCommandInDir(dir string, displayName string, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	setPGID(cmd) // M1: Setpgid true
+
 	if c.Logger != nil {
 		return c.Logger.CaptureCommandOutput(cmd, displayName, c.IsVerbose())
 	}
 	return cmd.Run()
 }
 
-// Run executes the complete chaathan setup workflow.
-func Run(cfg RunConfig) {
+// Run executes the complete chaathan setup workflow. Returns an error if any installer fails.
+func Run(cfg RunConfig) error {
 	start := time.Now()
 
 	title := "🔧 Chaathan Setup"
@@ -71,9 +77,10 @@ func Run(cfg RunConfig) {
 
 	installPrerequisites(ctx)
 
-	if ok, _ := CheckGoInstalledAndAtLeast126(); !ok {
+	ensureSystemGoOnPath()
+	if ok, _ := checkGoVersion(); !ok {
 		progress.ItemFail("Go runtime validation failed", "Please install Go 1.26+ manually")
-		return
+		return fmt.Errorf("Go runtime validation failed: Go version >= 1.26 is required")
 	}
 
 	var totalInstalled, totalSkipped, totalFailed int32
@@ -120,15 +127,22 @@ func Run(cfg RunConfig) {
 	if totalFailed > 0 && logger != nil {
 		progress.Tip(fmt.Sprintf("Check log for errors: %s", logger.Path()))
 	}
+
+	if totalFailed > 0 {
+		return fmt.Errorf("setup completed with %d failures", totalFailed)
+	}
+	return nil
 }
 
-// resolveGOPATH returns the resolved GOPATH directory path, defaulting to ~/go.
-func resolveGOPATH() string {
+// resolveGOPATH returns the resolved GOPATH directory path, or an error if the user home directory cannot be found.
+func resolveGOPATH() (string, error) {
 	gopath := os.Getenv("GOPATH")
 	if gopath == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			gopath = filepath.Join(home, "go")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to get user home directory: %w", err)
 		}
+		gopath = filepath.Join(home, "go")
 	}
-	return gopath
+	return gopath, nil
 }

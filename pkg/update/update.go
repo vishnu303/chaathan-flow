@@ -7,7 +7,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vishnu303/chaathan/pkg/logger"
 )
+
+// githubRepo defines the canonical GitHub repository path for Chaathan
+const githubRepo = "vishnu303/chaathan"
+
+var apiBaseURL = "https://api.github.com"
 
 // ReleaseInfo holds details about the latest available release.
 type ReleaseInfo struct {
@@ -17,23 +24,56 @@ type ReleaseInfo struct {
 }
 
 // CheckForUpdates queries the GitHub Releases API to see if a newer version is available.
+//
+// Gap Notice: This function is check-only. It performs version check only
+// and does NOT download, apply, or roll back releases. The self-update apply logic is
+// deferred as a known gap until a security-reviewed installation path is provided.
 func CheckForUpdates(currentVersion string) (*ReleaseInfo, error) {
+	// Set connection timeout to 10s
 	client := &http.Client{
-		Timeout: 3 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/vishnu303/chaathan/releases/latest", nil)
+	url := fmt.Sprintf("%s/repos/%s/releases/latest", apiBaseURL, githubRepo)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("User-Agent", "chaathan-updater")
+	// Set User-Agent containing the current version
+	req.Header.Set("User-Agent", fmt.Sprintf("chaathan-updater/%s", currentVersion))
 
-	resp, err := client.Do(req)
+	var resp *http.Response
+	// Retry once on rate limits or server errors with a backoff
+	for attempt := 0; attempt < 2; attempt++ {
+		resp, err = client.Do(req)
+		if err == nil {
+			if resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode >= 500 && resp.StatusCode <= 599) {
+				if attempt == 0 {
+					resp.Body.Close()
+					time.Sleep(2 * time.Second)
+					continue
+				}
+			}
+			break
+		}
+		if attempt == 0 {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		break
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// Log if rate limit is near exhaustion
+	if remainingHeader := resp.Header.Get("X-RateLimit-Remaining"); remainingHeader != "" {
+		if remaining, err := strconv.Atoi(remainingHeader); err == nil && remaining <= 3 {
+			logger.FileDebug("update: GitHub API rate limit near zero: %d remaining", remaining)
+		}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status: %s", resp.Status)
@@ -58,6 +98,9 @@ func CheckForUpdates(currentVersion string) (*ReleaseInfo, error) {
 }
 
 // IsNewer compares the current version against the latest fetched version using SemVer rules.
+//
+// If the current version is "dev", empty "", or has a "dev-" prefix, this function
+// returns false early to prevent update prompts on development builds.
 func IsNewer(current, latest string) bool {
 	if current == "dev" || current == "" || strings.HasPrefix(current, "dev-") {
 		return false
@@ -72,8 +115,13 @@ func IsNewer(current, latest string) bool {
 	currVer := currParts[0]
 	lateVer := lateParts[0]
 
-	currNums := parseVersionNumbers(currVer)
-	lateNums := parseVersionNumbers(lateVer)
+	currNums, errCurr := parseVersionNumbers(currVer)
+	lateNums, errLate := parseVersionNumbers(lateVer)
+
+	// Fall back to lexicographical string comparison if segment parsing fails
+	if errCurr != nil || errLate != nil {
+		return lateVer > currVer
+	}
 
 	// Compare major, minor, and patch numbers
 	for i := 0; i < 3; i++ {
@@ -99,8 +147,8 @@ func IsNewer(current, latest string) bool {
 		return false
 	}
 	if hasCurrPre && hasLatePre {
-		// Both are pre-releases: lexicographically compare suffix (e.g., beta.2 > beta.1)
-		return lateParts[1] > currParts[1]
+		// Segment-by-segment comparison of numeric and lexicographical pre-release tags
+		return comparePreRelease(lateParts[1], currParts[1])
 	}
 
 	return false
@@ -113,16 +161,56 @@ func cleanVersion(v string) string {
 	return v
 }
 
-func parseVersionNumbers(v string) [3]int {
-	parts := strings.SplitN(v, ".", 3)
+// parseVersionNumbers detects dropped components/4-part versions and returns an error
+func parseVersionNumbers(v string) ([3]int, error) {
+	parts := strings.Split(v, ".")
 	var nums [3]int
+	if len(parts) > 3 {
+		return nums, fmt.Errorf("more than 3 components in version: %s", v)
+	}
 	for i := 0; i < 3; i++ {
 		if i < len(parts) {
 			n, err := strconv.Atoi(parts[i])
-			if err == nil {
-				nums[i] = n
+			if err != nil {
+				return nums, fmt.Errorf("non-numeric component %q in version %q: %w", parts[i], v, err)
+			}
+			nums[i] = n
+		}
+	}
+	return nums, nil
+}
+
+// comparePreRelease compares pre-release suffixes
+func comparePreRelease(late, curr string) bool {
+	lateSegs := strings.Split(late, ".")
+	currSegs := strings.Split(curr, ".")
+	
+	minLen := len(lateSegs)
+	if len(currSegs) < minLen {
+		minLen = len(currSegs)
+	}
+	
+	for i := 0; i < minLen; i++ {
+		lSeg := lateSegs[i]
+		cSeg := currSegs[i]
+		
+		if lSeg == cSeg {
+			continue
+		}
+		
+		lNum, errL := strconv.Atoi(lSeg)
+		cNum, errC := strconv.Atoi(cSeg)
+		
+		if errL == nil && errC == nil {
+			if lNum != cNum {
+				return lNum > cNum
+			}
+		} else {
+			if lSeg != cSeg {
+				return lSeg > cSeg
 			}
 		}
 	}
-	return nums
+	
+	return len(lateSegs) > len(currSegs)
 }

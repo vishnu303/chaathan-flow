@@ -48,7 +48,11 @@ func SummarizeSeverityCounts(exact, host map[string]int) string {
 	for _, sev := range order {
 		total := exact[sev] + host[sev]
 		if total > 0 {
-			parts = append(parts, fmt.Sprintf("%s:%d", sev[:1], total))
+			short := "?"
+			if len(sev) > 0 {
+				short = sev[:1]
+			}
+			parts = append(parts, fmt.Sprintf("%s:%d", short, total))
 		}
 	}
 	if len(parts) == 0 {

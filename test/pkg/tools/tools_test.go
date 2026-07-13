@@ -2,27 +2,19 @@ package tools_test
 
 import (
 	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/config"
-	"github.com/vishnu303/chaathan/pkg/runner"
 	"github.com/vishnu303/chaathan/pkg/tools"
+	"github.com/vishnu303/chaathan/test/pkg/runner/runnerfaketest"
 )
 
-type DummyRunner struct {
-	LastCmd  string
-	LastArgs []string
-}
-
-func (d *DummyRunner) Run(ctx context.Context, command string, args []string, opts ...runner.Option) (string, error) {
-	d.LastCmd = command
-	d.LastArgs = args
-	return "dummy output", nil
-}
-
 func TestToolBoxOptionsAndHelpers(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 
 	if tb == nil {
@@ -69,7 +61,7 @@ func TestToolBoxOptionsAndHelpers(t *testing.T) {
 }
 
 func TestX8Headers(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 
 	tb.WithCustomAuth("my_cookie_val", []string{"X-My-Header: header_val"})
@@ -109,7 +101,7 @@ func TestX8Headers(t *testing.T) {
 }
 
 func TestGoSpiderUA(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 	tb.WithGeneral(&config.GeneralConfig{UserAgent: "custom_gospider_ua"})
 
@@ -139,7 +131,7 @@ func TestGoSpiderUA(t *testing.T) {
 }
 
 func TestDalfoxUA(t *testing.T) {
-	dr := &DummyRunner{}
+	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 	tb.WithGeneral(&config.GeneralConfig{UserAgent: "custom_dalfox_ua"})
 
@@ -167,3 +159,240 @@ func TestDalfoxUA(t *testing.T) {
 		t.Error("expected native --user-agent argument in Dalfox command")
 	}
 }
+
+func TestRunAmassIntel(t *testing.T) {
+	dr := &runnerfaketest.DummyRunner{}
+	tb := tools.New(dr)
+
+	// Attach amass config
+	tb.Config = &config.ToolsConfig{
+		Amass: config.AmassConfig{
+			Timeout: 45,
+		},
+	}
+
+	ctx := context.Background()
+	err := tb.RunAmassIntel(ctx, "company_name", "root_domains.txt")
+	if err != nil {
+		t.Fatalf("unexpected error running RunAmassIntel: %v", err)
+	}
+
+	if dr.LastCmd != "amass" {
+		t.Errorf("expected command 'amass', got %q", dr.LastCmd)
+	}
+
+	// Verify arguments: intel, -whois, -d, company_name, -o, root_domains.txt, -timeout, 45
+	argsJoined := strings.Join(dr.LastArgs, " ")
+	expectedArgs := []string{"intel", "-whois", "-d company_name", "-o root_domains.txt", "-timeout 45"}
+	for _, expected := range expectedArgs {
+		if !strings.Contains(argsJoined, expected) {
+			t.Errorf("expected arguments to contain %q, got %q", expected, argsJoined)
+		}
+	}
+}
+
+func TestRunUncoverEnvVars(t *testing.T) {
+	dr := &runnerfaketest.DummyRunner{}
+	tb := tools.New(dr)
+	tb.APIKeys = &config.APIKeysConfig{
+		Shodan: "shodan_key",
+		CensysID: "censys_id_val",
+		CensysSecret: "censys_secret_val",
+	}
+
+	ctx := context.Background()
+	err := tb.RunUncover(ctx, "target.com", "out.txt")
+	if err != nil {
+		t.Fatalf("unexpected error running RunUncover: %v", err)
+	}
+
+	opts := dr.GetOptions()
+	expectedEnv := []string{"SHODAN_API_KEY=shodan_key", "CENSYS_API_ID=censys_id_val", "CENSYS_API_SECRET=censys_secret_val"}
+	for _, env := range expectedEnv {
+		found := false
+		for _, e := range opts.Env {
+			if e == env {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected env var %q, not found in options.Env: %v", env, opts.Env)
+		}
+	}
+}
+
+func TestRunKatanaProxy(t *testing.T) {
+	dr := &runnerfaketest.DummyRunner{}
+	tb := tools.New(dr)
+	tb.WithGeneral(&config.GeneralConfig{Proxy: "http://katana-proxy:8080"})
+
+	ctx := context.Background()
+	err := tb.RunKatana(ctx, "in.txt", "out.txt")
+	if err != nil {
+		t.Fatalf("unexpected error running RunKatana: %v", err)
+	}
+
+	argsJoined := strings.Join(dr.LastArgs, " ")
+	if !strings.Contains(argsJoined, "-proxy http://katana-proxy:8080") {
+		t.Errorf("expected arguments to contain proxy, got %q", argsJoined)
+	}
+}
+
+func TestRunHakrawlerStdin(t *testing.T) {
+	dr := &runnerfaketest.DummyRunner{}
+	tb := tools.New(dr)
+
+	ctx := context.Background()
+	err := tb.RunHakrawler(ctx, "http://target.com", "out.txt")
+	if err != nil {
+		t.Fatalf("unexpected error running RunHakrawler: %v", err)
+	}
+
+	opts := dr.GetOptions()
+	if opts.Stdin == nil {
+		t.Fatal("expected Stdin to be configured in runner options")
+	}
+
+	reader := opts.Stdin()
+	buf, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("failed to read stdin from factory: %v", err)
+	}
+
+	if string(buf) != "http://target.com\n" {
+		t.Errorf("expected stdin to contain http://target.com\\n, got %q", string(buf))
+	}
+}
+
+func TestNucleiScanAppendCommon(t *testing.T) {
+	dr := &runnerfaketest.DummyRunner{}
+	tb := tools.New(dr)
+	tb.WithGeneral(&config.GeneralConfig{Proxy: "socks5://127.0.0.1:9050", UserAgent: "nuclei_ua"})
+	tb.WithCustomAuth("cookie_val", []string{"Auth: token"})
+
+	scanner, err := tb.GetScanner("nuclei")
+	if err != nil {
+		t.Fatalf("unexpected error getting nuclei scanner: %v", err)
+	}
+
+	ctx := context.Background()
+	err = scanner.Scan(ctx, "targets.txt", "out.txt", tools.ScanOptions{
+		Mode: "standard",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error running nuclei Scan: %v", err)
+	}
+
+	argsJoined := strings.Join(dr.LastArgs, " ")
+	if !strings.Contains(argsJoined, "User-Agent: nuclei_ua") {
+		t.Errorf("expected arguments to contain User-Agent header, got %q", argsJoined)
+	}
+	if !strings.Contains(argsJoined, "-proxy socks5://127.0.0.1:9050") {
+		t.Errorf("expected arguments to contain proxy, got %q", argsJoined)
+	}
+	if !strings.Contains(argsJoined, "-H Auth: token") {
+		t.Errorf("expected arguments to contain custom Auth header, got %q", argsJoined)
+	}
+	if !strings.Contains(argsJoined, "Cookie: cookie_val") {
+		t.Errorf("expected arguments to contain custom Cookie, got %q", argsJoined)
+	}
+}
+
+func TestBuildFfufArgs(t *testing.T) {
+	tb := tools.New(&runnerfaketest.DummyRunner{})
+	tb.WithGeneral(&config.GeneralConfig{Proxy: "http://ffuf-proxy"})
+
+	args := tb.RunFfufArgsTestHelper("http://target.com", "wordlist.txt", "out.json")
+	argsJoined := strings.Join(args, " ")
+
+	expected := []string{"-u http://target.com", "-w wordlist.txt", "-o out.json", "-x http://ffuf-proxy"}
+	for _, exp := range expected {
+		if !strings.Contains(argsJoined, exp) {
+			t.Errorf("expected arguments to contain %q, got %q", exp, argsJoined)
+		}
+	}
+}
+
+func TestRunNaabuListPortParsing(t *testing.T) {
+	tests := []struct {
+		ports        string
+		expectedArgs []string
+	}{
+		{"top", []string{"-top-ports", "100"}},
+		{"top-100", []string{"-top-ports", "100"}},
+		{"top-1000", []string{"-top-ports", "1000"}},
+		{"full", []string{"-p", "-"}},
+		{"-", []string{"-p", "-"}},
+		{"80,443,8080", []string{"-p", "80,443,8080"}},
+	}
+
+	for _, tc := range tests {
+		dr := &runnerfaketest.DummyRunner{}
+		tb := tools.New(dr)
+		tb.Config = &config.ToolsConfig{
+			Naabu: config.NaabuConfig{
+				Ports: tc.ports,
+			},
+		}
+
+		ctx := context.Background()
+		_ = tb.RunNaabuList(ctx, "hosts.txt", "out.txt")
+
+		argsJoined := strings.Join(dr.LastArgs, " ")
+		for _, exp := range tc.expectedArgs {
+			if !strings.Contains(argsJoined, exp) {
+				t.Errorf("for ports=%q, expected arguments to contain %q, got %q", tc.ports, exp, argsJoined)
+			}
+		}
+	}
+}
+
+func TestAppendCommonMatrix(t *testing.T) {
+	tb := tools.New(&runnerfaketest.DummyRunner{})
+	tb.WithGeneral(&config.GeneralConfig{UserAgent: "test_ua", Proxy: "http://proxy"})
+	tb.WithCustomAuth("cookie_val", []string{"X-Test: header_val"})
+
+	args := tb.AppendCommonTestHelper([]string{"initial"}, true, true, "-H", "-cookie", "-proxy")
+	argsJoined := strings.Join(args, " ")
+
+	expected := []string{
+		"-H User-Agent: test_ua",
+		"-tls-impersonate",
+		"-H X-Test: header_val",
+		"-cookie cookie_val",
+		"-proxy http://proxy",
+	}
+
+	for _, exp := range expected {
+		if !strings.Contains(argsJoined, exp) {
+			t.Errorf("expected arguments to contain %q, got %q", exp, argsJoined)
+		}
+	}
+}
+
+func TestWriteToFileHarden(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "chaathan_test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	targetPath := filepath.Join(tempDir, "nested", "sub", "test.txt")
+	tb := tools.New(&runnerfaketest.DummyRunner{})
+
+	err = tb.WriteToFileTestHelper(targetPath, "hello world")
+	if err != nil {
+		t.Fatalf("unexpected error in writeToFile helper: %v", err)
+	}
+
+	content, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("failed to read written file: %v", err)
+	}
+
+	if string(content) != "hello world" {
+		t.Errorf("expected file content to be 'hello world', got %q", string(content))
+	}
+}
+

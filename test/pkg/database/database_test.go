@@ -8,6 +8,7 @@ import (
 )
 
 func TestDatabaseOperations(t *testing.T) {
+	// NOT t.Parallel
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
 
@@ -111,5 +112,102 @@ func TestDatabaseOperations(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("failed to upsert URL metadata: %v", err)
+	}
+
+	// 14. GF Matches
+	gfMatches := []database.GFMatch{
+		{URL: "http://sub.testdomain.com/js/app.js", Pattern: "sqli"},
+		{URL: "http://sub.testdomain.com/js/app.js", Pattern: "xss"},
+		{URL: "http://sub.testdomain.com/js/lib.js", Pattern: "rce"},
+		{URL: "http://sub.testdomain.com/js/lib.js", Pattern: "rce"}, // Duplicate to check INSERT OR IGNORE
+	}
+	err = database.InsertGFMatches(scan.ID, gfMatches)
+	if err != nil {
+		t.Errorf("failed to insert gf matches: %v", err)
+	}
+
+	fetchedGF, err := database.GetGFMatchesByScan(scan.ID)
+	if err != nil {
+		t.Fatalf("failed to get gf matches: %v", err)
+	}
+
+	if len(fetchedGF) != 2 {
+		t.Errorf("expected 2 URLs with gf matches, got %d", len(fetchedGF))
+	}
+
+	appMatches := fetchedGF["http://sub.testdomain.com/js/app.js"]
+	if len(appMatches) != 2 {
+		t.Errorf("expected 2 pattern matches for app.js, got %d: %v", len(appMatches), appMatches)
+	}
+
+	libMatches := fetchedGF["http://sub.testdomain.com/js/lib.js"]
+	if len(libMatches) != 1 {
+		t.Errorf("expected 1 pattern match for lib.js (deduplicated), got %d: %v", len(libMatches), libMatches)
+	}
+}
+
+func TestNullStringMetadataReads(t *testing.T) {
+	// NOT t.Parallel
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test_nulls.db")
+
+	err := database.Initialize(dbPath)
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+	defer database.Close()
+
+	scanID := int64(12345)
+	hosts := []string{"target-null.com"}
+	err = database.MarkHostsJSSecrets(scanID, hosts)
+	if err != nil {
+		t.Fatalf("failed to insert partial host metadata: %v", err)
+	}
+
+	metas, err := database.GetHostMetadata(scanID)
+	if err != nil {
+		t.Fatalf("failed to get host metadata with nulls: %v", err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("expected 1 host metadata record, got %d", len(metas))
+	}
+	if metas[0].Host != "target-null.com" {
+		t.Errorf("expected host 'target-null.com', got %q", metas[0].Host)
+	}
+	if metas[0].BaseURL != "" {
+		t.Errorf("expected empty BaseURL for NULL value, got %q", metas[0].BaseURL)
+	}
+	if metas[0].HeadersJSON != "" {
+		t.Errorf("expected empty HeadersJSON for NULL value, got %q", metas[0].HeadersJSON)
+	}
+
+	err = database.InsertRawURLMetadataForTest(scanID, "http://target-null.com/path", "target-null.com")
+	if err != nil {
+		t.Fatalf("failed to insert partial url metadata: %v", err)
+	}
+
+	urlMetas, err := database.GetURLMetadata(scanID)
+	if err != nil {
+		t.Fatalf("failed to get url metadata with nulls: %v", err)
+	}
+	if len(urlMetas) != 1 {
+		t.Fatalf("expected 1 url metadata record, got %d", len(urlMetas))
+	}
+	if urlMetas[0].HeadersJSON != "" {
+		t.Errorf("expected empty HeadersJSON for NULL value, got %q", urlMetas[0].HeadersJSON)
+	}
+}
+
+func TestNilDBGuard(t *testing.T) {
+	database.Close()
+	oldDB := database.DB
+	database.DB = nil
+	defer func() {
+		database.DB = oldDB
+	}()
+
+	_, err := database.CreateScan("test.com", "wildcard", "", "")
+	if err != database.ErrDBNotInitialized {
+		t.Errorf("expected ErrDBNotInitialized, got %v", err)
 	}
 }

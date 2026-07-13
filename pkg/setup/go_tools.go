@@ -30,10 +30,27 @@ func installGoToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
 	if skippedCount == 0 {
 		detail = fmt.Sprintf("%d to install", len(toInstall))
 	}
-	progress.Section("Go Tools", detail)
+	progress.Section("[2/7] Go Tools", detail)
 
 	if len(toInstall) == 0 {
 		progress.ItemInfo("Nothing to do")
+		// M8: Run downloadNucleiTemplates if nuclei is already installed
+		nucleiFound := false
+		for _, t := range tools.GoInstallableTools() {
+			if t.Name == "nuclei" {
+				if ok, _ := t.CheckStatus(); ok {
+					nucleiFound = true
+				}
+			}
+		}
+		if nucleiFound {
+			progress.ItemPending("Updating nuclei templates...")
+			if err := downloadNucleiTemplates(ctx); err != nil {
+				progress.ItemFail("nuclei templates update", err.Error())
+			} else {
+				progress.ItemOK("nuclei templates update")
+			}
+		}
 		return 0, skippedCount, 0
 	}
 
@@ -46,13 +63,28 @@ func installGoToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
 			tracker.Fail(t.name, err.Error())
 		} else {
 			tracker.Complete(t.name)
-			if t.name == "nuclei" {
-				_ = downloadNucleiTemplates(ctx) // best effort
-			}
 		}
 	}
 
 	tracker.StopSpinner()
+
+	// M8: run downloadNucleiTemplates on every nuclei success (incl. --update)
+	nucleiFound := false
+	for _, t := range tools.GoInstallableTools() {
+		if t.Name == "nuclei" {
+			if ok, _ := t.CheckStatus(); ok {
+				nucleiFound = true
+			}
+		}
+	}
+	if nucleiFound {
+		progress.ItemPending("Updating nuclei templates...")
+		if err := downloadNucleiTemplates(ctx); err != nil {
+			progress.ItemFail("nuclei templates update", err.Error())
+		} else {
+			progress.ItemOK("nuclei templates update")
+		}
+	}
 
 	i, _, f := tracker.Stats()
 	return i, skippedCount, f
@@ -70,7 +102,7 @@ func downloadNucleiTemplates(ctx *SetupContext) error {
 		nucleiPath = p
 	} else {
 		// Fallback to GOPATH/bin
-		if gopath := resolveGOPATH(); gopath != "" {
+		if gopath, err := resolveGOPATH(); err == nil { // L10: handle resolveGOPATH error
 			candidate := filepath.Join(gopath, "bin", "nuclei")
 			if _, errStat := os.Stat(candidate); errStat == nil {
 				nucleiPath = candidate

@@ -19,11 +19,11 @@ import (
 
 // HarvestConfig controls the proxy scraping and validation.
 type HarvestConfig struct {
-	Domain        string   // target domain to validate proxies against
-	TimeoutMin    int      // max scraper runtime in minutes (default: 10)
-	ProxyTypes    []string // preferred types: ["socks5","http","socks4"]
-	MaxConcurrent int      // concurrent checks (default: 256)
-	OutputDir     string   // working directory for temp files and output
+	TimeoutMin      int      // max scraper runtime in minutes (default: 10)
+	ProxyTypes      []string // preferred types: ["socks5","http","socks4"]
+	MaxConcurrent   int      // concurrent checks (default: 256)
+	OutputDir       string   // working directory for temp files and output
+	CheckTimeoutSec int      // mubeng per-check timeout in seconds (default: 5)
 }
 
 // HarvestResult holds the output of a proxy scraping run.
@@ -35,7 +35,8 @@ type HarvestResult struct {
 	Duration      time.Duration // wall-clock duration of the harvest
 }
 
-// Source URLs from the original proxy-scraper-checker template
+// Source URLs from the original proxy-scraper-checker template.
+// L1: These slices are read-only internals and should not be mutated from outside.
 var httpSources = []string{
 	"https://api.proxyscrape.com/v3/free-proxy-list/get?request=getproxies&protocol=http",
 	"https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/http.txt",
@@ -136,13 +137,18 @@ func RunHarvest(ctx context.Context, cfg HarvestConfig) (*HarvestResult, error) 
 	}
 
 	logger.SubStep("Validating proxies with mubeng...")
-	
+
+	checkTimeoutSec := cfg.CheckTimeoutSec
+	if checkTimeoutSec <= 0 {
+		checkTimeoutSec = 5
+	}
+
 	cmd := exec.Command(mubengPath,
 		"-f", rawProxiesPath,
 		"--check",
 		"--output", liveProxiesPath,
 		"-g", fmt.Sprintf("%d", maxConcurrent),
-		"-t", "5s",
+		"-t", fmt.Sprintf("%ds", checkTimeoutSec),
 	)
 	cmd.Dir = workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

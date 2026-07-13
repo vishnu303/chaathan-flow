@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/utils"
 )
 
@@ -326,7 +328,7 @@ https://example.com/a
 		t.Fatal(err)
 	}
 
-	err = utils.SanitizeURLFile(urlFile)
+	err = utils.SanitizeURLFile(urlFile, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,5 +341,250 @@ https://example.com/a
 	wantSanitized := "http://example.com/b&c=3\nhttps://example.com/a\n"
 	if string(content) != wantSanitized {
 		t.Errorf("SanitizeURLFile content = %q, want %q", string(content), wantSanitized)
+	}
+}
+
+func TestParseNucleiOutput(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	if err := database.Initialize(dbPath); err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	defer func() {
+		if database.DB != nil {
+			database.DB.Close()
+			database.DB = nil
+		}
+	}()
+
+	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
+	if err != nil {
+		t.Fatalf("failed to create scan: %v", err)
+	}
+
+	nucleiJSONL := `{"template-id":"xss-injection","info":{"name":"Reflected XSS","severity":"High","description":"XSS detected"},"host":"example.com","matched-at":"https://example.com/search?q=1","extractor-name":"rxss-extractor","extracted-results":["rxss-payload"]}`
+	filePath := filepath.Join(tempDir, "nuclei.jsonl")
+	if err := os.WriteFile(filePath, []byte(nucleiJSONL+"\n"), 0644); err != nil {
+		t.Fatalf("failed to write nuclei file: %v", err)
+	}
+
+	count, err := utils.ParseNucleiOutput(scanObj.ID, filePath)
+	if err != nil {
+		t.Fatalf("ParseNucleiOutput error: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("expected 1 result parsed, got %d", count)
+	}
+
+	vulns, err := database.GetVulnerabilities(scanObj.ID)
+	if err != nil {
+		t.Fatalf("GetVulnerabilities error: %v", err)
+	}
+
+	if len(vulns) != 1 {
+		t.Fatalf("expected 1 vuln in database, got %d", len(vulns))
+	}
+
+	v := vulns[0]
+	if v.TemplateID != "xss-injection" {
+		t.Errorf("expected template ID 'xss-injection', got %q", v.TemplateID)
+	}
+	if v.Severity != "high" {
+		t.Errorf("expected severity 'high', got %q", v.Severity)
+	}
+	if !strings.Contains(v.Evidence, "Extractor: rxss-extractor") {
+		t.Errorf("expected evidence to contain extractor name, got %q", v.Evidence)
+	}
+	if !strings.Contains(v.Evidence, "rxss-payload") {
+		t.Errorf("expected evidence to contain extracted-results payload, got %q", v.Evidence)
+	}
+}
+
+func TestParseHttpxOutput(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	if err := database.Initialize(dbPath); err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	defer func() {
+		if database.DB != nil {
+			database.DB.Close()
+			database.DB = nil
+		}
+	}()
+
+	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
+	if err != nil {
+		t.Fatalf("failed to create scan: %v", err)
+	}
+
+	if err := database.AddSubdomain(scanObj.ID, "example.com", "test"); err != nil {
+		t.Fatalf("failed to add subdomain: %v", err)
+	}
+
+	httpxJSONL := `{"url":"https://example.com/","status_code":200,"title":"Test Title","content_type":"text/html","tech":["Nginx","Go"],"host":"example.com"}`
+	filePath := filepath.Join(tempDir, "httpx.jsonl")
+	if err := os.WriteFile(filePath, []byte(httpxJSONL+"\n"), 0644); err != nil {
+		t.Fatalf("failed to write httpx file: %v", err)
+	}
+
+	count, err := utils.ParseHttpxOutput(scanObj.ID, filePath)
+	if err != nil {
+		t.Fatalf("ParseHttpxOutput error: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("expected 1 result parsed, got %d", count)
+	}
+
+	urls, err := database.GetURLs(scanObj.ID)
+	if err != nil {
+		t.Fatalf("GetURLs error: %v", err)
+	}
+
+	if len(urls) != 1 {
+		t.Fatalf("expected 1 URL, got %d", len(urls))
+	}
+
+	if urls[0].URL != "https://example.com/" {
+		t.Errorf("expected URL 'https://example.com/', got %q", urls[0].URL)
+	}
+
+	subs, err := database.GetLiveSubdomains(scanObj.ID)
+	if err != nil {
+		t.Fatalf("GetLiveSubdomains error: %v", err)
+	}
+
+	if len(subs) != 1 {
+		t.Errorf("expected subdomain to be live, but live count is %d", len(subs))
+	}
+}
+
+func TestParseDalfoxOutput_TextMode(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	if err := database.Initialize(dbPath); err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	defer func() {
+		if database.DB != nil {
+			database.DB.Close()
+			database.DB = nil
+		}
+	}()
+
+	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
+	if err != nil {
+		t.Fatalf("failed to create scan: %v", err)
+	}
+
+	dalfoxOutput := `[POC][G][VULN] http://sub.example.com/index.php?q=%3Cscript%3Ealert(1)%3C/script%3E`
+	filePath := filepath.Join(tempDir, "dalfox.txt")
+	if err := os.WriteFile(filePath, []byte(dalfoxOutput+"\n"), 0644); err != nil {
+		t.Fatalf("failed to write dalfox file: %v", err)
+	}
+
+	count, err := utils.ParseDalfoxOutput(scanObj.ID, filePath)
+	if err != nil {
+		t.Fatalf("ParseDalfoxOutput error: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("expected 1 result parsed, got %d", count)
+	}
+
+	vulns, err := database.GetVulnerabilities(scanObj.ID)
+	if err != nil {
+		t.Fatalf("GetVulnerabilities error: %v", err)
+	}
+
+	if len(vulns) != 1 {
+		t.Fatalf("expected 1 vuln, got %d", len(vulns))
+	}
+
+	v := vulns[0]
+	if v.Host != "sub.example.com" {
+		t.Errorf("expected host 'sub.example.com', got %q", v.Host)
+	}
+	if v.URL != "http://sub.example.com/index.php?q=%3Cscript%3Ealert(1)%3C/script%3E" {
+		t.Errorf("expected url 'http://sub.example.com/...', got %q", v.URL)
+	}
+	if v.Evidence != dalfoxOutput {
+		t.Errorf("expected evidence to be full line, got %q", v.Evidence)
+	}
+}
+
+func TestFileExists_NonExistentError(t *testing.T) {
+	tempDir := t.TempDir()
+	restrictedDir := filepath.Join(tempDir, "restricted")
+	if err := os.Mkdir(restrictedDir, 0000); err != nil {
+		t.Skip("skipping test; cannot create mode 0000 dir on this OS")
+	}
+	
+	targetFile := filepath.Join(restrictedDir, "test.txt")
+	exists := utils.FileExists(targetFile)
+	if exists {
+		t.Errorf("expected FileExists(%q) to be false", targetFile)
+	}
+}
+
+func TestUnescapeUnicodeURL_SurrogatePair(t *testing.T) {
+	in := "http://example.com/?q=\\uD83D\\uDE00"
+	want := "http://example.com/?q=😀"
+	got := utils.UnescapeUnicodeURL(in)
+	if got != want {
+		t.Errorf("UnescapeUnicodeURL(%q) = %q, want %q", in, got, want)
+	}
+}
+
+func TestExportVulnerabilities_CaseInsensitiveSeverity(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "test.db")
+	if err := database.Initialize(dbPath); err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	defer func() {
+		if database.DB != nil {
+			database.DB.Close()
+			database.DB = nil
+		}
+	}()
+
+	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
+	if err != nil {
+		t.Fatalf("failed to create scan: %v", err)
+	}
+
+	err = database.AddVulnerability(
+		scanObj.ID, "example.com", "https://example.com", "rce",
+		"Remote Code Execution", "CrItIcAl", "rce finding", "", "",
+	)
+	if err != nil {
+		t.Fatalf("failed to insert vulnerability: %v", err)
+	}
+
+	err = utils.ExportVulnerabilities(scanObj.ID, tempDir)
+	if err != nil {
+		t.Fatalf("ExportVulnerabilities failed: %v", err)
+	}
+
+	critPath := filepath.Join(tempDir, utils.ExportFilenames[6])
+	content, err := os.ReadFile(critPath)
+	if err != nil {
+		t.Fatalf("failed to read critical high file: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "Remote Code Execution") {
+		t.Errorf("expected critical vuln to be exported, got content: %q", contentStr)
+	}
+}
+
+func BenchmarkUnescapeUnicodeURL(b *testing.B) {
+	input := "https://example.com/api/v1/search?\\u0071=\\u0076\\u0061\\u006c\\u0075\\u0065"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = utils.UnescapeUnicodeURL(input)
 	}
 }

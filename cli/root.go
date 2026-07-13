@@ -12,6 +12,7 @@ import (
 	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
+	"github.com/vishnu303/chaathan/pkg/tools"
 	"github.com/vishnu303/chaathan/pkg/update"
 )
 
@@ -41,10 +42,10 @@ var rootCmd = &cobra.Command{
  | |____| | | | (_| | (_| | |_| | | | (_| | | | |
   \_____|_| |_|\__,_|\__,_|\__|_| |_|\__,_|_| |_|
 
-  Automated bug bounty recon — 28 tools, 2 workflows, 1 binary.
+  Automated bug bounty recon — 27 tools, 2 workflows, 1 binary.
 
 Workflows:
-  wildcard  22-step domain recon & vulnerability assessment
+  wildcard  23-step domain recon & vulnerability assessment
   company   3-step org discovery (ASN, root domains, cloud assets)
 
 Key capabilities:
@@ -65,12 +66,12 @@ Modes:
 
 Getting started:
   chaathan setup                     Install all tools
-  chaathan wildcard -d target.com    Run full 22-step recon
+  chaathan wildcard -d target.com    Run full 23-step recon
   chaathan company -n "Company Inc"  Run company discovery
   chaathan status                    View scan dashboard
   chaathan query vulns 1             Query vulnerabilities
   chaathan report generate 1         Generate report`,
-	PersistentPreRun: initializeApp,
+	PersistentPreRunE: initializeApp,
 }
 
 func Execute() error {
@@ -78,16 +79,17 @@ func Execute() error {
 }
 
 func init() {
+	rootCmd.SilenceErrors = true
 	rootCmd.PersistentFlags().StringVarP(&Mode, "mode", "m", "native", "Execution mode: 'native' or 'docker'")
 	rootCmd.PersistentFlags().StringVarP(&OutputDir, "output", "o", "", "Directory to store results")
 	rootCmd.PersistentFlags().BoolVarP(&Verbose, "verbose", "v", false, "Enable verbose logging")
 	rootCmd.PersistentFlags().StringVar(&ConfigPath, "config", "", "Config file path (default: ~/.chaathan/config.yaml)")
 }
 
-func initializeApp(cmd *cobra.Command, args []string) {
+func initializeApp(cmd *cobra.Command, args []string) error {
 	// Skip initialization for setup command
 	if cmd.Name() == "setup" {
-		return
+		return nil
 	}
 
 	// Determine config path
@@ -100,8 +102,12 @@ func initializeApp(cmd *cobra.Command, args []string) {
 	var err error
 	Cfg, err = config.LoadOrCreate(cfgPath)
 	if err != nil {
-		logger.Warning("Failed to load config: %v", err)
-		Cfg = config.DefaultConfig()
+		if os.IsNotExist(err) {
+			logger.Warning("Config file not found, using defaults: %v", err)
+			Cfg = config.DefaultConfig()
+		} else {
+			return fmt.Errorf("fatal: failed to load or parse configuration: %w", err)
+		}
 	}
 
 	// Apply config values if not overridden by flags
@@ -115,6 +121,11 @@ func initializeApp(cmd *cobra.Command, args []string) {
 		Mode = Cfg.General.Mode
 	}
 
+	// Validate mode
+	if Mode != "native" && Mode != "docker" {
+		return fmt.Errorf("invalid mode '%s'. Must be 'native' or 'docker'", Mode)
+	}
+
 	// Initialize database
 	dbPath := Cfg.General.DatabasePath
 	if dbPath == "" {
@@ -125,6 +136,8 @@ func initializeApp(cmd *cobra.Command, args []string) {
 		logger.Warning("Failed to initialize database: %v", err)
 		logger.Warning("Some features (history, reports) may not work.")
 	}
+
+	return nil
 }
 
 func CreateOutputDir(target string) (string, error) {
@@ -148,7 +161,7 @@ var versionCmd = &cobra.Command{
 		fmt.Printf("%s%sChaathan%s %s\n", logger.BrightCyan, logger.Bold, logger.Reset, Version)
 		fmt.Printf("%sBuilt: %s%s\n", logger.Dim, BuildTime, logger.Reset)
 		fmt.Printf("%sPentesting Recon Framework%s\n", logger.Dim, logger.Reset)
-		fmt.Printf("%s28 tools • 22-step wildcard • 3-step company%s\n", logger.Dim, logger.Reset)
+		fmt.Printf("%s%d tools • 23-step wildcard • 3-step company%s\n", logger.Dim, len(tools.AllTools), logger.Reset)
 		fmt.Printf("%shttps://github.com/vishnu303/chaathan%s\n", logger.Dim, logger.Reset)
 
 		fmt.Printf("\n%sChecking for updates...%s\n", logger.Dim, logger.Reset)

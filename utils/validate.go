@@ -6,8 +6,10 @@ import (
 	"strconv"
 )
 
-// domainRegex validates a standard domain name format
-var domainRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$`)
+// domainRegex validates a standard domain name format.
+// It is loosened slightly to permit leading underscores in domain labels
+// (e.g., _acme-challenge.example.com), which are commonly used for DNS challenges and SRV records.
+var domainRegex = regexp.MustCompile(`^(_?[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)(\.(_?[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?))*\.[a-zA-Z]{2,}$`)
 
 // ValidateDomain checks if the given string is a valid domain name.
 // Rejects empty strings, strings with path traversal, whitespace, and

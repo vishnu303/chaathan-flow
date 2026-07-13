@@ -2,6 +2,7 @@ package orchestrate_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -49,5 +50,27 @@ func TestHandleSignals_Cancel(t *testing.T) {
 		// OK
 	case <-time.After(1 * time.Second):
 		t.Error("timed out waiting for context cancel")
+	}
+}
+
+func TestHandleSignals_Signal(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	orchestrate.HandleSignals(ctx, cancel)
+
+	p, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatalf("failed to find own process: %v", err)
+	}
+
+	err = p.Signal(os.Interrupt)
+	if err != nil {
+		t.Fatalf("failed to send interrupt signal: %v", err)
+	}
+
+	select {
+	case <-ctx.Done():
+		// OK
+	case <-time.After(2 * time.Second):
+		t.Error("timed out waiting for SIGINT/Interrupt to cancel context")
 	}
 }
