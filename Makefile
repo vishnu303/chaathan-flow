@@ -1,6 +1,7 @@
 # Chaathan - Pentesting Recon Framework
 # Makefile for build, install, and development tasks
 
+SHELL := /bin/bash
 BINARY_NAME := chaathan
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -55,9 +56,10 @@ install-go: ## Download and install the latest Go binary globally to /usr/local/
 			echo "Please install curl manually"; exit 1; \
 		fi; \
 	fi
-	@VER=$$(curl -fsSL https://go.dev/VERSION?m=text | head -n1) && \
-	echo "Downloading and installing $$VER..." && \
-	curl -fsSL https://go.dev/dl/$$VER.linux-amd64.tar.gz -o /tmp/go.tar.gz && \
+	@ARCH=$$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/') && \
+	VER=$$(curl -fsSL https://go.dev/VERSION?m=text | head -n1) && \
+	echo "Downloading and installing $$VER ($$ARCH)..." && \
+	curl -fsSL "https://go.dev/dl/$${VER}.linux-$${ARCH}.tar.gz" -o /tmp/go.tar.gz && \
 	sudo rm -rf /usr/local/go && \
 	sudo tar -C /usr/local -xzf /tmp/go.tar.gz && \
 	rm -f /tmp/go.tar.gz && \
@@ -83,7 +85,7 @@ uninstall: ## Remove the chaathan binary from the system path
 
 clean: ## Remove compiled binaries and temporary build artifacts
 	@printf "$(YELLOW)[CLEAN]$(RESET) Cleaning...\n"
-	@rm -f $(BINARY_NAME) chaathan-flow chaathan-test main
+	@rm -f $(BINARY_NAME) chaathan-flow chaathan-test main coverage.out
 	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) clean
 	@printf "$(GREEN)[CLEAN]$(RESET) ✅ Clean completed\n"
 
