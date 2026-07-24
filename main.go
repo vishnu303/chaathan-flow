@@ -11,7 +11,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -27,7 +27,7 @@ func run() error {
 	// Ensure database is properly closed on exit (flushes WAL, releases locks)
 	defer func() {
 		if err := database.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to close database: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to close database: %v\n", err)
 		}
 	}()
 
