@@ -427,9 +427,9 @@ func DefaultConfig() *Config {
 			RetryDelaySec: 3,
 			UARotation:    true,
 			Wordlists: WordlistsConfig{
-				Subdomains:  filepath.Join(resolveSeclistsBase(), "Discovery", "DNS", "subdomains-top1million-5000.txt"),
-				Directories: filepath.Join(resolveSeclistsBase(), "Discovery", "Web-Content", "common.txt"),
-				Parameters:  filepath.Join(resolveSeclistsBase(), "Discovery", "Web-Content", "burp-parameter-names.txt"),
+				Subdomains:  filepath.Join(ResolveSecListsBase(), "Discovery", "DNS", "subdomains-top1million-5000.txt"),
+				Directories: filepath.Join(ResolveSecListsBase(), "Discovery", "Web-Content", "common.txt"),
+				Parameters:  filepath.Join(ResolveSecListsBase(), "Discovery", "Web-Content", "burp-parameter-names.txt"),
 			},
 			JSLimit: 2000,
 			ProxyScraping: ProxyScrapingConfig{
@@ -521,7 +521,7 @@ func resolveWordlists(cfg *Config) {
 				return configuredPath
 			}
 		}
-		resolved := filepath.Join(resolveSeclistsBase(), subpath)
+		resolved := filepath.Join(ResolveSecListsBase(), subpath)
 		if _, err := os.Stat(resolved); err == nil {
 			return resolved
 		}
@@ -581,11 +581,11 @@ func (c *Config) GetAPIKey(name string) string {
 	return ""
 }
 
-// resolveSeclistsBase returns the seclists installation base directory.
+// ResolveSecListsBase returns the seclists installation base directory.
 // It checks ~/.chaathan/seclists first, then Arch Linux (/usr/share/seclists),
 // and finally Debian/Kali (/usr/share/wordlists/seclists).
 // Returns whichever path exists, falling back to the Debian path.
-func resolveSeclistsBase() string {
+func ResolveSecListsBase() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "" // candidates below skip empty entries

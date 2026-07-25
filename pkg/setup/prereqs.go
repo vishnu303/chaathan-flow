@@ -172,7 +172,7 @@ func isPrereqInstalled(binary, dpkgPkg, pacmanQPkg string, distro distroFamily) 
 	return false
 }
 
-// runSysCmd runs a system command, redirecting to SetupLogger and terminal live (M5).
+// runSysCmd runs a system command, redirecting to SetupLogger and terminal live.
 func runSysCmd(ctx *SetupContext, name string, args ...string) error {
 	if ctx.Logger != nil {
 		ctx.Logger.Write("Running system command: %s %s", name, strings.Join(args, " "))
@@ -181,10 +181,15 @@ func runSysCmd(ctx *SetupContext, name string, args ...string) error {
 	cmd.Stdin = os.Stdin
 
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	if ctx.IsVerbose() {
+		cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	} else {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	}
 
-	setPGID(cmd) // M1: Setpgid true
+	setPGID(cmd) // Ensure process group is set so children are killed together
 
 	err := cmd.Run()
 	if ctx.Logger != nil {

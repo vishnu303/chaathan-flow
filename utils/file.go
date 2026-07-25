@@ -7,6 +7,7 @@ import (
 	"maps"
 	neturl "net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -143,6 +144,30 @@ func writeLines(filePath string, lines []string) error {
 	}
 	return f.Close()
 }
+
+// WriteToFile writes a string to a file, creating parent directories if they don't exist.
+// It flushes, calls Sync(), and explicitly checks the Close() error on the success path.
+func WriteToFile(filePath string, content string) error {
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
+	f, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(content); err != nil {
+		return err
+	}
+
+	if err := f.Sync(); err != nil {
+		return err
+	}
+
+	return f.Close()
+}
+
 
 // FilterFileLines reads a file, keeps only lines where keep() returns true,
 // and writes the result back in place. Empty lines are always dropped.

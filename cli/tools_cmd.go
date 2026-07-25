@@ -59,7 +59,7 @@ var categoryStyles = map[string]categoryMeta{
 // ── Tools List ───────────────────────────────────────────────────────────────
 
 func runToolsList(_ *cobra.Command, _ []string) {
-	allTools := tools.AllTools
+	allTools := tools.GetAllTools()
 	w := 52
 	line := strings.Repeat("─", w)
 
@@ -122,7 +122,7 @@ func runToolsList(_ *cobra.Command, _ []string) {
 // ── Tools Check ──────────────────────────────────────────────────────────────
 
 func runToolsCheck(_ *cobra.Command, _ []string) {
-	allTools := tools.AllTools
+	allTools := tools.GetAllTools()
 	w := 52
 	line := strings.Repeat("─", w)
 

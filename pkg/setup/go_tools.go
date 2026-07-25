@@ -12,7 +12,7 @@ import (
 )
 
 // installGoToolsSection checks and installs Go-based tools sequentially.
-func installGoToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
+func installGoToolsSection(ctx *SetupContext) (int, int, int) {
 	type goTool struct{ name, url string }
 	var toInstall []goTool
 	skippedCount := 0
@@ -34,23 +34,7 @@ func installGoToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
 
 	if len(toInstall) == 0 {
 		progress.ItemInfo("Nothing to do")
-		// M8: Run downloadNucleiTemplates if nuclei is already installed
-		nucleiFound := false
-		for _, t := range tools.GoInstallableTools() {
-			if t.Name == "nuclei" {
-				if ok, _ := t.CheckStatus(); ok {
-					nucleiFound = true
-				}
-			}
-		}
-		if nucleiFound {
-			progress.ItemPending("Updating nuclei templates...")
-			if err := downloadNucleiTemplates(ctx); err != nil {
-				progress.ItemFail("nuclei templates update", err.Error())
-			} else {
-				progress.ItemOK("nuclei templates update")
-			}
-		}
+		maybeUpdateNucleiTemplates(ctx)
 		return 0, skippedCount, 0
 	}
 
@@ -68,7 +52,18 @@ func installGoToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
 
 	tracker.StopSpinner()
 
-	// M8: run downloadNucleiTemplates on every nuclei success (incl. --update)
+	maybeUpdateNucleiTemplates(ctx)
+
+	i, _, f := tracker.Stats()
+	return i, skippedCount, f
+}
+
+// installGoTool runs `go install -v <url>` without timeout.
+func installGoTool(ctx *SetupContext, name, url string) error {
+	return ctx.RunCommand(name, "go", "install", "-v", url)
+}
+
+func maybeUpdateNucleiTemplates(ctx *SetupContext) {
 	nucleiFound := false
 	for _, t := range tools.GoInstallableTools() {
 		if t.Name == "nuclei" {
@@ -85,14 +80,6 @@ func installGoToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
 			progress.ItemOK("nuclei templates update")
 		}
 	}
-
-	i, _, f := tracker.Stats()
-	return i, skippedCount, f
-}
-
-// installGoTool runs `go install -v <url>` without timeout.
-func installGoTool(ctx *SetupContext, name, url string) error {
-	return ctx.RunCommand(name, "go", "install", "-v", url)
 }
 
 // downloadNucleiTemplates runs nuclei -update-templates to populate the templates directory.
@@ -102,7 +89,7 @@ func downloadNucleiTemplates(ctx *SetupContext) error {
 		nucleiPath = p
 	} else {
 		// Fallback to GOPATH/bin
-		if gopath, err := resolveGOPATH(); err == nil { // L10: handle resolveGOPATH error
+		if gopath, err := resolveGOPATH(); err == nil { // Resolve GOPATH and check errors
 			candidate := filepath.Join(gopath, "bin", "nuclei")
 			if _, errStat := os.Stat(candidate); errStat == nil {
 				nucleiPath = candidate

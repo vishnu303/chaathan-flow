@@ -14,12 +14,29 @@ type DummyRunner struct {
 	LastCmd   string
 	LastArgs  []string
 	LastOpts  []runner.Option
+	ErrMap    map[string]error // inject error per command/arg substring
+	Err       error            // inject global error if set
 }
 
 func (d *DummyRunner) Run(ctx context.Context, cmd string, args []string, opts ...runner.Option) (string, error) {
 	d.LastCmd = cmd
 	d.LastArgs = args
 	d.LastOpts = opts
+
+	if d.Err != nil {
+		return "", d.Err
+	}
+
+	for k, err := range d.ErrMap {
+		if strings.Contains(cmd, k) {
+			return "", err
+		}
+		for _, arg := range args {
+			if strings.Contains(arg, k) {
+				return "", err
+			}
+		}
+	}
 
 	for k, v := range d.StdoutMap {
 		if strings.Contains(cmd, k) {

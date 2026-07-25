@@ -372,16 +372,12 @@ func TestAppendCommonMatrix(t *testing.T) {
 }
 
 func TestWriteToFileHarden(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "chaathan_test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	targetPath := filepath.Join(tempDir, "nested", "sub", "test.txt")
 	tb := tools.New(&runnerfaketest.DummyRunner{})
 
-	err = tb.WriteToFileTestHelper(targetPath, "hello world")
+	err := tb.WriteToFileTestHelper(targetPath, "hello world")
 	if err != nil {
 		t.Fatalf("unexpected error in writeToFile helper: %v", err)
 	}

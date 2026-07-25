@@ -20,10 +20,10 @@ func isValidPythonModule(module string) bool {
 
 // pyTools defines the Python-based security tools installed via pip.
 var pyTools = []struct {
-	name     string
-	package_ string
-	cmdName  string
-	module   string
+	name    string
+	pkg     string
+	cmdName string
+	module  string
 }{
 	{"cloud_enum", "git+https://github.com/initstring/cloud_enum.git", "cloud_enum.py", "cloud_enum"},
 	{"sublist3r", "sublist3r", "sublist3r", "sublist3r"},
@@ -33,7 +33,7 @@ var pyTools = []struct {
 var sublist3rPinArgs = []string{"install", "--break-system-packages", "requests", "urllib3<2"}
 
 // installPythonToolsSection checks and installs Python-based tools sequentially.
-func installPythonToolsSection(ctx *SetupContext) (installed, skipped, failed int) {
+func installPythonToolsSection(ctx *SetupContext) (int, int, int) {
 	pip := resolvePip()
 	if pip == "" {
 		progress.Section("[4/7] Python Tools", "")
@@ -54,7 +54,7 @@ func installPythonToolsSection(ctx *SetupContext) (installed, skipped, failed in
 			skippedCount++
 			continue
 		}
-		toInstall = append(toInstall, pyTool{t.name, t.package_, t.cmdName, t.module})
+		toInstall = append(toInstall, pyTool{t.name, t.pkg, t.cmdName, t.module})
 	}
 
 	totalToInstall := len(toInstall)

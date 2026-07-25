@@ -15,44 +15,52 @@ import (
 	"github.com/vishnu303/chaathan/pkg/logger"
 )
 
+// Runner executes an external command, optionally with retries and a timeout.
 type Runner interface {
 	Run(ctx context.Context, command string, args []string, opts ...Option) (string, error)
 }
 
+// NativeRunner runs tools directly on the host.
 type NativeRunner struct {
 	Verbose    bool
 	MaxRetries int           // number of retries on failure (0 = no retry)
 	RetryDelay time.Duration // delay between retries
 }
 
+// DockerRunner runs tools inside Docker containers with path translation.
 type DockerRunner struct {
 	Verbose    bool
 	MaxRetries int
 	RetryDelay time.Duration
 }
 
+// RunOptions are per-run execution knobs set via Option funcs.
 type RunOptions struct {
 	Dir     string
 	Env     []string
 	Timeout time.Duration // per-tool timeout (0 = use context timeout)
 	Stdin   func() io.Reader
-	NoRetry bool          // if true, disables retries for this run
+	NoRetry bool // if true, disables retries for this run
 }
 
+// Option configures one field of RunOptions.
 type Option func(*RunOptions)
 
+// WithDir sets the working directory for the command.
 func WithDir(dir string) Option {
 	return func(o *RunOptions) {
 		o.Dir = dir
 	}
 }
 
+// WithNoRetry disables the retry loop for this single run.
 func WithNoRetry() Option {
 	return func(o *RunOptions) {
 		o.NoRetry = true
 	}
 }
 
+// WithTimeout sets a per-tool execution timeout.
 func WithTimeout(d time.Duration) Option {
 	return func(o *RunOptions) {
 		o.Timeout = d
@@ -67,11 +75,17 @@ func WithEnv(env ...string) Option {
 	}
 }
 
-// WithStdin buffers the contents of the given reader once and returns a factory that produces a fresh reader from that buffer on every attempt.
+// WithStdin buffers the contents of the given reader once and returns a factory
+// that produces a fresh reader from that buffer on every retry attempt. A read
+// failure is logged (the partial buffer is used) rather than silently swallowed.
 func WithStdin(r io.Reader) Option {
 	var buf []byte
 	if r != nil {
-		buf, _ = io.ReadAll(r)
+		var readErr error
+		buf, readErr = io.ReadAll(r)
+		if readErr != nil {
+			logger.Warning("runner: failed to buffer stdin: %v (using partial input)", readErr)
+		}
 	}
 	return func(o *RunOptions) {
 		o.Stdin = func() io.Reader {
@@ -80,12 +94,8 @@ func WithStdin(r io.Reader) Option {
 	}
 }
 
-// WithStdinFactory configures a custom reader factory function for stdin, enabling true re-readability.
-func WithStdinFactory(fn func() io.Reader) Option {
-	return func(o *RunOptions) {
-		o.Stdin = fn
-	}
-}
+// defaultRetryDelay is used when RetryDelay is zero; matches config default RetryDelaySec.
+const defaultRetryDelay = 3 * time.Second
 
 // ── Shared retry logic ──────────────────────────────────────────────────────
 
@@ -100,6 +110,7 @@ func retryRun(ctx context.Context, command string, maxRetries int, retryDelay ti
 		maxAttempts = 1
 	}
 
+	var lastOut string
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		output, err := fn(ctx)
@@ -107,6 +118,7 @@ func retryRun(ctx context.Context, command string, maxRetries int, retryDelay ti
 			return output, nil
 		}
 
+		lastOut = output
 		lastErr = err
 
 		// Don't retry on context cancellation (user pressed Ctrl+C)
@@ -118,20 +130,21 @@ func retryRun(ctx context.Context, command string, maxRetries int, retryDelay ti
 		if attempt < maxAttempts {
 			delay := retryDelay
 			if delay == 0 {
-				delay = 3 * time.Second
+				delay = defaultRetryDelay
 			}
 			logger.Warning("[Retry %d/%d] %s failed: %v — retrying in %s...",
-				attempt, maxRetries, command, err, delay)
-			
+				attempt, maxAttempts, command, err, delay)
+
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				return "", fmt.Errorf("cancelled: %w", lastErr)
+				return lastOut, fmt.Errorf("cancelled: %w", lastErr)
 			}
 		}
 	}
 
-	return "", lastErr
+	// Preserve whatever output the final attempt produced instead of dropping it.
+	return lastOut, lastErr
 }
 
 // executeWithRetry abstracts the option processing, per-tool timeout context creation,
@@ -207,7 +220,7 @@ func (r *NativeRunner) runOnce(ctx context.Context, command string, args []strin
 		}
 		// Return stderr as error description if available
 		if stderr.Len() > 0 {
-			return stdout.String(), fmt.Errorf("%v: %s", err, stderr.String())
+			return stdout.String(), fmt.Errorf("%w: %s", err, stderr.String())
 		}
 		return stdout.String(), err
 	}
@@ -264,12 +277,9 @@ func (r *DockerRunner) runOnce(ctx context.Context, command string, args []strin
 
 	dockerArgs = append(dockerArgs, image)
 
+	// For images that don't use ENTRYPOINT, the tool name must be passed as argv[0].
 	if !isEntrypointImage(command) {
-		switch command {
-		// Handle cases where command needs to be passed to container
-		default:
-			dockerArgs = append(dockerArgs, command)
-		}
+		dockerArgs = append(dockerArgs, command)
 	}
 
 	dockerArgs = append(dockerArgs, translatedArgs...)
@@ -300,7 +310,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, command string, args []strin
 			logger.LogToolFailure(command, cmdStr, stderr.String(), err)
 		}
 		if stderr.Len() > 0 {
-			return stdout.String(), fmt.Errorf("%v: %s", err, stderr.String())
+			return stdout.String(), fmt.Errorf("%w: %s", err, stderr.String())
 		}
 		return stdout.String(), err
 	}
@@ -353,7 +363,7 @@ func killProcessGroup(cmd *exec.Cmd) {
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
 
-// ── Docker image registry (F30) ─────────────────────────────────────────────
+// ── Docker image registry ────────────────────────────────────────────────────
 //
 // Single lookup table for tool → Docker image + entry-point flag.
 // Tools without an official Docker image use "alpine" as a fallback,
@@ -406,6 +416,7 @@ func getDockerImage(tool string) string {
 	if info, ok := dockerImages[tool]; ok {
 		return info.Image
 	}
+	logger.Warning("runner: no docker image registered for %q — using alpine fallback (likely won't work)", tool)
 	return "alpine"
 }
 
@@ -417,7 +428,8 @@ func isEntrypointImage(tool string) bool {
 }
 
 
-// NewWithRetry creates a runner with retry logic.
+// NewWithRetry creates a runner with retry logic for the given execution mode
+// ("native" or "docker").
 func NewWithRetry(mode string, verbose bool, maxRetries int, retryDelay time.Duration) Runner {
 	if mode == "docker" {
 		return &DockerRunner{Verbose: verbose, MaxRetries: maxRetries, RetryDelay: retryDelay}

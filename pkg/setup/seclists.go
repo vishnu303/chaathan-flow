@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/paths"
 	"github.com/vishnu303/chaathan/pkg/progress"
 )
@@ -20,30 +21,13 @@ func installSecListsSection(ctx *SetupContext) (installed, skipped, failed int) 
 	progress.Section("[7/7] Wordlists (SecLists)", "")
 
 	localPath := filepath.Join(paths.ChaathanHome(), "seclists")
-	archPath := "/usr/share/seclists"
-	debianPath := "/usr/share/wordlists/seclists"
 
 	if !ctx.IsForceUpdate() {
-		home, _ := os.UserHomeDir()
-		candidates := []string{
-			localPath,
-			filepath.Join(paths.ChaathanHome(), "SecLists"),
-			filepath.Join(home, "seclists"),
-			filepath.Join(home, "SecLists"),
-			archPath,
-			"/usr/share/SecLists",
-			debianPath,
-			"/usr/share/wordlists/SecLists",
-		}
-		for _, path := range candidates {
-			if info, err := os.Stat(path); err == nil && info.IsDir() {
-				// Check for the Discovery subfolder
-				discPath := filepath.Join(path, "Discovery")
-				if discInfo, err := os.Stat(discPath); err == nil && discInfo.IsDir() {
-					progress.ItemOK(fmt.Sprintf("Already installed at %s", path))
-					return 0, 1, 0
-				}
-			}
+		basePath := config.ResolveSecListsBase()
+		discPath := filepath.Join(basePath, "Discovery")
+		if info, err := os.Stat(discPath); err == nil && info.IsDir() {
+			progress.ItemOK(fmt.Sprintf("Already installed at %s", basePath))
+			return 0, 1, 0
 		}
 	}
 
@@ -61,8 +45,8 @@ func installSecListsSection(ctx *SetupContext) (installed, skipped, failed int) 
 	// For force updates, remove the existing local directory first
 	if ctx.IsForceUpdate() {
 		_ = os.RemoveAll(localPath)
-		// Warn if system-wide copies exist (M7)
-		for _, path := range []string{archPath, debianPath} {
+		// Warn if system-wide copies exist
+		for _, path := range []string{"/usr/share/seclists", "/usr/share/wordlists/seclists"} {
 			if info, err := os.Stat(path); err == nil && info.IsDir() {
 				progress.ItemInfo(fmt.Sprintf("Warning: System SecLists copy at %s is left untouched by update. Run apt/pacman update to update it.", path))
 			}

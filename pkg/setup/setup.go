@@ -20,8 +20,9 @@ type RunConfig struct {
 
 // SetupContext holds the configurations and resources for the current setup execution.
 type SetupContext struct {
-	Config RunConfig
-	Logger *SetupLogger
+	Context context.Context
+	Config  RunConfig
+	Logger  *SetupLogger
 }
 
 // IsVerbose returns true when verbose logging is enabled.
@@ -41,12 +42,16 @@ func (c *SetupContext) RunCommand(displayName string, name string, args ...strin
 
 // RunCommandInDir executes a command in a specified directory with a default timeout, streaming/logging via SetupLogger.
 func (c *SetupContext) RunCommandInDir(dir string, displayName string, name string, args ...string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	parentCtx := c.Context
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 10*time.Minute)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	setPGID(cmd) // M1: Setpgid true
+	setPGID(cmd) // Ensure process group is set so children are killed together
 
 	if c.Logger != nil {
 		return c.Logger.CaptureCommandOutput(cmd, displayName, c.IsVerbose())
@@ -55,7 +60,7 @@ func (c *SetupContext) RunCommandInDir(dir string, displayName string, name stri
 }
 
 // Run executes the complete chaathan setup workflow. Returns an error if any installer fails.
-func Run(cfg RunConfig) error {
+func Run(ctx context.Context, cfg RunConfig) error {
 	start := time.Now()
 
 	title := "🔧 Chaathan Setup"
@@ -70,12 +75,13 @@ func Run(cfg RunConfig) error {
 		progress.ItemInfo(fmt.Sprintf("📝 Log file: %s", logger.Path()))
 	}
 
-	ctx := &SetupContext{
-		Config: cfg,
-		Logger: logger,
+	setupCtx := &SetupContext{
+		Context: ctx,
+		Config:  cfg,
+		Logger:  logger,
 	}
 
-	installPrerequisites(ctx)
+	installPrerequisites(setupCtx)
 
 	ensureSystemGoOnPath()
 	if ok, _ := checkGoVersion(); !ok {
@@ -85,40 +91,32 @@ func Run(cfg RunConfig) error {
 
 	var totalInstalled, totalSkipped, totalFailed int32
 
-	i, s, f := installGoToolsSection(ctx)
-	totalInstalled += int32(i)
-	totalSkipped += int32(s)
-	totalFailed += int32(f)
+	sections := []struct {
+		name string
+		fn   func(*SetupContext) (int, int, int)
+	}{
+		{"go_tools", installGoToolsSection},
+		{"gf_patterns", installGFPatternsSection},
+		{"python_tools", installPythonToolsSection},
+		{"x8", installX8Section},
+		{"massdns", installMassDNSSection},
+		{"seclists", installSecListsSection},
+	}
 
-	i, s, f = installGFPatternsSection(ctx)
-	totalInstalled += int32(i)
-	totalSkipped += int32(s)
-	totalFailed += int32(f)
+	for _, section := range sections {
+		if setupCtx.Context != nil && setupCtx.Context.Err() != nil {
+			break
+		}
+		i, s, f := section.fn(setupCtx)
+		totalInstalled += int32(i)
+		totalSkipped += int32(s)
+		totalFailed += int32(f)
+	}
 
-	i, s, f = installPythonToolsSection(ctx)
-	totalInstalled += int32(i)
-	totalSkipped += int32(s)
-	totalFailed += int32(f)
-
-	i, s, f = installX8Section(ctx)
-	totalInstalled += int32(i)
-	totalSkipped += int32(s)
-	totalFailed += int32(f)
-
-	i, s, f = installMassDNSSection(ctx)
-	totalInstalled += int32(i)
-	totalSkipped += int32(s)
-	totalFailed += int32(f)
-
-	i, s, f = installSecListsSection(ctx)
-	totalInstalled += int32(i)
-	totalSkipped += int32(s)
-	totalFailed += int32(f)
-
-	if ctx.Logger != nil {
-		ctx.Logger.Write("=== Setup Complete ===")
-		ctx.Logger.Write("Duration: %s", time.Since(start).Round(time.Second))
-		ctx.Logger.Write("Installed: %d, Skipped: %d, Failed: %d", totalInstalled, totalSkipped, totalFailed)
+	if setupCtx.Logger != nil {
+		setupCtx.Logger.Write("=== Setup Complete ===")
+		setupCtx.Logger.Write("Duration: %s", time.Since(start).Round(time.Second))
+		setupCtx.Logger.Write("Installed: %d, Skipped: %d, Failed: %d", totalInstalled, totalSkipped, totalFailed)
 	}
 
 	progress.Summary(totalInstalled, totalSkipped, totalFailed, time.Since(start))
@@ -133,6 +131,7 @@ func Run(cfg RunConfig) error {
 	}
 	return nil
 }
+
 
 // resolveGOPATH returns the resolved GOPATH directory path, or an error if the user home directory cannot be found.
 func resolveGOPATH() (string, error) {
