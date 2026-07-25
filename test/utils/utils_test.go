@@ -1,5 +1,5 @@
 package utils_test
- 
+
 import (
 	"os"
 	"path/filepath"
@@ -10,6 +10,28 @@ import (
 	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/utils"
 )
+
+// setupTestDB initializes a temporary SQLite database with one scan for
+// "example.com" and returns the scan ID and temp directory.
+func setupTestDB(t *testing.T) (int64, string) {
+	t.Helper()
+	tempDir := t.TempDir()
+	if err := database.Initialize(filepath.Join(tempDir, "test.db")); err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	t.Cleanup(func() {
+		if database.DB != nil {
+			database.DB.Close()
+			database.DB = nil
+		}
+	})
+
+	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
+	if err != nil {
+		t.Fatalf("failed to create scan: %v", err)
+	}
+	return scanObj.ID, tempDir
+}
 
 func TestValidateDomain(t *testing.T) {
 	tests := []struct {
@@ -170,9 +192,9 @@ func TestIsHTTPMethod(t *testing.T) {
 
 func TestParseHex4(t *testing.T) {
 	tests := []struct {
-		hex     string
-		want    rune
-		wantOk  bool
+		hex    string
+		want   rune
+		wantOk bool
 	}{
 		{"0026", '&', true},
 		{"0061", 'a', true},
@@ -345,22 +367,7 @@ https://example.com/a
 }
 
 func TestParseNucleiOutput(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	if err := database.Initialize(dbPath); err != nil {
-		t.Fatalf("failed to init db: %v", err)
-	}
-	defer func() {
-		if database.DB != nil {
-			database.DB.Close()
-			database.DB = nil
-		}
-	}()
-
-	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
-	if err != nil {
-		t.Fatalf("failed to create scan: %v", err)
-	}
+	scanID, tempDir := setupTestDB(t)
 
 	nucleiJSONL := `{"template-id":"xss-injection","info":{"name":"Reflected XSS","severity":"High","description":"XSS detected"},"host":"example.com","matched-at":"https://example.com/search?q=1","extractor-name":"rxss-extractor","extracted-results":["rxss-payload"]}`
 	filePath := filepath.Join(tempDir, "nuclei.jsonl")
@@ -368,7 +375,7 @@ func TestParseNucleiOutput(t *testing.T) {
 		t.Fatalf("failed to write nuclei file: %v", err)
 	}
 
-	count, err := utils.ParseNucleiOutput(scanObj.ID, filePath)
+	count, err := utils.ParseNucleiOutput(scanID, filePath)
 	if err != nil {
 		t.Fatalf("ParseNucleiOutput error: %v", err)
 	}
@@ -377,7 +384,7 @@ func TestParseNucleiOutput(t *testing.T) {
 		t.Errorf("expected 1 result parsed, got %d", count)
 	}
 
-	vulns, err := database.GetVulnerabilities(scanObj.ID)
+	vulns, err := database.GetVulnerabilities(scanID)
 	if err != nil {
 		t.Fatalf("GetVulnerabilities error: %v", err)
 	}
@@ -402,24 +409,9 @@ func TestParseNucleiOutput(t *testing.T) {
 }
 
 func TestParseHttpxOutput(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	if err := database.Initialize(dbPath); err != nil {
-		t.Fatalf("failed to init db: %v", err)
-	}
-	defer func() {
-		if database.DB != nil {
-			database.DB.Close()
-			database.DB = nil
-		}
-	}()
+	scanID, tempDir := setupTestDB(t)
 
-	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
-	if err != nil {
-		t.Fatalf("failed to create scan: %v", err)
-	}
-
-	if err := database.AddSubdomain(scanObj.ID, "example.com", "test"); err != nil {
+	if err := database.AddSubdomain(scanID, "example.com", "test"); err != nil {
 		t.Fatalf("failed to add subdomain: %v", err)
 	}
 
@@ -429,7 +421,7 @@ func TestParseHttpxOutput(t *testing.T) {
 		t.Fatalf("failed to write httpx file: %v", err)
 	}
 
-	count, err := utils.ParseHttpxOutput(scanObj.ID, filePath)
+	count, err := utils.ParseHttpxOutput(scanID, filePath)
 	if err != nil {
 		t.Fatalf("ParseHttpxOutput error: %v", err)
 	}
@@ -438,7 +430,7 @@ func TestParseHttpxOutput(t *testing.T) {
 		t.Errorf("expected 1 result parsed, got %d", count)
 	}
 
-	urls, err := database.GetURLs(scanObj.ID)
+	urls, err := database.GetURLs(scanID)
 	if err != nil {
 		t.Fatalf("GetURLs error: %v", err)
 	}
@@ -451,7 +443,7 @@ func TestParseHttpxOutput(t *testing.T) {
 		t.Errorf("expected URL 'https://example.com/', got %q", urls[0].URL)
 	}
 
-	subs, err := database.GetLiveSubdomains(scanObj.ID)
+	subs, err := database.GetLiveSubdomains(scanID)
 	if err != nil {
 		t.Fatalf("GetLiveSubdomains error: %v", err)
 	}
@@ -462,22 +454,7 @@ func TestParseHttpxOutput(t *testing.T) {
 }
 
 func TestParseDalfoxOutput_TextMode(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	if err := database.Initialize(dbPath); err != nil {
-		t.Fatalf("failed to init db: %v", err)
-	}
-	defer func() {
-		if database.DB != nil {
-			database.DB.Close()
-			database.DB = nil
-		}
-	}()
-
-	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
-	if err != nil {
-		t.Fatalf("failed to create scan: %v", err)
-	}
+	scanID, tempDir := setupTestDB(t)
 
 	dalfoxOutput := `[POC][G][VULN] http://sub.example.com/index.php?q=%3Cscript%3Ealert(1)%3C/script%3E`
 	filePath := filepath.Join(tempDir, "dalfox.txt")
@@ -485,7 +462,7 @@ func TestParseDalfoxOutput_TextMode(t *testing.T) {
 		t.Fatalf("failed to write dalfox file: %v", err)
 	}
 
-	count, err := utils.ParseDalfoxOutput(scanObj.ID, filePath)
+	count, err := utils.ParseDalfoxOutput(scanID, filePath)
 	if err != nil {
 		t.Fatalf("ParseDalfoxOutput error: %v", err)
 	}
@@ -494,7 +471,7 @@ func TestParseDalfoxOutput_TextMode(t *testing.T) {
 		t.Errorf("expected 1 result parsed, got %d", count)
 	}
 
-	vulns, err := database.GetVulnerabilities(scanObj.ID)
+	vulns, err := database.GetVulnerabilities(scanID)
 	if err != nil {
 		t.Fatalf("GetVulnerabilities error: %v", err)
 	}
@@ -521,7 +498,7 @@ func TestFileExists_NonExistentError(t *testing.T) {
 	if err := os.Mkdir(restrictedDir, 0000); err != nil {
 		t.Skip("skipping test; cannot create mode 0000 dir on this OS")
 	}
-	
+
 	targetFile := filepath.Join(restrictedDir, "test.txt")
 	exists := utils.FileExists(targetFile)
 	if exists {
@@ -539,37 +516,22 @@ func TestUnescapeUnicodeURL_SurrogatePair(t *testing.T) {
 }
 
 func TestExportVulnerabilities_CaseInsensitiveSeverity(t *testing.T) {
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	if err := database.Initialize(dbPath); err != nil {
-		t.Fatalf("failed to init db: %v", err)
-	}
-	defer func() {
-		if database.DB != nil {
-			database.DB.Close()
-			database.DB = nil
-		}
-	}()
+	scanID, tempDir := setupTestDB(t)
 
-	scanObj, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
-	if err != nil {
-		t.Fatalf("failed to create scan: %v", err)
-	}
-
-	err = database.AddVulnerability(
-		scanObj.ID, "example.com", "https://example.com", "rce",
+	err := database.AddVulnerability(
+		scanID, "example.com", "https://example.com", "rce",
 		"Remote Code Execution", "CrItIcAl", "rce finding", "", "",
 	)
 	if err != nil {
 		t.Fatalf("failed to insert vulnerability: %v", err)
 	}
 
-	err = utils.ExportVulnerabilities(scanObj.ID, tempDir)
+	err = utils.ExportVulnerabilities(scanID, tempDir)
 	if err != nil {
 		t.Fatalf("ExportVulnerabilities failed: %v", err)
 	}
 
-	critPath := filepath.Join(tempDir, utils.ExportFilenames[6])
+	critPath := filepath.Join(tempDir, utils.FileVulnCriticalHigh)
 	content, err := os.ReadFile(critPath)
 	if err != nil {
 		t.Fatalf("failed to read critical high file: %v", err)
@@ -578,6 +540,143 @@ func TestExportVulnerabilities_CaseInsensitiveSeverity(t *testing.T) {
 	contentStr := string(content)
 	if !strings.Contains(contentStr, "Remote Code Execution") {
 		t.Errorf("expected critical vuln to be exported, got content: %q", contentStr)
+	}
+}
+
+func TestParseNaabuOutput(t *testing.T) {
+	scanID, tempDir := setupTestDB(t)
+
+	content := `{"host":"example.com","ip":"93.184.216.34","port":443,"protocol":"tcp"}
+example.com:80
+not-a-valid-line
+`
+	filePath := filepath.Join(tempDir, "naabu.txt")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := utils.ParseNaabuOutput(scanID, filePath)
+	if err != nil {
+		t.Fatalf("ParseNaabuOutput error: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 ports parsed (JSON + host:port), got %d", count)
+	}
+
+	ports, err := database.GetPorts(scanID)
+	if err != nil {
+		t.Fatalf("GetPorts error: %v", err)
+	}
+	if len(ports) != 2 {
+		t.Fatalf("expected 2 ports in database, got %d", len(ports))
+	}
+}
+
+func TestParseSubdomainsFile(t *testing.T) {
+	scanID, tempDir := setupTestDB(t)
+
+	content := `# comment
+example.com
+sub.example.com
+sub.example.com
+other.org
+`
+	filePath := filepath.Join(tempDir, "subs.txt")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := utils.ParseSubdomainsFile(scanID, filePath, "test")
+	if err != nil {
+		t.Fatalf("ParseSubdomainsFile error: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 in-scope unique subdomains, got %d", count)
+	}
+
+	subs, err := database.GetSubdomains(scanID)
+	if err != nil {
+		t.Fatalf("GetSubdomains error: %v", err)
+	}
+	if len(subs) != 2 {
+		t.Fatalf("expected 2 subdomains in database, got %d", len(subs))
+	}
+
+	// File must be rewritten in-place, sorted, with out-of-scope entries removed.
+	content2, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "example.com\nsub.example.com\n"
+	if string(content2) != want {
+		t.Errorf("rewritten file = %q, want %q", string(content2), want)
+	}
+}
+
+func TestParseURLsFile(t *testing.T) {
+	scanID, tempDir := setupTestDB(t)
+
+	content := `https://example.com/a
+https://other.org/b
+# comment
+
+`
+	filePath := filepath.Join(tempDir, "urls.txt")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := utils.ParseURLsFile(scanID, filePath, "test")
+	if err != nil {
+		t.Fatalf("ParseURLsFile error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 in-scope URL, got %d", count)
+	}
+
+	urls, err := database.GetURLs(scanID)
+	if err != nil {
+		t.Fatalf("GetURLs error: %v", err)
+	}
+	if len(urls) != 1 || urls[0].URL != "https://example.com/a" {
+		t.Errorf("unexpected URLs in database: %+v", urls)
+	}
+}
+
+func TestParseEndpointsFile(t *testing.T) {
+	scanID, tempDir := setupTestDB(t)
+
+	content := `GET https://example.com/api
+https://example.com/plain
+`
+	filePath := filepath.Join(tempDir, "endpoints.txt")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := utils.ParseEndpointsFile(scanID, filePath, "test")
+	if err != nil {
+		t.Fatalf("ParseEndpointsFile error: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 endpoints parsed, got %d", count)
+	}
+
+	endpoints, err := database.GetEndpoints(scanID)
+	if err != nil {
+		t.Fatalf("GetEndpoints error: %v", err)
+	}
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints in database, got %d", len(endpoints))
+	}
+	var withMethod bool
+	for _, e := range endpoints {
+		if e.Method == "GET" {
+			withMethod = true
+		}
+	}
+	if !withMethod {
+		t.Errorf("expected at least one endpoint with method GET: %+v", endpoints)
 	}
 }
 

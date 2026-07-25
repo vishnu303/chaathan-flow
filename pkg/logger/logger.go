@@ -75,7 +75,7 @@ func InitFileLog(path string) error {
 	defer logFileMu.Unlock()
 	if logFile != nil {
 		_ = logFile.Sync()
-		logFile.Close()
+		_ = logFile.Close()
 		logFile = nil
 	}
 	dir := filepath.Dir(path)
@@ -96,7 +96,7 @@ func CloseFileLog() {
 	defer logFileMu.Unlock()
 	if logFile != nil {
 		_ = logFile.Sync()
-		logFile.Close()
+		_ = logFile.Close()
 		logFile = nil
 	}
 }
@@ -119,7 +119,14 @@ func logWrite(w io.Writer, s string) {
 	}
 	fmt.Fprint(w, out)
 
-	// Prepare the formatted string outside the critical section to minimize lock hold time.
+	// Cheap check first: skip the file-log rendering work entirely when no
+	// log file is active (the common case for non-scan commands).
+	logFileMu.Lock()
+	defer logFileMu.Unlock()
+	if logFile == nil {
+		return
+	}
+
 	clean := ansiRE.ReplaceAllString(s, "")
 	ts := time.Now().Format("15:04:05")
 	lines := strings.Split(clean, "\n")
@@ -128,13 +135,7 @@ func logWrite(w io.Writer, s string) {
 			lines[i] = "[" + ts + "] " + line
 		}
 	}
-	formatted := strings.Join(lines, "\n")
-
-	logFileMu.Lock()
-	defer logFileMu.Unlock()
-	if logFile != nil {
-		fmt.Fprint(logFile, formatted)
-	}
+	fmt.Fprint(logFile, strings.Join(lines, "\n"))
 }
 
 // WriteLogHeader writes a structured header to the open log file.
@@ -189,7 +190,7 @@ func LogToolFailure(tool, command, stderr string, exitErr error) {
 	}
 	if stderr != "" {
 		lines := strings.Split(strings.TrimSpace(stderr), "\n")
-		
+
 		// Optional: strip nuclei stats logs from stderr
 		if strings.Contains(strings.ToLower(tool), "nuclei") {
 			var filtered []string
@@ -232,6 +233,7 @@ func LogToolSkipped(tool, command string) {
 	fmt.Fprintf(logFile, "[%s]   Command: %s\n", ts, command)
 	fmt.Fprintf(logFile, "\n")
 }
+
 // FileDebug writes a debug-level line to the log file only.
 // It never prints to the terminal, making it safe to use for verbose internal
 // state (file sizes, skip decisions, pipeline counts) without adding noise.
@@ -245,41 +247,6 @@ func FileDebug(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	fmt.Fprintf(logFile, "[%s] DEBUG %s\n", ts, msg)
 }
-
-
-
-const (
-	Reset     = "\033[0m"
-	Bold      = "\033[1m"
-	Dim       = "\033[2m"
-	Italic    = "\033[3m"
-	Underline = "\033[4m"
-
-	// Standard colors
-	Red    = "\033[31m"
-	Green  = "\033[32m"
-	Yellow = "\033[33m"
-	Blue   = "\033[34m"
-	Purple = "\033[35m"
-	Cyan   = "\033[36m"
-	Gray   = "\033[37m"
-	White  = "\033[97m"
-
-	// Bright colors
-	BrightRed    = "\033[91m"
-	BrightGreen  = "\033[92m"
-	BrightYellow = "\033[93m"
-	BrightBlue   = "\033[94m"
-	BrightPurple = "\033[95m"
-	BrightCyan   = "\033[96m"
-
-	// Background
-	BgRed    = "\033[41m"
-	BgGreen  = "\033[42m"
-	BgYellow = "\033[43m"
-	BgBlue   = "\033[44m"
-	BgCyan   = "\033[46m"
-)
 
 // ── Scan step tracking ──────────────────────────────────────────────────────
 
@@ -302,6 +269,13 @@ func InitScanUI(total int) {
 }
 
 // ── Primary output functions ────────────────────────────────────────────────
+
+// Print writes a raw formatted message to stdout and mirrors it to the file
+// log (ANSI-stripped, timestamped). It adds no styling of its own — use it
+// for output that is already fully formatted (e.g. the progress package).
+func Print(format string, args ...any) {
+	logWrite(os.Stdout, fmt.Sprintf(format, args...))
+}
 
 // Info prints a styled info message
 func Info(format string, args ...any) {
@@ -338,7 +312,7 @@ func Debug(format string, args ...any) {
 // that don't participate in the step-tracking workflow.
 func Section(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	logWrite(os.Stdout, fmt.Sprintf("\n  %s┌─%s %s%s%s%s\n", Cyan, Reset, BrightCyan+Bold, msg, Reset, ""))
+	logWrite(os.Stdout, fmt.Sprintf("\n  %s┌─%s %s%s%s\n", Cyan, Reset, BrightCyan+Bold, msg, Reset))
 }
 
 // StepHeader prints a scan-step heading that increments the step counter
@@ -380,7 +354,7 @@ func StepHeader(format string, args ...any) {
 		stepIndicator = fmt.Sprintf("%s[%d/%d]%s ", Dim, current, total, Reset)
 	}
 
-	logWrite(os.Stdout, fmt.Sprintf("\n  %s┌─%s %s%s%s%s%s%s\n", Cyan, Reset, stepIndicator, BrightCyan+Bold, msg, Reset, elapsed, ""))
+	logWrite(os.Stdout, fmt.Sprintf("\n  %s┌─%s %s%s%s%s%s\n", Cyan, Reset, stepIndicator, BrightCyan+Bold, msg, Reset, elapsed))
 }
 
 // ScanHeader prints the main scan workflow header
@@ -390,7 +364,7 @@ func ScanHeader(scanType string, target string, scanID int64) {
 
 	logWrite(os.Stdout, "\n")
 	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, line, Reset))
-	
+
 	scanTypeRunes := utf8.RuneCountInString(scanType + " Scan")
 	padScanType := 46 - scanTypeRunes
 	if padScanType < 0 {
@@ -434,8 +408,15 @@ func Command(cmd string) {
 
 // ── Summary helpers ─────────────────────────────────────────────────────────
 
+// Stat is a single label/value line in a scan summary. Stats are rendered in
+// the order given, so callers control the layout deterministically.
+type Stat struct {
+	Label string
+	Value string
+}
+
 // ScanSummary prints a modern scan completion summary
-func ScanSummary(status string, target string, scanID int64, duration time.Duration, stats map[string]string) {
+func ScanSummary(status string, target string, scanID int64, duration time.Duration, stats []Stat) {
 	w := 52
 	line := strings.Repeat("─", w)
 
@@ -478,16 +459,16 @@ func ScanSummary(status string, target string, scanID int64, duration time.Durat
 
 	if len(stats) > 0 {
 		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, strings.Repeat("╌", w-2), Reset, Cyan+Bold, Reset))
-		for label, value := range stats {
-			used := 2 + utf8.RuneCountInString(label) + 1 + utf8.RuneCountInString(value)
+		for _, stat := range stats {
+			used := 2 + utf8.RuneCountInString(stat.Label) + 1 + utf8.RuneCountInString(stat.Value)
 			padding := w - used
 			if padding < 1 {
 				padding = 1
 			}
 			logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s%s%s %s%s%s%s %s│%s\n",
 				Cyan+Bold, Reset,
-				Dim, label+":", Reset,
-				BrightCyan+Bold, value, Reset,
+				Dim, stat.Label+":", Reset,
+				BrightCyan+Bold, stat.Value, Reset,
 				strings.Repeat(" ", padding-1),
 				Cyan+Bold, Reset))
 		}

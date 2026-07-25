@@ -4,15 +4,15 @@ import (
 	"crypto/tls"
 )
 
-// ModernBrowserTLSConfig returns a tls.Config with cipher suites, curve preferences,
-// and TLS versions custom-tailored to mimic modern web browsers (Chrome/Firefox),
-// effectively spoofing default JA3/JA4 fingerprints to bypass automated network blacklists.
+// ModernBrowserTLSConfig returns a tls.Config with cipher suites, curve
+// preferences, and TLS versions aligned with modern web browsers
+// (Chrome/Firefox), so scanner/prober TLS handshakes blend in with regular
+// browser traffic.
 func ModernBrowserTLSConfig() *tls.Config {
 	return &tls.Config{
 		InsecureSkipVerify: true, // required for scanner/prober
 		MinVersion:         tls.VersionTLS12,
 		MaxVersion:         tls.VersionTLS13,
-		PreferServerCipherSuites: false,
 		CurvePreferences: []tls.CurveID{
 			tls.X25519,
 			tls.CurveP256,

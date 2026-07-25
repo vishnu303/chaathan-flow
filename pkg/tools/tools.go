@@ -377,7 +377,6 @@ func (t *ToolBox) dastAggression() string {
 	return "high"
 }
 
-
 func (t *ToolBox) nucleiSeverity() []string {
 	if t.Config != nil && len(t.Config.Nuclei.Severity) > 0 {
 		return t.Config.Nuclei.Severity
@@ -482,7 +481,6 @@ func (t *ToolBox) githubSubdomainsMaxTimeout() time.Duration {
 	return 15 * time.Minute
 }
 
-
 // --- Passive Enumeration ---
 
 func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile string) error {
@@ -555,7 +553,6 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 	return err
 }
 
-
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"--providers", "wayback", "--subs", domain}
 	args = t.appendProxy(args, "--proxy")
@@ -575,7 +572,7 @@ func (t *ToolBox) RunDnsx(ctx context.Context, inputFile string, outputFile stri
 		"-l", inputFile,
 		"-a", "-aaaa", "-cname", "-mx", "-txt", "-resp", "-json",
 		"-timeout", "3", // seconds per DNS query
-		"-retry", "2",  // retry failed queries twice before giving up
+		"-retry", "2", // retry failed queries twice before giving up
 		"-o", outputFile,
 	}
 	_, err := t.Runner.Run(ctx, "dnsx", args)
@@ -817,8 +814,6 @@ func (t *ToolBox) RunCloudEnum(ctx context.Context, keyword string, outputFile s
 	return err
 }
 
-
-
 // TODO(config): Add General.HakrawlerTimeout to config.go and use it here.
 func (t *ToolBox) hakrawlerMaxTimeout() time.Duration {
 	return 30 * time.Minute
@@ -1053,7 +1048,6 @@ func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile stri
 
 // uncoverEngines returns only the engines for which API keys are configured.
 // If no keys are set, returns an empty slice so RunUncover can skip gracefully.
-// TODO: Add support for fofa once FofaEmail field is added to APIKeysConfig.
 func (t *ToolBox) uncoverEngines() []string {
 	if t.APIKeys == nil {
 		return nil
@@ -1103,7 +1097,7 @@ func (t *ToolBox) RunNucleiWAF(ctx context.Context, inputFile string, outputFile
 		"-l", inputFile,
 		"-c", strconv.Itoa(concurrency),
 		"-rl", strconv.Itoa(rateLimit),
-		"-timeout", "5",        // per-request timeout (seconds)
+		"-timeout", "5", // per-request timeout (seconds)
 		"-max-host-error", "3", // bail out of unresponsive hosts quickly
 		"-tags", "waf",
 		"-jsonl",

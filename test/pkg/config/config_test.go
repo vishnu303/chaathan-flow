@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/config"
@@ -11,8 +12,7 @@ import (
 
 func TestConfigDefaultsAndSerialization(t *testing.T) {
 	tempDir := t.TempDir()
-	os.Setenv("CHAATHAN_HOME", tempDir)
-	defer os.Unsetenv("CHAATHAN_HOME")
+	t.Setenv("CHAATHAN_HOME", tempDir)
 
 	cfg := config.DefaultConfig()
 	if cfg == nil {
@@ -49,8 +49,7 @@ func TestConfigDefaultsAndSerialization(t *testing.T) {
 	}
 
 	// Test GetAPIKey from config or env
-	os.Setenv("SHODAN_API_KEY", "env_shodan_key")
-	defer os.Unsetenv("SHODAN_API_KEY")
+	t.Setenv("SHODAN_API_KEY", "env_shodan_key")
 
 	// 1. Should fetch from env if not set in config
 	createdCfg.APIKeys.Shodan = ""
@@ -101,4 +100,61 @@ nuclie:
 	}
 }
 
+// TestLoadMatchesDefaultConfig pins the single-source-of-defaults invariant:
+// loading a config file that sets nothing must yield exactly DefaultConfig(),
+// and sparse files must inherit defaults for every field they omit.
+func TestLoadMatchesDefaultConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("CHAATHAN_HOME", tempDir)
+	paths.ResetForTest()
 
+	// 1. Empty config → identical to DefaultConfig.
+	emptyPath := filepath.Join(tempDir, "empty.yaml")
+	if err := os.WriteFile(emptyPath, []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load(emptyPath)
+	if err != nil {
+		t.Fatalf("Load(empty) error: %v", err)
+	}
+	want := config.DefaultConfig()
+	if !reflect.DeepEqual(loaded, want) {
+		t.Errorf("Load(empty) diverged from DefaultConfig()\n got: %+v\nwant: %+v", loaded, want)
+	}
+
+	// 2. Sparse config → override wins, everything else inherits defaults.
+	sparsePath := filepath.Join(tempDir, "sparse.yaml")
+	if err := os.WriteFile(sparsePath, []byte("general:\n  mode: docker\ntools:\n  nuclei:\n    concurrency: 99\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sparse, err := config.Load(sparsePath)
+	if err != nil {
+		t.Fatalf("Load(sparse) error: %v", err)
+	}
+	if sparse.General.Mode != "docker" {
+		t.Errorf("override lost: mode = %q, want docker", sparse.General.Mode)
+	}
+	if sparse.Tools.Nuclei.Concurrency != 99 {
+		t.Errorf("override lost: nuclei concurrency = %d, want 99", sparse.Tools.Nuclei.Concurrency)
+	}
+	def := config.DefaultConfig()
+	checks := map[string]any{
+		"dalfox max_timeout (was missing from old DefaultConfig)": sparse.Tools.Dalfox.MaxTimeout,
+		"httpx threads (was missing from old applyDefaults)":      sparse.Tools.Httpx.Threads,
+		"subfinder threads": sparse.Tools.Subfinder.Threads,
+		"ffuf max_timeout":  sparse.Tools.Ffuf.MaxTimeout,
+		"max_retries":       sparse.General.MaxRetries,
+	}
+	wantVals := map[string]any{
+		"dalfox max_timeout (was missing from old DefaultConfig)": def.Tools.Dalfox.MaxTimeout,
+		"httpx threads (was missing from old applyDefaults)":      def.Tools.Httpx.Threads,
+		"subfinder threads": def.Tools.Subfinder.Threads,
+		"ffuf max_timeout":  def.Tools.Ffuf.MaxTimeout,
+		"max_retries":       def.General.MaxRetries,
+	}
+	for name, got := range checks {
+		if got != wantVals[name] {
+			t.Errorf("%s = %v, want default %v", name, got, wantVals[name])
+		}
+	}
+}

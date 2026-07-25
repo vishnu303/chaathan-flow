@@ -5,43 +5,70 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/vishnu303/chaathan/pkg/database"
 )
 
-// ExportFilenames is the single source of truth for exported files
+// severityOrder is the canonical vulnerability severity ordering (highest to lowest).
+var severityOrder = []string{"critical", "high", "medium", "low", "info"}
+
+// SeverityOrder returns a copy of the canonical severity ordering. Use it
+// anywhere severities are listed, sorted, or summarized.
+func SeverityOrder() []string { return slices.Clone(severityOrder) }
+
+// Exported result filenames — the single source of truth for final_files/
+// output names. Referenced by the exporter, the scan workflows, and the CLI.
+const (
+	FileFinalSubdomains      = "final_subdomains.txt"
+	FileLiveSubdomains       = "live_subdomains.txt"
+	FileOpenPorts            = "open_ports.txt"
+	FileAllURLs              = "all_urls.txt"
+	FileURLs200              = "urls_200.txt"
+	FileVulnerabilities      = "vulnerabilities.txt"
+	FileVulnCriticalHigh     = "vulnerabilities_critical_high.txt"
+	FileEndpoints            = "endpoints.txt"
+	FileEndpointsInteresting = "endpoints_interesting.txt"
+	FileGFSecrets            = "gf_secrets_findings.txt"
+	FileNucleiVulns          = "nuclei_vulns.json"
+	FileNucleiURLVulns       = "nuclei_url_vulns.json"
+	FileDalfoxXSS            = "dalfox_xss.jsonl"
+	FileSummary              = "SUMMARY.txt"
+)
+
+// ExportFilenames lists every exported file, in manifest order.
 var ExportFilenames = []string{
-	"final_subdomains.txt",
-	"live_subdomains.txt",
-	"open_ports.txt",
-	"all_urls.txt",
-	"urls_200.txt",
-	"vulnerabilities.txt",
-	"vulnerabilities_critical_high.txt",
-	"endpoints.txt",
-	"endpoints_interesting.txt",
-	"gf_secrets_findings.txt",
-	"nuclei_vulns.json",
-	"nuclei_url_vulns.json",
-	"dalfox_xss.jsonl",
+	FileFinalSubdomains,
+	FileLiveSubdomains,
+	FileOpenPorts,
+	FileAllURLs,
+	FileURLs200,
+	FileVulnerabilities,
+	FileVulnCriticalHigh,
+	FileEndpoints,
+	FileEndpointsInteresting,
+	FileGFSecrets,
+	FileNucleiVulns,
+	FileNucleiURLVulns,
+	FileDalfoxXSS,
 }
 
-// NOTE: keep in sync with pkg/wildcard_flow output filenames
+// exportManifest describes each exported file for the SUMMARY.txt listing.
 var exportManifest = []struct{ File, Desc string }{
-	{ExportFilenames[0], "All discovered subdomains"},
-	{ExportFilenames[1], "Live/responsive subdomains (with IP)"},
-	{ExportFilenames[2], "Open ports (host:port proto/service)"},
-	{ExportFilenames[3], "All discovered URLs with status codes"},
-	{ExportFilenames[4], "URLs returning HTTP 200 OK"},
-	{ExportFilenames[5], "All vulnerabilities (detailed)"},
-	{ExportFilenames[6], "Critical/High severity vulns only"},
-	{ExportFilenames[7], "All discovered endpoints (with method)"},
-	{ExportFilenames[8], "Interesting endpoints (API, admin, etc.)"},
-	{ExportFilenames[9], "JS secret and JS sink matches from downloaded JS"},
-	{ExportFilenames[10], "Nuclei infra scan raw output"},
-	{ExportFilenames[11], "Nuclei URL scan raw output"},
-	{ExportFilenames[12], "Dalfox XSS scan structured JSONL output"},
+	{FileFinalSubdomains, "All discovered subdomains"},
+	{FileLiveSubdomains, "Live/responsive subdomains (with IP)"},
+	{FileOpenPorts, "Open ports (host:port proto/service)"},
+	{FileAllURLs, "All discovered URLs with status codes"},
+	{FileURLs200, "URLs returning HTTP 200 OK"},
+	{FileVulnerabilities, "All vulnerabilities (detailed)"},
+	{FileVulnCriticalHigh, "Critical/High severity vulns only"},
+	{FileEndpoints, "All discovered endpoints (with method)"},
+	{FileEndpointsInteresting, "Interesting endpoints (API, admin, etc.)"},
+	{FileGFSecrets, "JS secret and JS sink matches from downloaded JS"},
+	{FileNucleiVulns, "Nuclei infra scan raw output"},
+	{FileNucleiURLVulns, "Nuclei URL scan raw output"},
+	{FileDalfoxXSS, "Dalfox XSS scan structured JSONL output"},
 }
 
 // writeAndSync writes all lines to the given file, flushes the buffer, and runs Sync()
@@ -50,21 +77,22 @@ func writeAndSync(filePath string, lines []string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	w := bufio.NewWriter(f)
 	for _, line := range lines {
 		if _, err := w.WriteString(line + "\n"); err != nil {
+			_ = f.Close()
 			return err
 		}
 	}
 	if err := w.Flush(); err != nil {
+		_ = f.Close()
 		return err
 	}
-	
+
 	// f.Sync() is best-effort, ignore EINVAL on pipes/devices
 	_ = f.Sync()
-	return nil
+	return f.Close()
 }
 
 // ExportResults exports all scan results to text files in the result directory
@@ -113,7 +141,7 @@ func ExportSubdomains(scanID int64, resultDir string) error {
 		return err
 	}
 
-	path := filepath.Join(resultDir, ExportFilenames[0])
+	path := filepath.Join(resultDir, FileFinalSubdomains)
 	var lines []string
 	for _, s := range subs {
 		lines = append(lines, s.Domain)
@@ -129,7 +157,7 @@ func ExportLiveSubdomains(scanID int64, resultDir string) error {
 		return err
 	}
 
-	path := filepath.Join(resultDir, ExportFilenames[1])
+	path := filepath.Join(resultDir, FileLiveSubdomains)
 	var lines []string
 	for _, s := range subs {
 		if s.IPAddress != "" {
@@ -149,7 +177,7 @@ func ExportPorts(scanID int64, resultDir string) error {
 		return err
 	}
 
-	path := filepath.Join(resultDir, ExportFilenames[2])
+	path := filepath.Join(resultDir, FileOpenPorts)
 	var lines []string
 	for _, p := range ports {
 		service := p.Service
@@ -171,7 +199,7 @@ func ExportURLs(scanID int64, resultDir string) error {
 	}
 
 	// All URLs with status
-	path := filepath.Join(resultDir, ExportFilenames[3])
+	path := filepath.Join(resultDir, FileAllURLs)
 	var lines []string
 	for _, u := range urls {
 		if u.StatusCode > 0 {
@@ -185,7 +213,7 @@ func ExportURLs(scanID int64, resultDir string) error {
 	}
 
 	// 200 OK URLs only
-	path200 := filepath.Join(resultDir, ExportFilenames[4])
+	path200 := filepath.Join(resultDir, FileURLs200)
 	var lines200 []string
 	for _, u := range urls {
 		if u.StatusCode == 200 {
@@ -205,7 +233,7 @@ func ExportVulnerabilities(scanID int64, resultDir string) error {
 	}
 
 	// All vulns — detailed blocks
-	path := filepath.Join(resultDir, ExportFilenames[5])
+	path := filepath.Join(resultDir, FileVulnerabilities)
 	var lines []string
 	for _, v := range vulns {
 		lines = append(lines, "================================================================================")
@@ -231,7 +259,7 @@ func ExportVulnerabilities(scanID int64, resultDir string) error {
 	}
 
 	// Critical and High only — compact
-	pathCritical := filepath.Join(resultDir, ExportFilenames[6])
+	pathCritical := filepath.Join(resultDir, FileVulnCriticalHigh)
 	var linesCritical []string
 	for _, v := range vulns {
 		// Perform case-insensitive check by matching lowercased severity values
@@ -257,7 +285,7 @@ func ExportEndpoints(scanID int64, resultDir string) error {
 	}
 
 	// All endpoints with method
-	path := filepath.Join(resultDir, ExportFilenames[7])
+	path := filepath.Join(resultDir, FileEndpoints)
 	var lines []string
 	for _, e := range endpoints {
 		if e.Method != "" {
@@ -271,11 +299,11 @@ func ExportEndpoints(scanID int64, resultDir string) error {
 	}
 
 	// Interesting endpoints (API, admin, etc.) using package patterns
-	pathInteresting := filepath.Join(resultDir, ExportFilenames[8])
+	pathInteresting := filepath.Join(resultDir, FileEndpointsInteresting)
 	var linesInteresting []string
 	for _, e := range endpoints {
 		urlLower := strings.ToLower(e.URL)
-		for _, pattern := range InterestingEndpointsPatterns {
+		for _, pattern := range interestingEndpointsPatterns {
 			if strings.Contains(urlLower, pattern) {
 				if e.Method != "" {
 					linesInteresting = append(linesInteresting, fmt.Sprintf("%s %s", e.Method, e.URL))
@@ -296,7 +324,7 @@ func ExportSummary(scanID int64, resultDir string, target string) error {
 		return err
 	}
 
-	path := filepath.Join(resultDir, "SUMMARY.txt")
+	path := filepath.Join(resultDir, FileSummary)
 	var lines []string
 
 	lines = append(lines, "================================================================================")
@@ -316,11 +344,10 @@ func ExportSummary(scanID int64, resultDir string, target string) error {
 	lines = append(lines, "\nVULNERABILITIES")
 	lines = append(lines, "---------------")
 	totalVulns := 0
-	severities := []string{"critical", "high", "medium", "low", "info"}
-	
-	// Refactor ExportSummary's double-pass into a single pass with a dedup guard (printed map).
+
+	// Canonical severities first, then any non-standard ones (dedup-guarded).
 	printed := make(map[string]bool)
-	for _, sev := range severities {
+	for _, sev := range severityOrder {
 		if count, ok := stats.Vulnerabilities[sev]; ok {
 			lines = append(lines, fmt.Sprintf("%-10s: %d", strings.ToUpper(sev), count))
 			totalVulns += count

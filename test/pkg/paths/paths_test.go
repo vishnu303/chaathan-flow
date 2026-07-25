@@ -9,11 +9,11 @@ import (
 )
 
 func TestPaths(t *testing.T) {
+	paths.ResetForTest()
 	tempDir := t.TempDir()
-	
+
 	// Set the environment variable so we have a deterministic home directory
-	os.Setenv("CHAATHAN_HOME", tempDir)
-	defer os.Unsetenv("CHAATHAN_HOME")
+	t.Setenv("CHAATHAN_HOME", tempDir)
 
 	err := paths.Init()
 	if err != nil {
@@ -67,8 +67,7 @@ func TestEnvHomeDirectoryCreation(t *testing.T) {
 
 	tempDir := t.TempDir()
 	nonExistentSubdir := filepath.Join(tempDir, "new_home_env")
-	os.Setenv("CHAATHAN_HOME", nonExistentSubdir)
-	defer os.Unsetenv("CHAATHAN_HOME")
+	t.Setenv("CHAATHAN_HOME", nonExistentSubdir)
 
 	err := paths.Init()
 	if err != nil {

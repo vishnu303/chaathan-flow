@@ -55,7 +55,10 @@ func TestProgressTracker(t *testing.T) {
 
 func TestTrackerSequentialCounts(t *testing.T) {
 	oldStdout := os.Stdout
-	_, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
 	os.Stdout = w
 
 	tracker := progress.NewTracker(5)
@@ -65,8 +68,14 @@ func TestTrackerSequentialCounts(t *testing.T) {
 	tracker.Fail("amass", "api key missing")
 	tracker.Skip("assetfinder")
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
 	os.Stdout = oldStdout
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("drain pipe: %v", err)
+	}
 
 	completed, skipped, failed := tracker.Stats()
 	if completed != 1 {
@@ -82,16 +91,23 @@ func TestTrackerSequentialCounts(t *testing.T) {
 
 func TestItemFailMultibyteTruncation(t *testing.T) {
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
 	os.Stdout = w
 
 	cjkDetail := "这是一个非常非常非常非常非常非常非常非常非常非常非常非常非常非常非常长的测试字符串包含 multi-byte 字符用于验证截断"
-	
+
 	progress.ItemFail("test-item", cjkDetail)
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("drain pipe: %v", err)
+	}
 	os.Stdout = oldStdout
 
 	output := buf.String()
@@ -102,7 +118,10 @@ func TestItemFailMultibyteTruncation(t *testing.T) {
 
 func TestStopSpinnerCleansLine(t *testing.T) {
 	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
 	os.Stdout = w
 
 	tracker := progress.NewTracker(2)
@@ -110,13 +129,25 @@ func TestStopSpinnerCleansLine(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	tracker.StopSpinner()
 
-	w.Close()
+	if err := w.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("drain pipe: %v", err)
+	}
 	os.Stdout = oldStdout
 
 	output := buf.String()
 	if !strings.Contains(output, progress.TestClearLn) {
 		t.Errorf("expected stdout to be cleared with ClearLn sequence, got %q", output)
 	}
+}
+
+func TestStopSpinnerWithoutRun(t *testing.T) {
+	// Must return promptly: no goroutine was started, and the once-guard
+	// makes a second stop a no-op instead of a panic.
+	tracker := progress.NewTracker(1)
+	tracker.StopSpinner()
+	tracker.StopSpinner()
 }

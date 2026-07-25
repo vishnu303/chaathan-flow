@@ -2,10 +2,11 @@ package utils
 
 import (
 	"fmt"
-	"strings"
 )
 
 // Truncate shortens s to at most max runes, appending "..." when truncated.
+// When max <= 3 there is no room for the ellipsis, so the string is cut
+// without it.
 func Truncate(s string, max int) string {
 	runes := []rune(s)
 	if len(runes) <= max {
@@ -37,26 +38,4 @@ func FormatSize(bytes int64) string {
 	default:
 		return fmt.Sprintf("%d B", bytes)
 	}
-}
-
-// SummarizeSeverityCounts merges two severity→count maps (exact-URL matches and
-// host-level matches) and returns a compact string like "c:2 h:1 m:3", or "-"
-// when there are no findings.
-func SummarizeSeverityCounts(exact, host map[string]int) string {
-	order := []string{"critical", "high", "medium", "low", "info"}
-	var parts []string
-	for _, sev := range order {
-		total := exact[sev] + host[sev]
-		if total > 0 {
-			short := "?"
-			if len(sev) > 0 {
-				short = sev[:1]
-			}
-			parts = append(parts, fmt.Sprintf("%s:%d", short, total))
-		}
-	}
-	if len(parts) == 0 {
-		return "-"
-	}
-	return strings.Join(parts, " ")
 }

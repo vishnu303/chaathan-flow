@@ -77,6 +77,7 @@ func CountFileLines(filePath string) (int, error) {
 
 	count := 0
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxScanBufferSize)
 	for scanner.Scan() {
 		if isNonWhitespace(scanner.Bytes()) {
 			count++
@@ -107,6 +108,7 @@ func readFilteredLines(filePath string, keep func(string) bool) ([]string, error
 
 	var kept []string
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxScanBufferSize)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" && keep(line) {
@@ -120,20 +122,26 @@ func readFilteredLines(filePath string, keep func(string) bool) ([]string, error
 }
 
 // writeLines writes a slice of strings to a file using buffered I/O.
+// Close errors on the success path are returned so a failed final
+// flush-to-disk is not silently dropped.
 func writeLines(filePath string, lines []string) error {
 	f, err := os.Create(filePath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	w := bufio.NewWriter(f)
 	for _, line := range lines {
 		if _, err := w.WriteString(line + "\n"); err != nil {
+			_ = f.Close()
 			return err
 		}
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // FilterFileLines reads a file, keeps only lines where keep() returns true,
@@ -158,6 +166,7 @@ func readSanitizedURLLines(filePath string, isAllowedHost func(string) bool) ([]
 	var cleaned []string
 	seen := make(map[string]struct{})
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxScanBufferSize)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
