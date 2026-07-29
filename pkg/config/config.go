@@ -436,9 +436,9 @@ func DefaultConfig() *Config {
 			RetryDelaySec: 3,
 			UARotation:    true,
 			Wordlists: WordlistsConfig{
-				Subdomains:  filepath.Join(ResolveSecListsBase(), "Discovery", "DNS", "subdomains-top1million-5000.txt"),
-				Directories: filepath.Join(ResolveSecListsBase(), "Discovery", "Web-Content", "common.txt"),
-				Parameters:  filepath.Join(ResolveSecListsBase(), "Discovery", "Web-Content", "burp-parameter-names.txt"),
+				Subdomains:  ResolveSecListFile("Discovery/DNS/subdomains-top1million-5000.txt"),
+				Directories: ResolveSecListFile("Discovery/Web-Content/common.txt"),
+				Parameters:  ResolveSecListFile("Discovery/Web-Content/burp-parameter-names.txt"),
 			},
 			JSLimit: 2000,
 			ProxyScraping: ProxyScrapingConfig{
@@ -648,5 +648,20 @@ func ResolveSecListsBase() string {
 			return p
 		}
 	}
-	return "/usr/share/wordlists/seclists"
+	return ""
+}
+
+// ResolveSecListFile checks if SecLists is installed on the host and returns the absolute path
+// to the requested relative subpath (e.g. "Discovery/Web-Content/common.txt") if it exists.
+// Returns empty string if SecLists is not found or the target file does not exist.
+func ResolveSecListFile(subpath string) string {
+	base := ResolveSecListsBase()
+	if base == "" {
+		return ""
+	}
+	target := filepath.Join(base, filepath.FromSlash(subpath))
+	if info, err := os.Stat(target); err == nil && !info.IsDir() {
+		return target
+	}
+	return ""
 }

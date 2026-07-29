@@ -19,6 +19,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
@@ -137,17 +138,24 @@ func stepDNSBruteforce(c *Ctx) bool {
 		return cancelled
 	}
 
-	if c.SkipShuffleDNS || c.DNSWordlistPath == "" {
-		if c.SkipShuffleDNS {
-			logger.StepHeader("Step 8: Skipping ShuffleDNS (--skip-shuffledns)")
-			logger.FileDebug("shuffledns skipped via --skip-shuffledns flag")
-		} else {
-			logger.StepHeader("Step 8: Skipping ShuffleDNS (no --dns-wordlist provided)")
-			logger.Info("Use --dns-wordlist to enable DNS brute-force")
-			logger.FileDebug("shuffledns skipped: no --dns-wordlist provided")
-		}
+	if c.SkipShuffleDNS {
+		logger.StepHeader("Step 8: Skipping ShuffleDNS (--skip-shuffledns)")
+		logger.FileDebug("shuffledns skipped via --skip-shuffledns flag")
 		c.markStepCompleteIfNoFailure("dns_bruteforce")
 		return c.cancelled()
+	}
+
+	if c.DNSWordlistPath == "" {
+		if autoWl := config.ResolveSecListFile("Discovery/DNS/subdomains-top1million-5000.txt"); autoWl != "" {
+			c.DNSWordlistPath = autoWl
+			logger.Info("Auto-detected SecLists DNS wordlist for ShuffleDNS: %s", autoWl)
+		} else {
+			logger.StepHeader("Step 8: Skipping ShuffleDNS (no --dns-wordlist provided and SecLists not found on device)")
+			logger.Info("Use --dns-wordlist or run 'chaathan setup' to install SecLists")
+			logger.FileDebug("shuffledns skipped: no --dns-wordlist provided and SecLists not found on device")
+			c.markStepCompleteIfNoFailure("dns_bruteforce")
+			return c.cancelled()
+		}
 	}
 
 	writeEmptyFile(c.F.ShufflednsOut)

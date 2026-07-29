@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
@@ -530,17 +531,18 @@ func stepParamDiscovery(c *Ctx) bool {
 
 	logger.SubStep("Running x8 on %d targets...", len(x8Targets))
 
-	// Validate parameters wordlist if configured.
+	// Validate parameters wordlist if configured or available via SecLists.
 	paramWordlist := ""
-	if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" {
-		if utils.FileExists(c.Cfg.General.Wordlists.Parameters) {
-			paramWordlist = c.Cfg.General.Wordlists.Parameters
-		} else {
+	if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" && utils.FileExists(c.Cfg.General.Wordlists.Parameters) {
+		paramWordlist = c.Cfg.General.Wordlists.Parameters
+	} else if autoWl := config.ResolveSecListFile("Discovery/Web-Content/burp-parameter-names.txt"); autoWl != "" {
+		paramWordlist = autoWl
+		logger.Info("Auto-detected SecLists parameter wordlist for x8: %s", autoWl)
+	} else {
+		if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" {
 			logger.Warning("x8 parameters wordlist not found: %s", c.Cfg.General.Wordlists.Parameters)
-			logger.Info("  Install seclists (apt install seclists / pacman -S seclists) or set a valid wordlist in config.yaml")
-			logger.Info("  Falling back to x8's built-in parameter list")
-			logger.FileDebug("x8: configured wordlist does not exist at %s — using built-in default", c.Cfg.General.Wordlists.Parameters)
 		}
+		logger.Info("  SecLists parameter wordlist not found on device — falling back to x8's built-in parameter list")
 	}
 
 	var x8Skipped bool
@@ -1349,10 +1351,15 @@ func stepDirFuzzing(c *Ctx) bool {
 	}
 
 	if c.WordlistPath == "" {
-		logger.StepHeader("Step 15: Skipping ffuf (no --wordlist provided)")
-		logger.Info("Provide --wordlist to enable ffuf")
-		c.markStepCompleteIfNoFailure("dir_fuzzing")
-		return c.cancelled()
+		if autoWl := config.ResolveSecListFile("Discovery/Web-Content/common.txt"); autoWl != "" {
+			c.WordlistPath = autoWl
+			logger.Info("Auto-detected SecLists wordlist for ffuf: %s", autoWl)
+		} else {
+			logger.StepHeader("Step 15: Skipping ffuf (no wordlist provided and SecLists not found on device)")
+			logger.Info("Provide --wordlist or run 'chaathan setup' to install SecLists")
+			c.markStepCompleteIfNoFailure("dir_fuzzing")
+			return c.cancelled()
+		}
 	}
 
 	writeEmptyFile(c.F.FfufOut)
