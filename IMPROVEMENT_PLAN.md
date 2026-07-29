@@ -389,13 +389,13 @@ One-time `git add --renormalize .` + commit.
 
 ---
 
-### 3.7 `golangci-lint` config + CI workflow
+### 3.7 `golangci-lint` config & agent skill validation
 
-**Problem.** `Makefile lint` target references `golangci-lint` but the tool isn't installed and there's no `.golangci.yml` (F-014).
+**Problem.** `Makefile lint` target references `golangci-lint` but there's no `.golangci.yml` configuration file (F-014).
 
-**Plan.** Add `.golangci.yml` enabling: `govet`, `staticcheck`, `errcheck`, `gocyclo` (max 15), `misspell`, `gofmt`, `goimports`, `gosec` (scoped to non-test files). Wire a GitHub Actions workflow running `go test`, `go vet`, `golangci-lint run`, and `go build`.
+**Plan.** Add `.golangci.yml` enabling key linters (`govet`, `staticcheck`, `errcheck`, `gocyclo`, `misspell`, `ineffassign`, `unused`). Wire `golangci-lint run ./...` directly into `.agents/skills/chaathan-dev/SKILL.md` and `AGENTS.md` post-edit validation steps (CI workflow omitted per user choice).
 
-**Files.** `.golangci.yml`, `.github/workflows/ci.yml`.
+**Files.** `.golangci.yml`, `AGENTS.md`, `.agents/skills/chaathan-dev/SKILL.md`.
 
 ---
 

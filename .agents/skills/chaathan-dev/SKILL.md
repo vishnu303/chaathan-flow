@@ -124,8 +124,8 @@ wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && gofmt -w ."
 # Verify unit tests with race detector and coverage package mapping
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test -race -count=1 -coverpkg=github.com/vishnu303/chaathan/pkg/...,github.com/vishnu303/chaathan/utils/... -coverprofile=coverage.out ./..."
 
-# Run static checks
-wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go vet ./..."
+# Run linter & static analysis
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && golangci-lint run ./..."
 
 # Build application binary
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go build -buildvcs=false -o chaathan ."

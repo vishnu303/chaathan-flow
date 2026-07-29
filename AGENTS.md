@@ -60,7 +60,7 @@ chaathan-flow/
 ```bash
 gofmt -w .
 go test ./...
-go vet ./...
+golangci-lint run ./...
 go build -buildvcs=false -o chaathan .
 ```
 
@@ -68,7 +68,7 @@ If developing on Windows, use WSL for all commands at the `/mnt/c/Users/vishn/de
 ```bash
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && gofmt -w ."
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./..."
-wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go vet ./..."
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && golangci-lint run ./..."
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go build -buildvcs=false -o chaathan ."
 ```
 
