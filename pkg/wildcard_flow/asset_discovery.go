@@ -190,16 +190,16 @@ func stepActiveEnum(c *Ctx) bool {
 // stepGitHubRecon runs github-subdomains when a token is available.
 // Returns true if the scan should be cancelled.
 func stepGitHubRecon(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("github_recon", "Step 4: GitHub Subdomain Discovery"); skipped {
-		return cancelled
-	}
-
 	if c.GitHubToken == "" {
 		logger.StepHeader("Step 4: Skipping GitHub Recon (no token provided)")
 		logger.Warning("Set api_keys.github in config.yaml or pass --github-token flag for GitHub recon")
 		logger.FileDebug("github_recon skipped: no token provided")
 		c.markStepCompleteIfNoFailure("github_recon")
 		return c.cancelled()
+	}
+
+	if skipped, cancelled := c.resumeOrSkip("github_recon", "Step 4: GitHub Subdomain Discovery"); skipped {
+		return cancelled
 	}
 
 	writeEmptyFile(c.F.GithubSubsOut)

@@ -192,7 +192,7 @@ func (r *NativeRunner) runOnce(ctx context.Context, command string, args []strin
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	cmdStr := fmt.Sprintf("%s %s", command, strings.Join(args, " "))
+	cmdStr := formatCmdStr(command, args, options)
 	// Always write command to log file (file-only, no terminal noise)
 	logger.LogCommand(cmdStr)
 	if r.Verbose {
@@ -284,7 +284,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, command string, args []strin
 
 	dockerArgs = append(dockerArgs, translatedArgs...)
 
-	cmdStr := fmt.Sprintf("DOCKER %s", strings.Join(dockerArgs, " "))
+	cmdStr := formatDockerCmdStr(dockerArgs, options)
 	// Always write command to log file (file-only, no terminal noise)
 	logger.LogCommand(cmdStr)
 	if r.Verbose {
@@ -461,4 +461,65 @@ func translatePathsForDocker(args []string, hostDir string) []string {
 		translated[i] = arg
 	}
 	return translated
+}
+
+func formatCmdStr(command string, args []string, options *RunOptions) string {
+	quotedArgs := make([]string, len(args))
+	for i, arg := range args {
+		if strings.Contains(arg, " ") || strings.Contains(arg, "\t") {
+			quotedArgs[i] = fmt.Sprintf("%q", arg)
+		} else {
+			quotedArgs[i] = arg
+		}
+	}
+
+	var rawCmd string
+	if len(quotedArgs) > 0 {
+		rawCmd = command + " " + strings.Join(quotedArgs, " ")
+	} else {
+		rawCmd = command
+	}
+
+	if options != nil && options.Stdin != nil {
+		stdinContent := ""
+		if r := options.Stdin(); r != nil {
+			if b, err := io.ReadAll(r); err == nil {
+				stdinContent = strings.TrimSuffix(string(b), "\n")
+			}
+		}
+		if stdinContent != "" {
+			return fmt.Sprintf("echo %q | %s", stdinContent, rawCmd)
+		}
+		return "echo '' | " + rawCmd
+	}
+
+	return rawCmd
+}
+
+func formatDockerCmdStr(dockerArgs []string, options *RunOptions) string {
+	quotedArgs := make([]string, len(dockerArgs))
+	for i, arg := range dockerArgs {
+		if strings.Contains(arg, " ") || strings.Contains(arg, "\t") {
+			quotedArgs[i] = fmt.Sprintf("%q", arg)
+		} else {
+			quotedArgs[i] = arg
+		}
+	}
+
+	rawCmd := "DOCKER " + strings.Join(quotedArgs, " ")
+
+	if options != nil && options.Stdin != nil {
+		stdinContent := ""
+		if r := options.Stdin(); r != nil {
+			if b, err := io.ReadAll(r); err == nil {
+				stdinContent = strings.TrimSuffix(string(b), "\n")
+			}
+		}
+		if stdinContent != "" {
+			return fmt.Sprintf("echo %q | %s", stdinContent, rawCmd)
+		}
+		return "echo '' | " + rawCmd
+	}
+
+	return rawCmd
 }

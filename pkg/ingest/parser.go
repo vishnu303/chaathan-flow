@@ -468,6 +468,7 @@ func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
 func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 	targetDomain := getTargetDomain(scanID)
 	count := 0
+	seen := make(map[string]struct{})
 
 	err := scanTextLines(filePath, func(line string) {
 		method := ""
@@ -479,6 +480,12 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 			method = parts[0]
 			url = parts[1]
 		}
+
+		key := method + "\x00" + url
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
 
 		// Relative/path-only endpoints (e.g. golinkfinder output like
 		// "/api/v1/users") carry no host, so scope cannot apply — keep

@@ -722,6 +722,7 @@ func stepURLConsolidation(c *Ctx) bool {
 	rawCount2, _ := utils.CountFileLines(c.F.AllURLsRaw)
 	logger.FileDebug("httpx_url_check input: %s (%d URLs) out=%s", c.F.AllURLsRaw, rawCount2, c.F.AllURLsLive)
 	var urlCheckSkipped bool
+	var usedFallback bool
 	if err := runWithSkip(c, "httpx (URL check)", func(sCtx context.Context) error {
 		return c.Tb.RunHttpxURLCheck(sCtx, c.F.AllURLsRaw, c.F.AllURLsLive)
 	}); err != nil {
@@ -734,6 +735,7 @@ func stepURLConsolidation(c *Ctx) bool {
 		// Fallback: use raw URLs if live-check fails/is skipped and no
 		// fresh output exists from this scan session.
 		if !utils.FileExists(c.F.AllURLsLive) || !fileModifiedAfter(c.F.AllURLsLive, c.StartTime) {
+			usedFallback = true
 			logger.Info("  Using raw URLs as fallback")
 			copyFile(c.F.AllURLsRaw, c.F.AllURLsLive)
 		}
@@ -750,8 +752,10 @@ func stepURLConsolidation(c *Ctx) bool {
 			logger.Warning("Failed to persist live URLs to DB: %v", err)
 		} else {
 			label := ""
-			if urlCheckSkipped || !utils.FileExists(c.F.AllURLsLive) || !fileModifiedAfter(c.F.AllURLsLive, c.StartTime) {
+			if usedFallback {
 				label = " (from fallback)"
+			} else if urlCheckSkipped {
+				label = " (partial)"
 			}
 			logger.Info("  Stored %d live URLs in database%s", dbCount, label)
 		}

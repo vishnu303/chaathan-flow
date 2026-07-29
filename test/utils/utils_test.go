@@ -712,6 +712,34 @@ func TestParseEndpointsFile_RelativeKept(t *testing.T) {
 	}
 }
 
+func TestParseEndpointsFile_Deduplication(t *testing.T) {
+	// B2: duplicate (method, url) entries in endpoints file are deduplicated
+	// before insert so returned count matches DB stored rows.
+	scanID, tempDir := setupTestDB(t)
+
+	content := "GET https://example.com/api\nGET https://example.com/api\nhttps://example.com/plain\n"
+	filePath := filepath.Join(tempDir, "dup_endpoints.txt")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := ingest.ParseEndpointsFile(scanID, filePath, "test")
+	if err != nil {
+		t.Fatalf("ParseEndpointsFile error: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 unique endpoints parsed, got %d", count)
+	}
+
+	endpoints, err := database.GetEndpoints(scanID)
+	if err != nil {
+		t.Fatalf("GetEndpoints error: %v", err)
+	}
+	if len(endpoints) != 2 {
+		t.Fatalf("expected 2 endpoints in database, got %d", len(endpoints))
+	}
+}
+
 func TestParseHttpxOutput_EmptyURLSkipped(t *testing.T) {
 	// F3: an httpx line with an empty url must not insert a garbage empty-URL
 	// row; a valid line on the same file must still be parsed.

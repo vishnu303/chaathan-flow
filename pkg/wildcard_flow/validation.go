@@ -17,6 +17,7 @@ import (
 	"io"
 	neturl "net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/vishnu303/chaathan/pkg/config"
@@ -48,7 +49,11 @@ func stepDNSConsolidation(c *Ctx) bool {
 		c.F.HakrawlerOut,
 		c.F.UncoverHostsOut, // hostnames extracted from uncover.json in Step 5
 	)
-	logger.FileDebug("dns_consolidation: %d passive source files available (subfinder, assetfinder, sublist3r, amass, github, hakrawler, uncover_hosts)", len(passiveSources))
+	var sourceNames []string
+	for _, p := range passiveSources {
+		sourceNames = append(sourceNames, filepath.Base(p))
+	}
+	logger.FileDebug("dns_consolidation: %d passive source files available (%s)", len(passiveSources), strings.Join(sourceNames, ", "))
 	if err := utils.MergeAndDeduplicate(passiveSources, c.F.ConsolidatedSubs); err != nil {
 		c.markStepFailedSafe("dns_resolution", err)
 		logger.Error("Failed to consolidate: %v", err)
@@ -197,6 +202,8 @@ func stepDNSBruteforce(c *Ctx) bool {
 		c.Domain, c.DNSWordlistPath, c.ResolversPath, c.F.ShufflednsOut)
 
 	var shufflednsSkipped bool
+	var beforeMerge int
+	var newCount int
 	if err := runWithSkip(c, "shuffledns", func(sCtx context.Context) error {
 		return c.Tb.RunShuffleDNS(sCtx, c.Domain, c.DNSWordlistPath, c.ResolversPath, c.F.ShufflednsOut)
 	}); err != nil {
@@ -207,6 +214,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			logger.Warning("ShuffleDNS failed: %v", err)
 		}
 	} else {
+		beforeMerge, _ = utils.CountFileLines(c.F.ConsolidatedSubs)
 		// Merge brute-forced subs back into the consolidated list
 		utils.MergeAndDeduplicate(
 			[]string{c.F.ConsolidatedSubs, c.F.ShufflednsOut},
@@ -221,8 +229,13 @@ func stepDNSBruteforce(c *Ctx) bool {
 			return line == c.Domain || strings.HasSuffix(line, "."+c.Domain)
 		})
 		c.filterSubsToScope(c.F.ConsolidatedSubs)
-		if merged, _ := utils.CountFileLines(c.F.ConsolidatedSubs); merged > 0 {
-			logger.FileDebug("consolidated subs after shuffledns merge: %d", merged)
+		afterMerge, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
+		newCount = afterMerge - beforeMerge
+		if newCount < 0 {
+			newCount = 0
+		}
+		if afterMerge > 0 {
+			logger.FileDebug("consolidated subs after shuffledns merge: %d", afterMerge)
 		}
 	}
 
@@ -233,7 +246,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			if shufflednsSkipped {
 				label = " (partial)"
 			}
-			logger.Info("  Found %d subdomains via DNS brute-force%s", count, label)
+			logger.Info("  Found %d subdomains via DNS brute-force (%d new)%s", count, newCount, label)
 			logger.FileDebug("shuffledns output: %d subdomains -> %s", count, c.F.ShufflednsOut)
 		} else if shufflednsSkipped {
 			logger.Info("  ShuffleDNS skipped — no subdomains found")

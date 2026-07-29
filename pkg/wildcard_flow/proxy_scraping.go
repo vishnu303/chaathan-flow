@@ -27,14 +27,6 @@ import (
 func stepProxyScraping(c *Ctx) bool {
 	const stepName = "proxy_scraping"
 
-	// ── Resume check ────────────────────────────────────────
-	if skipped, cancelled := c.resumeOrSkip(stepName, "Proxy Scraping + Rotation (mubeng)"); skipped {
-		if c.AutoProxy && c.Proxy == "" {
-			c.restoreProxyRotatorOnResume()
-		}
-		return cancelled
-	}
-
 	// ── Skip if --proxy was explicitly set (manual always wins) ──
 	if c.Proxy != "" {
 		logger.StepHeader("Proxy Scraping — skipped (--proxy already set: %s)", c.Proxy)
@@ -47,6 +39,14 @@ func stepProxyScraping(c *Ctx) bool {
 		logger.StepHeader("Proxy Scraping — skipped (use --auto-proxy to enable)")
 		c.markStepCompleteIfNoFailure(stepName)
 		return c.cancelled()
+	}
+
+	// ── Resume check ────────────────────────────────────────
+	if skipped, cancelled := c.resumeOrSkip(stepName, "Proxy Scraping + Rotation (mubeng)"); skipped {
+		if c.AutoProxy && c.Proxy == "" {
+			c.restoreProxyRotatorOnResume()
+		}
+		return cancelled
 	}
 
 	c.runProxyScrapingAndRotation()

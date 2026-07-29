@@ -455,7 +455,7 @@ func ScanSummary(status string, target string, scanID int64, duration time.Durat
 	if pad3 < 0 {
 		pad3 = 0
 	}
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s⏱  %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, durStr, Reset, strings.Repeat(" ", pad3), Cyan+Bold, Reset))
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s⏱️  %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, durStr, Reset, strings.Repeat(" ", pad3), Cyan+Bold, Reset))
 
 	if len(stats) > 0 {
 		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, strings.Repeat("╌", w-2), Reset, Cyan+Bold, Reset))
