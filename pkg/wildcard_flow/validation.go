@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/metadata"
 	"github.com/vishnu303/chaathan/utils"
@@ -81,7 +82,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 
 	// Sync consolidated subdomains to DB
 	if c.ScanID > 0 {
-		if count, err := utils.ParseSubdomainsFile(c.ScanID, c.F.ConsolidatedSubs, "consolidated"); err != nil {
+		if count, err := ingest.ParseSubdomainsFile(c.ScanID, c.F.ConsolidatedSubs, "consolidated"); err != nil {
 			c.markStepFailedSafe("dns_resolution", err)
 			logger.Warning("Failed to sync consolidated subdomains to database: %v", err)
 		} else {
@@ -203,7 +204,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.ShufflednsOut) {
-		count, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.ShufflednsOut, "shuffledns")
+		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.ShufflednsOut, "shuffledns")
 		if count > 0 {
 			label := ""
 			if shufflednsSkipped {
@@ -267,7 +268,7 @@ func stepHTTPProbing(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.HttpxOut) {
-		count, _ := utils.ParseHttpxOutput(c.ScanID, c.F.HttpxOut)
+		count, _ := ingest.ParseHttpxOutput(c.ScanID, c.F.HttpxOut)
 		if count > 0 {
 			label := ""
 			if httpxSkipped {
@@ -319,7 +320,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 		}
 
 		if c.ScanID > 0 && utils.FileExists(c.F.TlsxOut) {
-			newSubs, certVulns, _ := utils.ParseTlsxOutput(c.ScanID, c.F.TlsxOut, c.Domain)
+			newSubs, certVulns, _ := ingest.ParseTlsxOutput(c.ScanID, c.F.TlsxOut, c.Domain)
 			label := ""
 			if tlsxSkipped {
 				label = " (partial)"
@@ -399,7 +400,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 							// Process whatever output httpx produced — partial output may
 							// exist even when the run was skipped before completion.
 							if utils.FileExists(sanHttpxOutFile) {
-								if _, err := utils.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
+								if _, err := ingest.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
 									logger.Warning("Failed to parse SAN httpx output: %v", err)
 								}
 
@@ -506,7 +507,7 @@ func stepPortScanning(c *Ctx) bool {
 		}
 		// Parse and log results regardless of skip/success — partial output may exist
 		if c.ScanID > 0 && utils.FileExists(c.F.NaabuOut) {
-			count, _ := utils.ParseNaabuOutput(c.ScanID, c.F.NaabuOut)
+			count, _ := ingest.ParseNaabuOutput(c.ScanID, c.F.NaabuOut)
 			if count > 0 {
 				label := ""
 				if naabuSkipped {

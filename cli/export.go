@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 	"github.com/vishnu303/chaathan/utils"
@@ -79,7 +80,7 @@ func runExport(cmd *cobra.Command, args []string) {
 
 	// Subdomains
 	logger.SubStep("Exporting subdomains...")
-	if err := utils.ExportSubdomains(scanID, outputDir); err != nil {
+	if err := ingest.ExportSubdomains(scanID, outputDir); err != nil {
 		logger.Warning("Subdomains export failed: %v", err)
 	} else {
 		logger.Success("%s created", utils.FileFinalSubdomains)
@@ -87,7 +88,7 @@ func runExport(cmd *cobra.Command, args []string) {
 
 	// Live subdomains
 	logger.SubStep("Exporting live subdomains...")
-	if err := utils.ExportLiveSubdomains(scanID, outputDir); err != nil {
+	if err := ingest.ExportLiveSubdomains(scanID, outputDir); err != nil {
 		logger.Warning("Live subdomains export failed: %v", err)
 	} else {
 		logger.Success("%s created", utils.FileLiveSubdomains)
@@ -95,7 +96,7 @@ func runExport(cmd *cobra.Command, args []string) {
 
 	// Ports
 	logger.SubStep("Exporting ports...")
-	if err := utils.ExportPorts(scanID, outputDir); err != nil {
+	if err := ingest.ExportPorts(scanID, outputDir); err != nil {
 		logger.Warning("Ports export failed: %v", err)
 	} else {
 		logger.Success("%s created", utils.FileOpenPorts)
@@ -103,7 +104,7 @@ func runExport(cmd *cobra.Command, args []string) {
 
 	// URLs
 	logger.SubStep("Exporting URLs...")
-	if err := utils.ExportURLs(scanID, outputDir); err != nil {
+	if err := ingest.ExportURLs(scanID, outputDir); err != nil {
 		logger.Warning("URLs export failed: %v", err)
 	} else {
 		logger.Success("%s created", utils.FileAllURLs)
@@ -111,7 +112,7 @@ func runExport(cmd *cobra.Command, args []string) {
 
 	// Vulnerabilities
 	logger.SubStep("Exporting vulnerabilities...")
-	if err := utils.ExportVulnerabilities(scanID, outputDir); err != nil {
+	if err := ingest.ExportVulnerabilities(scanID, outputDir); err != nil {
 		logger.Warning("Vulnerabilities export failed: %v", err)
 	} else {
 		logger.Success("%s created", utils.FileVulnerabilities)
@@ -119,7 +120,7 @@ func runExport(cmd *cobra.Command, args []string) {
 
 	// Endpoints
 	logger.SubStep("Exporting endpoints...")
-	if err := utils.ExportEndpoints(scanID, outputDir); err != nil {
+	if err := ingest.ExportEndpoints(scanID, outputDir); err != nil {
 		logger.Warning("Endpoints export failed: %v", err)
 	} else {
 		logger.Success("%s created", utils.FileEndpoints)
@@ -127,7 +128,7 @@ func runExport(cmd *cobra.Command, args []string) {
 
 	// Summary
 	logger.SubStep("Creating summary...")
-	if err := utils.ExportSummary(scanID, outputDir, scan.Target); err != nil {
+	if err := ingest.ExportSummary(scanID, outputDir, scan.Target); err != nil {
 		logger.Warning("Summary creation failed: %v", err)
 	} else {
 		logger.Success("%s created", utils.FileSummary)

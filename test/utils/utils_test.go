@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/utils"
 )
 
@@ -375,7 +376,7 @@ func TestParseNucleiOutput(t *testing.T) {
 		t.Fatalf("failed to write nuclei file: %v", err)
 	}
 
-	count, err := utils.ParseNucleiOutput(scanID, filePath)
+	count, err := ingest.ParseNucleiOutput(scanID, filePath)
 	if err != nil {
 		t.Fatalf("ParseNucleiOutput error: %v", err)
 	}
@@ -421,7 +422,7 @@ func TestParseHttpxOutput(t *testing.T) {
 		t.Fatalf("failed to write httpx file: %v", err)
 	}
 
-	count, err := utils.ParseHttpxOutput(scanID, filePath)
+	count, err := ingest.ParseHttpxOutput(scanID, filePath)
 	if err != nil {
 		t.Fatalf("ParseHttpxOutput error: %v", err)
 	}
@@ -462,7 +463,7 @@ func TestParseDalfoxOutput_TextMode(t *testing.T) {
 		t.Fatalf("failed to write dalfox file: %v", err)
 	}
 
-	count, err := utils.ParseDalfoxOutput(scanID, filePath)
+	count, err := ingest.ParseDalfoxOutput(scanID, filePath)
 	if err != nil {
 		t.Fatalf("ParseDalfoxOutput error: %v", err)
 	}
@@ -526,7 +527,7 @@ func TestExportVulnerabilities_CaseInsensitiveSeverity(t *testing.T) {
 		t.Fatalf("failed to insert vulnerability: %v", err)
 	}
 
-	err = utils.ExportVulnerabilities(scanID, tempDir)
+	err = ingest.ExportVulnerabilities(scanID, tempDir)
 	if err != nil {
 		t.Fatalf("ExportVulnerabilities failed: %v", err)
 	}
@@ -555,7 +556,7 @@ not-a-valid-line
 		t.Fatal(err)
 	}
 
-	count, err := utils.ParseNaabuOutput(scanID, filePath)
+	count, err := ingest.ParseNaabuOutput(scanID, filePath)
 	if err != nil {
 		t.Fatalf("ParseNaabuOutput error: %v", err)
 	}
@@ -586,7 +587,7 @@ other.org
 		t.Fatal(err)
 	}
 
-	count, err := utils.ParseSubdomainsFile(scanID, filePath, "test")
+	count, err := ingest.ParseSubdomainsFile(scanID, filePath, "test")
 	if err != nil {
 		t.Fatalf("ParseSubdomainsFile error: %v", err)
 	}
@@ -626,7 +627,7 @@ https://other.org/b
 		t.Fatal(err)
 	}
 
-	count, err := utils.ParseURLsFile(scanID, filePath, "test")
+	count, err := ingest.ParseURLsFile(scanID, filePath, "test")
 	if err != nil {
 		t.Fatalf("ParseURLsFile error: %v", err)
 	}
@@ -654,7 +655,7 @@ https://example.com/plain
 		t.Fatal(err)
 	}
 
-	count, err := utils.ParseEndpointsFile(scanID, filePath, "test")
+	count, err := ingest.ParseEndpointsFile(scanID, filePath, "test")
 	if err != nil {
 		t.Fatalf("ParseEndpointsFile error: %v", err)
 	}

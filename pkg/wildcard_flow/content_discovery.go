@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/metadata"
 	"github.com/vishnu303/chaathan/utils"
@@ -105,7 +106,7 @@ func stepURLDiscovery(c *Ctx) bool {
 
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.WaybackOut) {
-			count, _ := utils.ParseURLsFile(c.ScanID, c.F.WaybackOut, "waybackurls")
+			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.WaybackOut, "waybackurls")
 			if count > 0 {
 				label := ""
 				if urlDiscoverySkipped {
@@ -119,7 +120,7 @@ func stepURLDiscovery(c *Ctx) bool {
 			}
 		}
 		if utils.FileExists(c.F.GauOut) {
-			count, _ := utils.ParseURLsFile(c.ScanID, c.F.GauOut, "gau")
+			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GauOut, "gau")
 			if count > 0 {
 				label := ""
 				if urlDiscoverySkipped {
@@ -220,7 +221,7 @@ func stepWebCrawling(c *Ctx) bool {
 
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.KatanaOut) {
-			count, _ := utils.ParseURLsFile(c.ScanID, c.F.KatanaOut, "katana")
+			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.KatanaOut, "katana")
 			if count > 0 {
 				label := ""
 				if crawlSkipped {
@@ -234,7 +235,7 @@ func stepWebCrawling(c *Ctx) bool {
 			}
 		}
 		if utils.FileExists(c.F.GospiderOut) {
-			count, _ := utils.ParseURLsFile(c.ScanID, c.F.GospiderOut, "gospider")
+			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GospiderOut, "gospider")
 			if count > 0 {
 				label := ""
 				if crawlSkipped {
@@ -436,7 +437,7 @@ func stepJSAnalysis(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.GoLinkFinderOut) {
-		count, _ := utils.ParseEndpointsFile(c.ScanID, c.F.GoLinkFinderOut, "golinkfinder")
+		count, _ := ingest.ParseEndpointsFile(c.ScanID, c.F.GoLinkFinderOut, "golinkfinder")
 		if count > 0 {
 			label := ""
 			if golinkfinderSkipped {
@@ -737,7 +738,7 @@ func stepURLConsolidation(c *Ctx) bool {
 	// Persist live URLs into DB so GetScanStats / query commands reflect reality.
 	// This is intentionally after the skip/fallback block so both paths populate the DB.
 	if c.ScanID > 0 && utils.FileExists(c.F.AllURLsLive) {
-		if dbCount, err := utils.ParseLiveURLsFile(c.ScanID, c.F.AllURLsLive, "httpx-url-check"); err != nil {
+		if dbCount, err := ingest.ParseLiveURLsFile(c.ScanID, c.F.AllURLsLive, "httpx-url-check"); err != nil {
 			logger.Warning("Failed to persist live URLs to DB: %v", err)
 		} else {
 			label := ""
@@ -1455,7 +1456,7 @@ func stepDirFuzzing(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.FfufOut) {
-		count, err := utils.ParseFfufOutput(c.ScanID, c.F.FfufOut)
+		count, err := ingest.ParseFfufOutput(c.ScanID, c.F.FfufOut)
 		if err != nil {
 			logger.Warning("Failed to parse ffuf results: %v", err)
 		} else {

@@ -18,6 +18,8 @@ pkg/wildcard_flow/   → 23-step domain recon workflow (6 phases)
 pkg/company_flow/    → 3-step company recon workflow
 pkg/orchestrate/     → Signal traps, tool-runner bootstrap, notifications wiring
 pkg/database/        → SQLite models, ROI priorities, metadata schema, database actions
+pkg/ingest/          → Tool-output parsers (Parse*Output) + DB→text exporters (Export*)
+                       Extracted from utils/ via §3.4 leaf-package inversion.
 pkg/report/          │ Report formatting engine (Markdown, HTML, JSON, TXT)
 pkg/scan/            → Scan states, step definitions (WildcardSteps, CompanySteps)
 pkg/setup/           → Install scripts (Go, Python, massdns compilation, proxy tools)
@@ -31,7 +33,10 @@ pkg/notify/          → Notifier client implementations (Discord, Slack, Telegr
 pkg/logger/          → Formatted logging layout, UI panels, file logging triggers
 pkg/progress/        → Terminal progress animations and bars
 pkg/paths/           → Centralized config/data path management (~/.chaathan)
-utils/               → File utilities, parse maps, text writers
+utils/               → Pure leaf package — file IO, string/host normalization, pure
+                       helpers only. MUST NOT import pkg/database, pkg/logger,
+                       pkg/ingest, or any other internal package. DB-coupled
+                       Parse*Output / Export* logic belongs in pkg/ingest.
 ```
 
 ## Standard Development Pattern
@@ -111,6 +116,7 @@ func stepExampleTool(c *Ctx) bool {
 6. **Test Locations:** All test files (`*_test.go`) and test support/mock utilities must reside strictly within the `test/` folder hierarchy. No tests are allowed to remain in the `pkg/` or `utils/` production packages.
 7. **Config Defaults Single Source of Truth:** `config.DefaultConfig()` is the only source of defaults. Never re-introduce a second `applyDefaults`-style helper — `DefaultConfig()` is pre-seeded before YAML decode in `Load`, so sparse configs inherit defaults automatically. The `TestLoadMatchesDefaultConfig` test (in `test/pkg/config/config_test.go`) pins this invariant and must keep passing.
 8. **API Key Dispatch (`config.Config.GetAPIKey`):** Email-style engines (FOFA, Quake, ZoomEye) require both a `key` and an `*_email` half. The switch returns a combined `"<key>:<email>"` shorthand when both are set, and falls back to bare `key` if only the key is configured. The env fallback list (`apiKeyEnvMap`) must include `*_email` names for these engines so `FOFA_EMAIL` / `QUAKE_EMAIL` / `ZOOMEYE_EMAIL` work without a YAML file. `pkg/tools` uncover wiring only selects an email-style engine when both halves are present (mirrors Censys `id:secret` handling).
+9. **`utils` is a Leaf Package (§3.4 inversion):** `utils/` MUST NOT import any `pkg/*` package — no `pkg/database`, no `pkg/logger`, no `pkg/ingest`. It contains only stdlib-facing helpers (file IO, string/URL/host normalization, validation, file-name constants, severity ordering). All DB-coupled parse and export logic (`Parse*Output`, `Export*`, result structs like `HttpxResult`, `NucleiResult`, `DalfoxResult`) lives in `pkg/ingest/`. Adding a back-compat shim in `utils/` that calls `pkg/ingest` would create an import cycle — do not do it; migrate callers to `pkg/ingest` directly instead.
 
 ---
 

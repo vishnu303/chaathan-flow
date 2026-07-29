@@ -37,22 +37,29 @@ The flow of data and control in Chaathan is structured to maintain isolated, mod
   │     Tool Registry     │   │     Scan Manager      │
   │     (pkg/tools/)      │   │     (pkg/scan/)       │
   └───────────┬───────────┘   └──────────┬────────────┘
-              │                          │
+│                          │
               │ Runs external commands   │
               ▼                          │ Persists to DB
-  ┌───────────────────────┐              │
-  │    Central Runner     │              │
-  │     (pkg/runner/)     │              │
-  └───────────┬───────────┘              │
-              │                          ▼
-              │ Writes outputs           ┌───────────────────────┐
-              ├─────────────────────────►│     Database Layer    │
-              │                          │    (pkg/database/)    │
-              ▼                          └───────────┬───────────┘
-  ┌───────────────────────┐                          │ Retrieves data
-  │   Export & Summary    │                          │
-  │    (utils/export)     │◄─────────────────────────┘
-  └───────────────────────┘
+   ┌───────────────────────┐              │
+   │    Central Runner     │              │
+   │     (pkg/runner/)     │              │
+   └───────────┬───────────┘              │
+               │                          ▼
+               │ Writes outputs           ┌───────────────────────┐
+               ├─────────────────────────►│     Database Layer    │
+               │                          │    (pkg/database/)    │
+               ▼                          └───────────┬───────────┘
+   ┌───────────────────────┐                          │ Retrieves data
+   │ Ingest + Export layer │                          │
+   │    (pkg/ingest/)      │◄─────────────────────────┘
+   └───────────┬───────────┘
+               │ Pure helpers (file IO, host/url
+               │ normalization, file-name constants)
+               ▼
+   ┌───────────────────────┐
+   │     utils (leaf)      │
+   │     utils/            │
+   └───────────────────────┘
 ```
 
 ## Package Ownership Map
@@ -66,6 +73,7 @@ The flow of data and control in Chaathan is structured to maintain isolated, mod
 | **Tool execution, retry, docker** | `pkg/runner/` | CLI wrappers, setup logic |
 | **Tool registry, wrappers** | `pkg/tools/` | CLI commands, report rendering |
 | **Persistence, queries, ROI** | `pkg/database/` | CLI commands, report templates |
+| **Tool-output ingest + DB→file exporters** | `pkg/ingest/` | CLI commands, workflow logic |
 | **Report assembly, format export**| `pkg/report/` | Database accessors (use database layer queries only) |
 | **Scan state, resume, step defs** | `pkg/scan/` | CLI logic |
 | **External tool installation** | `pkg/setup/` | Runtime scan wrappers |
@@ -76,7 +84,7 @@ The flow of data and control in Chaathan is structured to maintain isolated, mod
 | **Terminal output, colors** | `pkg/logger/` | Business logic |
 | **Spinners, progress bars** | `pkg/progress/` | Business logic |
 | **`~/.chaathan` directory paths** | `pkg/paths/` | Hardcoded strings and configurations elsewhere |
-| **File I/O, parsers, helpers** | `utils/` | Direct package initialization, domain logic |
+| **File I/O, string/url/host normalization, file-name + severity constants** | `utils/` (leaf package) | Any `pkg/*` import (no `pkg/database`, `pkg/logger`, `pkg/ingest`), DB access, `logger.*` calls, scan / workflow logic |
 
 ## Core Principles
 

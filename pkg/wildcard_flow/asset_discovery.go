@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/utils"
 )
@@ -100,9 +101,9 @@ func stepPassiveEnum(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		subfinderCount, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.SubfinderOut, "subfinder")
-		assetfinderCount, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.AssetfinderOut, "assetfinder")
-		sublist3rCount, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.Sublist3rOut, "sublist3r")
+		subfinderCount, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.SubfinderOut, "subfinder")
+		assetfinderCount, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.AssetfinderOut, "assetfinder")
+		sublist3rCount, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.Sublist3rOut, "sublist3r")
 		totalPassive := subfinderCount + assetfinderCount + sublist3rCount
 		if totalPassive > 0 {
 			label := ""
@@ -164,7 +165,7 @@ func stepActiveEnum(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		count, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.AmassOut, "amass")
+		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.AmassOut, "amass")
 		if count > 0 {
 			label := ""
 			if amassSkipped {
@@ -220,7 +221,7 @@ func stepGitHubRecon(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		count, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.GithubSubsOut, "github")
+		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.GithubSubsOut, "github")
 		if count > 0 {
 			label := ""
 			if githubSkipped {
@@ -272,7 +273,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		subs, ports, _ := utils.ParseUncoverOutput(c.ScanID, c.F.UncoverOut, c.Domain)
+		subs, ports, _ := ingest.ParseUncoverOutput(c.ScanID, c.F.UncoverOut, c.Domain)
 		if subs > 0 || ports > 0 {
 			label := ""
 			if uncoverSkipped {
@@ -328,7 +329,7 @@ func stepJSSubdomains(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		count, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.HakrawlerOut, "hakrawler")
+		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.HakrawlerOut, "hakrawler")
 		if count > 0 {
 			label := ""
 			if hakrawlerSkipped {

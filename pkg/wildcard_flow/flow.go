@@ -17,6 +17,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/notify"
 	"github.com/vishnu303/chaathan/pkg/orchestrate"
@@ -695,12 +696,12 @@ func finalizeScan(c *Ctx, status string) {
 		if status == "completed" || status == "cancelled" {
 			finalDir := filepath.Join(c.ResultDir, "final_files")
 			logger.Info("\nExporting results to final_files/...")
-			if err := utils.ExportResults(c.ScanID, finalDir); err != nil {
+			if err := ingest.ExportResults(c.ScanID, finalDir); err != nil {
 				logger.Warning("Failed to export some results: %v", err)
 			} else {
 				logger.Success("Results exported to final_files/")
 			}
-			if err := utils.ExportSummary(c.ScanID, finalDir, c.Domain); err != nil {
+			if err := ingest.ExportSummary(c.ScanID, finalDir, c.Domain); err != nil {
 				logger.Warning("Failed to create summary: %v", err)
 			}
 		}

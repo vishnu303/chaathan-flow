@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/notify"
 	"github.com/vishnu303/chaathan/utils"
@@ -68,7 +69,7 @@ func stepFingerprinting(c *Ctx) bool {
 		}
 
 		if c.ScanID > 0 && (utils.FileExists(c.F.NucleiWafOut) || wafSkipped) {
-			count, _ := utils.ParseNucleiOutput(c.ScanID, c.F.NucleiWafOut)
+			count, _ := ingest.ParseNucleiOutput(c.ScanID, c.F.NucleiWafOut)
 			if count > 0 {
 				label := ""
 				if wafSkipped {
