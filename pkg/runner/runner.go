@@ -338,7 +338,7 @@ func startAndWait(ctx context.Context, cmd *exec.Cmd) error {
 		return err
 	case <-ctx.Done():
 		killProcessGroup(cmd)
-		
+
 		// Wait at most 2 seconds for process and its I/O to cleanly exit.
 		// If child processes inherited stdout/stderr and didn't die from the group kill,
 		// Wait() would block indefinitely. This prevents the hang.
@@ -377,39 +377,39 @@ type dockerImageInfo struct {
 
 var dockerImages = map[string]dockerImageInfo{
 	// Project Discovery tools — all use ENTRYPOINT
-	"subfinder":   {"projectdiscovery/subfinder", true},
-	"nuclei":      {"projectdiscovery/nuclei", true},
-	"httpx":       {"projectdiscovery/httpx", true},
-	"naabu":       {"projectdiscovery/naabu", true},
-	"dnsx":        {"projectdiscovery/dnsx", true},
-	"katana":      {"projectdiscovery/katana", true},
-	"tlsx":        {"projectdiscovery/tlsx", true},
-	"uncover":     {"projectdiscovery/uncover", true},
-	"shuffledns":  {"projectdiscovery/shuffledns", true},
+	"subfinder":  {"projectdiscovery/subfinder", true},
+	"nuclei":     {"projectdiscovery/nuclei", true},
+	"httpx":      {"projectdiscovery/httpx", true},
+	"naabu":      {"projectdiscovery/naabu", true},
+	"dnsx":       {"projectdiscovery/dnsx", true},
+	"katana":     {"projectdiscovery/katana", true},
+	"tlsx":       {"projectdiscovery/tlsx", true},
+	"uncover":    {"projectdiscovery/uncover", true},
+	"shuffledns": {"projectdiscovery/shuffledns", true},
 
 	// Third-party tools with ENTRYPOINT
-	"amass":       {"caffix/amass", true},
-	"ffuf":        {"ffuf/ffuf", true},
-	"dalfox":      {"hahwul/dalfox", true},
+	"amass":        {"caffix/amass", true},
+	"ffuf":         {"ffuf/ffuf", true},
+	"dalfox":       {"hahwul/dalfox", true},
 	"GoLinkFinder": {"alpine", false}, // no official image; go binary compiled from source
 
 	// Third-party tools WITHOUT ENTRYPOINT (need command passed)
-	"assetfinder":      {"tomnomnom/assetfinder", false},
-	"gau":              {"sxcurity/gau", false},
-	"waybackurls":      {"sxcurity/waybackurls", false},
-	"metabigor":        {"j3ssie/metabigor", false},
-	"gospider":         {"jaeles-project/gospider", false},
+	"assetfinder":       {"tomnomnom/assetfinder", false},
+	"gau":               {"sxcurity/gau", false},
+	"waybackurls":       {"sxcurity/waybackurls", false},
+	"metabigor":         {"j3ssie/metabigor", false},
+	"gospider":          {"jaeles-project/gospider", false},
 	"github-subdomains": {"gwen001/github-subdomains", false},
 
 	// No official Docker image — alpine fallback (won't work without custom image)
-	"hakrawler":      {"hakluke/hakrawler", true}, // reads stdin; official ENTRYPOINT image
-	"sublist3r":     {"alpine", false}, // Python script — no official image
-	"cloud_enum":    {"alpine", false}, // Python script — no official image
-	"massdns":       {"alpine", false}, // compiled from source
-	"anew":          {"alpine", false}, // tiny Go binary — unlikely to need Docker
-	"gf":            {"alpine", false}, // tiny Go binary — unlikely to need Docker
-	"x8":            {"alpine", false}, // Rust binary — no official Docker image
-	"mubeng":        {"alpine", false}, // Go binary — no official Docker image
+	"hakrawler":  {"hakluke/hakrawler", true}, // reads stdin; official ENTRYPOINT image
+	"sublist3r":  {"alpine", false},           // Python script — no official image
+	"cloud_enum": {"alpine", false},           // Python script — no official image
+	"massdns":    {"alpine", false},           // compiled from source
+	"anew":       {"alpine", false},           // tiny Go binary — unlikely to need Docker
+	"gf":         {"alpine", false},           // tiny Go binary — unlikely to need Docker
+	"x8":         {"alpine", false},           // Rust binary — no official Docker image
+	"mubeng":     {"alpine", false},           // Go binary — no official Docker image
 }
 
 func getDockerImage(tool string) string {
@@ -427,7 +427,6 @@ func isEntrypointImage(tool string) bool {
 	return false
 }
 
-
 // NewWithRetry creates a runner with retry logic for the given execution mode
 // ("native" or "docker").
 func NewWithRetry(mode string, verbose bool, maxRetries int, retryDelay time.Duration) Runner {
@@ -443,12 +442,12 @@ func translatePathsForDocker(args []string, hostDir string) []string {
 	}
 	// Normalize hostDir to forward slashes for matching
 	hostDirNormalized := strings.ReplaceAll(hostDir, "\\", "/")
-	
+
 	translated := make([]string, len(args))
 	for i, arg := range args {
 		// Normalize arg to forward slashes for matching
 		argNormalized := strings.ReplaceAll(arg, "\\", "/")
-		
+
 		if len(argNormalized) >= len(hostDirNormalized) {
 			argPrefix := argNormalized[:len(hostDirNormalized)]
 			if strings.EqualFold(argPrefix, hostDirNormalized) {
@@ -461,4 +460,3 @@ func translatePathsForDocker(args []string, hostDir string) []string {
 	}
 	return translated
 }
-

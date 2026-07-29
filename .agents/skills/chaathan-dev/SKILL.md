@@ -118,6 +118,9 @@ Run all tests, lints, and builds inside the WSL environment if developing on a W
 
 ### WSL Test Pipeline:
 ```bash
+# Format Go code after making changes
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && gofmt -w ."
+
 # Verify unit tests with race detector and coverage package mapping
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test -race -count=1 -coverpkg=github.com/vishnu303/chaathan/pkg/...,github.com/vishnu303/chaathan/utils/... -coverprofile=coverage.out ./..."
 

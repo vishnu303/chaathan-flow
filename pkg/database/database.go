@@ -1120,7 +1120,6 @@ func DeleteScansByTarget(target string) (int, error) {
 	return len(scanIDs), nil
 }
 
-
 // GetAllTargets returns a list of all unique targets in the database
 func GetAllTargets() ([]string, error) {
 	if DB == nil {

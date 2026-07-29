@@ -60,4 +60,3 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		ForceUpdate: setupUpdate,
 	})
 }
-

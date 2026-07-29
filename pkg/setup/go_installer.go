@@ -70,7 +70,6 @@ func parseGoVersion(versionStr string) (bool, string) {
 	return false, ""
 }
 
-
 // ensureSystemGoOnPath checks if Go is installed under the user-local or system directory
 // and adds it to the current process's PATH if found.
 func ensureSystemGoOnPath() {

@@ -58,6 +58,7 @@ chaathan-flow/
 ## Validation baseline
 
 ```bash
+gofmt -w .
 go test ./...
 go vet ./...
 go build -buildvcs=false -o chaathan .
@@ -65,6 +66,7 @@ go build -buildvcs=false -o chaathan .
 
 If developing on Windows, use WSL for all commands at the `/mnt/c/Users/vishn/desktop/chaathan` path (using interactive shell `-i` to source your Go environment):
 ```bash
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && gofmt -w ."
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test ./..."
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go vet ./..."
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go build -buildvcs=false -o chaathan ."

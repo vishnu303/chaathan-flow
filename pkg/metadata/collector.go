@@ -20,7 +20,7 @@ const (
 	// maxBodyBytes limits the response body reading to 64KB.
 	// Note: Any form or input fields located past the first 64KB
 	// of the HTML response will not be analyzed or counted.
-	maxBodyBytes       = 65536
+	maxBodyBytes = 65536
 )
 
 // sessionCookiePrefixes are common cookie name patterns that indicate

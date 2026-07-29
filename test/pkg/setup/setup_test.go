@@ -48,7 +48,7 @@ func TestSetupLogger(t *testing.T) {
 	}
 
 	logger.Write("Test setup log entry")
-	
+
 	logger.Close()
 
 	content, err := os.ReadFile(logger.Path())

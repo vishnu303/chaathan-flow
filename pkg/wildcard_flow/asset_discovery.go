@@ -150,7 +150,7 @@ func stepActiveEnum(c *Ctx) bool {
 	writeEmptyFile(c.F.AmassOut)
 	logger.SubStep("Running Amass (this may take a while)...")
 	logger.FileDebug("amass input: domain=%s out=%s", c.Domain, c.F.AmassOut)
-	
+
 	var amassSkipped bool
 	if err := runWithSkip(c, "amass", func(sCtx context.Context) error {
 		return c.Tb.RunAmass(sCtx, c.Domain, c.F.AmassOut)
@@ -204,7 +204,7 @@ func stepGitHubRecon(c *Ctx) bool {
 	writeEmptyFile(c.F.GithubSubsOut)
 	logger.SubStep("Running github-subdomains...")
 	logger.FileDebug("github-subdomains input: domain=%s token_len=%d out=%s", c.Domain, len(c.GitHubToken), c.F.GithubSubsOut)
-	
+
 	var githubSkipped bool
 	if err := runWithSkip(c, "github-subdomains", func(sCtx context.Context) error {
 		return c.Tb.RunGithubSubdomains(sCtx, c.Domain, c.GitHubToken, c.F.GithubSubsOut)
@@ -233,7 +233,7 @@ func stepGitHubRecon(c *Ctx) bool {
 			logger.Info("  Found 0 subdomains")
 		}
 	}
-	
+
 	c.markStepCompleteIfNoFailure("github_recon")
 	return c.cancelled()
 }
@@ -258,7 +258,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 	writeEmptyFile(c.F.UncoverOut)
 	writeEmptyFile(c.F.UncoverHostsOut)
 	logger.SubStep("Running Uncover (Shodan/Censys/Fofa)...")
-	
+
 	var uncoverSkipped bool
 	if err := runWithSkip(c, "uncover", func(sCtx context.Context) error {
 		return c.Tb.RunUncover(sCtx, c.Domain, c.F.UncoverOut)
@@ -285,7 +285,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 			logger.Info("  Found 0 hosts and 0 open ports from search engines")
 		}
 	}
-	
+
 	// Extract hostnames into a plain-text file so Step 6 can merge them
 	if n := extractUncoverHosts(c.F.UncoverOut, c.F.UncoverHostsOut, c.Domain); n > 0 {
 		logger.SubStep("[Done] Extracted %d unique hosts from Uncover output", n)

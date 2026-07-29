@@ -168,7 +168,6 @@ func WriteToFile(filePath string, content string) error {
 	return f.Close()
 }
 
-
 // FilterFileLines reads a file, keeps only lines where keep() returns true,
 // and writes the result back in place. Empty lines are always dropped.
 func FilterFileLines(filePath string, keep func(string) bool) error {

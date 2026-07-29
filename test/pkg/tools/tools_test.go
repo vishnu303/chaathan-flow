@@ -195,8 +195,8 @@ func TestRunUncoverEnvVars(t *testing.T) {
 	dr := &runnerfaketest.DummyRunner{}
 	tb := tools.New(dr)
 	tb.APIKeys = &config.APIKeysConfig{
-		Shodan: "shodan_key",
-		CensysID: "censys_id_val",
+		Shodan:       "shodan_key",
+		CensysID:     "censys_id_val",
 		CensysSecret: "censys_secret_val",
 	}
 
@@ -391,4 +391,3 @@ func TestWriteToFileHarden(t *testing.T) {
 		t.Errorf("expected file content to be 'hello world', got %q", string(content))
 	}
 }
-

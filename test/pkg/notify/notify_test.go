@@ -1,5 +1,5 @@
 package notify_test
- 
+
 import (
 	"encoding/json"
 	"io"
@@ -13,7 +13,7 @@ import (
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/notify"
 )
- 
+
 func TestEscapeMarkdown(t *testing.T) {
 	tests := []struct {
 		input    string

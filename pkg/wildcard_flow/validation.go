@@ -91,7 +91,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 
 	logger.SubStep("Running DNSx for resolution...")
 	logger.FileDebug("dnsx input: %s (%d lines) out=%s", c.F.ConsolidatedSubs, subCount, c.F.DnsxOut)
-	
+
 	var dnsxSkipped bool
 	if err := runWithSkip(c, "dnsx", func(sCtx context.Context) error {
 		return c.Tb.RunDnsx(sCtx, c.F.ConsolidatedSubs, c.F.DnsxOut)

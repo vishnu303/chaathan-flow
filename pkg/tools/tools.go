@@ -491,7 +491,6 @@ func (t *ToolBox) amassMaxTimeout() time.Duration {
 	return time.Duration(val) * time.Minute
 }
 
-
 // --- Passive Enumeration ---
 
 func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile string) error {
@@ -728,7 +727,6 @@ func (t *ToolBox) RunFfufWithFUZZ(ctx context.Context, baseURL string, wordlist 
 	_, err := t.Runner.Run(ctx, "ffuf", args, runner.WithTimeout(t.ffufMaxTimeout()))
 	return err
 }
-
 
 // RunNucleiSmartCVE runs tech-targeted CVE scanning using Nuclei's -as (automatic scan).
 // Wappalyzer fingerprints each host and selects only templates matching detected technologies.
@@ -1109,5 +1107,3 @@ func (t *ToolBox) RunNucleiWAF(ctx context.Context, inputFile string, outputFile
 	_, err := t.Runner.Run(ctx, "nuclei", args)
 	return err
 }
-
-

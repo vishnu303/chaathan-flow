@@ -132,7 +132,6 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	return nil
 }
 
-
 // resolveGOPATH returns the resolved GOPATH directory path, or an error if the user home directory cannot be found.
 func resolveGOPATH() (string, error) {
 	gopath := os.Getenv("GOPATH")

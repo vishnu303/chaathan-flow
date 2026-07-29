@@ -93,7 +93,7 @@ func TestGetTopTechnologiesAggregation(t *testing.T) {
 	}
 
 	topTechs := tui.GetTopTechnologies(scanID)
-	
+
 	if len(topTechs) != 3 {
 		t.Fatalf("expected 3 top technologies, got %d: %v", len(topTechs), topTechs)
 	}

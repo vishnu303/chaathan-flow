@@ -13,8 +13,8 @@ import (
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 	"github.com/vishnu303/chaathan/pkg/scan"
-	"github.com/vishnu303/chaathan/utils"
 	wf "github.com/vishnu303/chaathan/pkg/wildcard_flow"
+	"github.com/vishnu303/chaathan/utils"
 )
 
 var scansCmd = &cobra.Command{
@@ -255,34 +255,34 @@ func resumeScanByID(scanID int64) {
 		}
 
 		if err := wf.Run(wf.RunConfig{
-			Domain:            state.Target,
-			ResultDir:         state.ResultDir,
-			Mode:              Mode,
-			Verbose:           Verbose,
-			Cfg:               Cfg,
-			SkipAmass:         boolOpt("skip_amass"),
-			SkipNuclei:        boolOpt("skip_nuclei"),
-			SkipNaabu:         boolOpt("skip_naabu"),
-			SkipCrawl:         boolOpt("skip_crawl"),
-			SkipTakeovers:     boolOpt("skip_takeovers"),
-			SkipDalfox:        boolOpt("skip_dalfox"),
-			SkipUncover:       boolOpt("skip_uncover"),
-			SkipTlsx:          boolOpt("skip_tlsx"),
-			SkipX8:            boolOpt("skip_x8"),
-			SkipShuffleDNS:    boolOpt("skip_shuffledns"),
-			SkipHakrawler:     boolOpt("skip_hakrawler"),
-			SkipFingerprint:   boolOpt("skip_fingerprint"),
-			WordlistPath:      strOpt("wordlist"),
-			DNSWordlistPath:   strOpt("dns_wordlist"),
-			ResolversPath:     strOpt("resolvers"),
-			GitHubToken:       token,
-			ResumeScanID:      scanID,
-			GenerateReport:    true,
-			SaveLog:           boolOpt("save_log"),
-			CustomCookie:      strOpt("custom_cookie"),
-			CustomHeaders:     sliceOpt("custom_headers"),
-			CustomToken:       strOpt("custom_token"),
-			AutoProxy:         boolOpt("auto_proxy"),
+			Domain:          state.Target,
+			ResultDir:       state.ResultDir,
+			Mode:            Mode,
+			Verbose:         Verbose,
+			Cfg:             Cfg,
+			SkipAmass:       boolOpt("skip_amass"),
+			SkipNuclei:      boolOpt("skip_nuclei"),
+			SkipNaabu:       boolOpt("skip_naabu"),
+			SkipCrawl:       boolOpt("skip_crawl"),
+			SkipTakeovers:   boolOpt("skip_takeovers"),
+			SkipDalfox:      boolOpt("skip_dalfox"),
+			SkipUncover:     boolOpt("skip_uncover"),
+			SkipTlsx:        boolOpt("skip_tlsx"),
+			SkipX8:          boolOpt("skip_x8"),
+			SkipShuffleDNS:  boolOpt("skip_shuffledns"),
+			SkipHakrawler:   boolOpt("skip_hakrawler"),
+			SkipFingerprint: boolOpt("skip_fingerprint"),
+			WordlistPath:    strOpt("wordlist"),
+			DNSWordlistPath: strOpt("dns_wordlist"),
+			ResolversPath:   strOpt("resolvers"),
+			GitHubToken:     token,
+			ResumeScanID:    scanID,
+			GenerateReport:  true,
+			SaveLog:         boolOpt("save_log"),
+			CustomCookie:    strOpt("custom_cookie"),
+			CustomHeaders:   sliceOpt("custom_headers"),
+			CustomToken:     strOpt("custom_token"),
+			AutoProxy:       boolOpt("auto_proxy"),
 		}); err != nil {
 			logger.Error("Resume failed: %v", err)
 		}

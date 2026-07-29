@@ -184,23 +184,23 @@ func parseVersionNumbers(v string) ([3]int, error) {
 func comparePreRelease(late, curr string) bool {
 	lateSegs := strings.Split(late, ".")
 	currSegs := strings.Split(curr, ".")
-	
+
 	minLen := len(lateSegs)
 	if len(currSegs) < minLen {
 		minLen = len(currSegs)
 	}
-	
+
 	for i := 0; i < minLen; i++ {
 		lSeg := lateSegs[i]
 		cSeg := currSegs[i]
-		
+
 		if lSeg == cSeg {
 			continue
 		}
-		
+
 		lNum, errL := strconv.Atoi(lSeg)
 		cNum, errC := strconv.Atoi(cSeg)
-		
+
 		if errL == nil && errC == nil {
 			if lNum != cNum {
 				return lNum > cNum
@@ -211,6 +211,6 @@ func comparePreRelease(late, curr string) bool {
 			}
 		}
 	}
-	
+
 	return len(lateSegs) > len(currSegs)
 }

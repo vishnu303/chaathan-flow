@@ -379,7 +379,6 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 		return
 	}
 
-
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "SCORE\tN-SCORE\tCONF\tSTATUS\tURL\tSURFACES")
 	for _, t := range targets {

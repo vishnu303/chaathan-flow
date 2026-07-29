@@ -1,5 +1,5 @@
 package metadata_test
- 
+
 import (
 	"net/http"
 	"net/http/httptest"
@@ -7,7 +7,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/metadata"
 )
- 
+
 func TestAnalyzeCookies_NoCookies(t *testing.T) {
 	insecure, session := metadata.AnalyzeCookies(nil)
 	if insecure || session {
@@ -69,8 +69,8 @@ func TestAnalyzeCookies_NonSessionCookie(t *testing.T) {
 
 func TestAnalyzeCookies_MultipleCookies(t *testing.T) {
 	cookies := []string{
-		"_ga=GA1.2.123; Path=/",                          // tracking, insecure
-		"PHPSESSID=abc123; Path=/; Secure; HttpOnly",      // session, secure
+		"_ga=GA1.2.123; Path=/",                      // tracking, insecure
+		"PHPSESSID=abc123; Path=/; Secure; HttpOnly", // session, secure
 	}
 	insecure, session := metadata.AnalyzeCookies(cookies)
 	if !insecure {

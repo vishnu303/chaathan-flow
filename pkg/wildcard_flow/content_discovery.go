@@ -487,7 +487,7 @@ func stepParamDiscovery(c *Ctx) bool {
 
 	// Merge FfufDiscoveredURLs and high-signal endpoints into a temporary input file
 	x8InputFile := c.F.X8Input
-	
+
 	var x8Targets []string
 
 	// Add ffuf fuzzing results
@@ -1336,7 +1336,6 @@ func stepJSSecretScan(c *Ctx) bool {
 	return c.cancelled()
 }
 
-
 // ─────────────────────────────────────────────────────────────
 // Step 17 — Directory Fuzzing (ffuf)
 // ─────────────────────────────────────────────────────────────
@@ -1529,16 +1528,16 @@ func isUsefulJSURL(raw string) bool {
 	if !isJavaScriptURL(raw) {
 		return false
 	}
-	
+
 	lower := strings.ToLower(raw)
-	
+
 	stopwords := []string{
-		"jquery", "bootstrap", "react", "react-dom", "vue", "angular", 
-		"moment", "lodash", "underscore", "chart", "d3", "analytics", 
-		"gtm.js", "google-analytics", "ads.js", "tracking", "fontawesome", 
+		"jquery", "bootstrap", "react", "react-dom", "vue", "angular",
+		"moment", "lodash", "underscore", "chart", "d3", "analytics",
+		"gtm.js", "google-analytics", "ads.js", "tracking", "fontawesome",
 		"recaptcha", "polyfill", "vendor.js", "node_modules", "swagger-ui",
 	}
-	
+
 	for _, stopword := range stopwords {
 		if strings.Contains(lower, stopword) {
 			return false
@@ -1559,7 +1558,6 @@ func isJavaScriptURL(raw string) bool {
 	}
 	return strings.HasSuffix(strings.ToLower(raw), ".js")
 }
-
 
 // ─────────────────────────────────────────────────────────────
 // convertX8ToURLs — Step 16 helper
