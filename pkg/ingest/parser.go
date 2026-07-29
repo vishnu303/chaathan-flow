@@ -206,6 +206,33 @@ func ParseSubdomainsFile(scanID int64, filePath, source string) (int, error) {
 	return len(domains), nil
 }
 
+// SyncSubdomainsWithConsolidated reads the consolidated subdomains file and purges
+// any out-of-scope/unconsolidated subdomains from the database for the given scan ID.
+func SyncSubdomainsWithConsolidated(scanID int64, consolidatedFilePath string) (int, error) {
+	if scanID <= 0 || !utils.FileExists(consolidatedFilePath) {
+		return 0, nil
+	}
+
+	var domains []string
+	seen := make(map[string]bool)
+	err := scanTextLines(consolidatedFilePath, func(line string) {
+		line = strings.ToLower(strings.TrimSpace(line))
+		if line != "" && !seen[line] {
+			seen[line] = true
+			domains = append(domains, line)
+		}
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	deleted, err := database.PurgeUnconsolidatedSubdomains(scanID, domains)
+	if err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
+}
+
 // HttpxResult represents a line from httpx JSON output
 type HttpxResult struct {
 	URL          string   `json:"url"`

@@ -295,10 +295,26 @@ func Run(cfg RunConfig) error {
 	go func() {
 		buf := make([]byte, 1)
 		for {
+			select {
+			case <-goCtx.Done():
+				return
+			default:
+			}
+
 			n, err := os.Stdin.Read(buf)
-			if err != nil || n == 0 {
+			if err != nil {
+				return
+			}
+			if n == 0 {
 				continue
 			}
+
+			select {
+			case <-goCtx.Done():
+				return
+			default:
+			}
+
 			if buf[0] == 's' || buf[0] == 'S' {
 				select {
 				case skipChan <- struct{}{}:
@@ -311,7 +327,7 @@ func Run(cfg RunConfig) error {
 		}
 	}()
 
-	// ── Database record ──────────────────────────────────────
+	// ── Database record & scan state ─────────────────────────
 	configJSON, _ := json.Marshal(map[string]any{
 		"skip_amass":       cfg.SkipAmass,
 		"skip_nuclei":      cfg.SkipNuclei,
@@ -336,13 +352,81 @@ func Run(cfg RunConfig) error {
 		"custom_token":     cfg.CustomToken,
 	})
 
-	dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))
-	if err != nil {
-		logger.Warning("Failed to create scan record: %v", err)
-	}
-	scanID := int64(0)
-	if dbScan != nil {
-		scanID = dbScan.ID
+	stateMgr := scan.NewManager(paths.StateDir())
+	var scanState *scan.State
+	var scanID int64
+
+	if cfg.ResumeScanID > 0 {
+		scanID = cfg.ResumeScanID
+		existingState, err := stateMgr.LoadState(scanID)
+		if err != nil {
+			return fmt.Errorf("cannot resume scan #%d: %w", scanID, err)
+		}
+		scanState = existingState
+
+		// Validate target match
+		if scanState.Target != cfg.Domain {
+			return fmt.Errorf("target mismatch for resumed scan #%d: state target is %q, but requested target is %q", scanID, scanState.Target, cfg.Domain)
+		}
+
+		// Validate result directory match
+		if scanState.ResultDir != "" && scanState.ResultDir != cfg.ResultDir {
+			logger.Warning("Result directory mismatch for resumed scan #%d: state directory is %q, but current configuration is %q. Adopting state result directory %q.",
+				scanID, scanState.ResultDir, cfg.ResultDir, scanState.ResultDir)
+			cfg.ResultDir = scanState.ResultDir
+		}
+
+		// Reconcile and compare against persisted scanState.Config
+		var persistedMap map[string]any
+		if err := json.Unmarshal(scanState.Config, &persistedMap); err == nil && persistedMap != nil {
+			checkBoolDiff := func(key string, current bool) {
+				if val, ok := persistedMap[key].(bool); ok && val != current {
+					logger.Warning("Config change detected for option %s: persisted value is %t, current is %t. Resumed scan will use the persisted state/skip config for steps.", key, val, current)
+				}
+			}
+			checkBoolDiff("skip_amass", cfg.SkipAmass)
+			checkBoolDiff("skip_nuclei", cfg.SkipNuclei)
+			checkBoolDiff("skip_naabu", cfg.SkipNaabu)
+			checkBoolDiff("skip_crawl", cfg.SkipCrawl)
+			checkBoolDiff("skip_takeovers", cfg.SkipTakeovers)
+			checkBoolDiff("skip_dalfox", cfg.SkipDalfox)
+			checkBoolDiff("skip_uncover", cfg.SkipUncover)
+			checkBoolDiff("skip_tlsx", cfg.SkipTlsx)
+			checkBoolDiff("skip_x8", cfg.SkipX8)
+			checkBoolDiff("skip_shuffledns", cfg.SkipShuffleDNS)
+			checkBoolDiff("skip_hakrawler", cfg.SkipHakrawler)
+			checkBoolDiff("skip_fingerprint", cfg.SkipFingerprint)
+			checkBoolDiff("auto_proxy", cfg.AutoProxy)
+			checkBoolDiff("save_log", cfg.SaveLog)
+
+			checkStringDiff := func(key string, current string) {
+				if val, ok := persistedMap[key].(string); ok && val != current {
+					logger.Warning("Config change detected for option %s: persisted value is %q, current is %q.", key, val, current)
+				}
+			}
+			checkStringDiff("wordlist", cfg.WordlistPath)
+			checkStringDiff("dns_wordlist", cfg.DNSWordlistPath)
+			checkStringDiff("resolvers", cfg.ResolversPath)
+			checkStringDiff("custom_cookie", cfg.CustomCookie)
+			checkStringDiff("custom_token", cfg.CustomToken)
+		}
+
+		logger.Info("Resuming scan #%d (%.1f%% complete, %d/%d steps done)",
+			scanID, scanState.Progress(), len(scanState.CompletedSteps), scanState.TotalSteps)
+	} else {
+		dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))
+		if err != nil {
+			logger.Warning("Failed to create scan record: %v", err)
+		}
+		if dbScan != nil {
+			scanID = dbScan.ID
+		}
+
+		var errState error
+		scanState, errState = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
+		if errState != nil {
+			return fmt.Errorf("cannot create scan state: %w", errState)
+		}
 	}
 
 	// ── File logging ──────────────────────────────────────
@@ -363,29 +447,9 @@ func Run(cfg RunConfig) error {
 		}
 	}
 
-	// ── Scan header & state ──────────────────────────────────
+	// ── Scan header & state UI ──────────────────────────────
 	logger.ScanHeader("Wildcard", cfg.Domain, scanID)
 	logger.InitScanUI(len(scan.WildcardSteps))
-
-	stateMgr := scan.NewManager(paths.StateDir())
-
-	var scanState *scan.State
-	if cfg.ResumeScanID > 0 {
-		existingState, err := stateMgr.LoadState(cfg.ResumeScanID)
-		if err != nil {
-			return fmt.Errorf("cannot resume scan #%d: %w", cfg.ResumeScanID, err)
-		}
-		scanState = existingState
-		scanID = cfg.ResumeScanID
-		logger.Info("Resuming scan #%d (%.1f%% complete, %d/%d steps done)",
-			scanID, scanState.Progress(), len(scanState.CompletedSteps), scanState.TotalSteps)
-	} else {
-		var err error
-		scanState, err = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
-		if err != nil {
-			return fmt.Errorf("cannot create scan state: %w", err)
-		}
-	}
 
 	// ── Runner, ToolBox & Notifier ──────────────────────────
 	infra := orchestrate.NewInfra(cfg.Mode, cfg.Verbose, cfg.Cfg)

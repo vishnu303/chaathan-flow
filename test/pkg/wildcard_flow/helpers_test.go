@@ -7,6 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vishnu303/chaathan/pkg/config"
+	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
+	"github.com/vishnu303/chaathan/pkg/paths"
+	"github.com/vishnu303/chaathan/pkg/scope"
 	"github.com/vishnu303/chaathan/pkg/wildcard_flow"
 )
 
@@ -164,5 +169,88 @@ func BenchmarkURLROIScore(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = wildcard_flow.URLROIScore(url)
+	}
+}
+
+func TestScopeFilterAfterMerges(t *testing.T) {
+	tempDir := t.TempDir()
+	subsFile := filepath.Join(tempDir, "consolidated_subs.txt")
+
+	content := "in.example.com\nout.example.com\n"
+	if err := os.WriteFile(subsFile, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write subs file: %v", err)
+	}
+
+	scopeCfg := &config.ScopeConfig{
+		InScope:    []string{`^.*\.example\.com$`},
+		OutOfScope: []string{`^out\.example\.com$`},
+	}
+	scFilter, err := scope.New(scopeCfg)
+	if err != nil {
+		t.Fatalf("failed to create scope filter: %v", err)
+	}
+
+	c := &wildcard_flow.Ctx{
+		ScopeFilter: scFilter,
+	}
+
+	c.FilterSubsToScope(subsFile)
+
+	data, err := os.ReadFile(subsFile)
+	if err != nil {
+		t.Fatalf("failed to read filtered subs file: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line after scope filtering, got %d: %v", len(lines), lines)
+	}
+	if lines[0] != "in.example.com" {
+		t.Errorf("expected 'in.example.com', got %q", lines[0])
+	}
+}
+
+func TestPurgeUnconsolidatedSubdomains(t *testing.T) {
+	paths.ResetForTest()
+	tempDir := t.TempDir()
+	t.Setenv("CHAATHAN_HOME", tempDir)
+	_ = paths.Init()
+
+	dbPath := filepath.Join(tempDir, "test.db")
+	if err := database.Initialize(dbPath); err != nil {
+		t.Fatalf("failed to init db: %v", err)
+	}
+	defer database.Close()
+
+	scanRecord, err := database.CreateScan("example.com", "wildcard", tempDir, "{}")
+	if err != nil {
+		t.Fatalf("failed to create scan: %v", err)
+	}
+
+	_ = database.AddSubdomain(scanRecord.ID, "in.example.com", "subfinder")
+	_ = database.AddSubdomain(scanRecord.ID, "out.example.com", "subfinder")
+
+	subs, _ := database.GetSubdomains(scanRecord.ID)
+	if len(subs) != 2 {
+		t.Fatalf("expected 2 subdomains initially, got %d", len(subs))
+	}
+
+	consolidatedFile := filepath.Join(tempDir, "consolidated.txt")
+	_ = os.WriteFile(consolidatedFile, []byte("in.example.com\n"), 0644)
+
+	deleted, err := ingest.SyncSubdomainsWithConsolidated(scanRecord.ID, consolidatedFile)
+	if err != nil {
+		t.Fatalf("failed to sync consolidated subdomains: %v", err)
+	}
+	if deleted != 1 {
+		t.Errorf("expected 1 deleted out-of-scope subdomain, got %d", deleted)
+	}
+
+	subsAfter, _ := database.GetSubdomains(scanRecord.ID)
+	if len(subsAfter) != 1 {
+		t.Fatalf("expected 1 subdomain after purge, got %d", len(subsAfter))
+	}
+	if subsAfter[0].Domain != "in.example.com" {
+		t.Errorf("expected 'in.example.com' to remain, got %q", subsAfter[0].Domain)
 	}
 }

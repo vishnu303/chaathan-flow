@@ -19,6 +19,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/proxy_scraping"
+	"github.com/vishnu303/chaathan/utils"
 )
 
 // stepProxyScraping scrapes free proxies, validates them, and starts a mubeng rotating proxy server.
@@ -28,6 +29,9 @@ func stepProxyScraping(c *Ctx) bool {
 
 	// ── Resume check ────────────────────────────────────────
 	if skipped, cancelled := c.resumeOrSkip(stepName, "Proxy Scraping + Rotation (mubeng)"); skipped {
+		if c.AutoProxy && c.Proxy == "" {
+			c.restoreProxyRotatorOnResume()
+		}
 		return cancelled
 	}
 
@@ -166,4 +170,56 @@ func (c *Ctx) runProxyScrapingAndRotation() {
 
 	logger.Success("Rotating proxy active: %s (%d proxies in pool, method: %s, rotate every: %d req)",
 		rotator.ProxyURL, result.TotalValid, rotateMethod, rotateEvery)
+}
+
+func (c *Ctx) restoreProxyRotatorOnResume() {
+	if !utils.FileExists(c.F.ProxyPool) {
+		logger.Info("  Proxy pool file not found on resume — re-scraping proxies...")
+		c.runProxyScrapingAndRotation()
+		return
+	}
+
+	lines, _ := utils.CountFileLines(c.F.ProxyPool)
+	if lines == 0 {
+		logger.Info("  Proxy pool file is empty on resume — re-scraping proxies...")
+		c.runProxyScrapingAndRotation()
+		return
+	}
+
+	logger.Info("  Resuming proxy rotator from existing pool (%d proxies)...", lines)
+	rotateMethod := "random"
+	rotateEvery := 1
+	if c.Cfg != nil {
+		if c.Cfg.General.ProxyScraping.RotateMethod != "" {
+			rotateMethod = c.Cfg.General.ProxyScraping.RotateMethod
+		}
+		if c.Cfg.General.ProxyScraping.RotateEvery > 0 {
+			rotateEvery = c.Cfg.General.ProxyScraping.RotateEvery
+		}
+	}
+
+	rotatorCfg := proxy_scraping.RotatorConfig{
+		ProxyListFile: c.F.ProxyPool,
+		ListenAddr:    "127.0.0.1:0",
+		RotateEvery:   rotateEvery,
+		Method:        rotateMethod,
+		Verbose:       c.Verbose,
+	}
+
+	rotator, err := proxy_scraping.StartRotator(c.GoCtx, rotatorCfg)
+	if err != nil {
+		logger.Warning("Failed to restart proxy rotator on resume: %v — continuing without proxy", err)
+		return
+	}
+
+	c.Rotator = rotator
+	c.Proxy = rotator.ProxyURL
+	if c.Cfg != nil {
+		c.Cfg.General.Proxy = rotator.ProxyURL
+	}
+	if c.Tb != nil && c.Cfg != nil {
+		c.Tb.WithGeneral(&c.Cfg.General)
+	}
+
+	logger.Success("Rotating proxy restarted for resumed scan: %s (%d proxies in pool)", rotator.ProxyURL, lines)
 }

@@ -81,6 +81,13 @@ func stepDNSConsolidation(c *Ctx) bool {
 		}
 	}
 
+	// Purge out-of-scope / unconsolidated subdomains from the DB
+	if c.ScanID > 0 {
+		if purged, err := ingest.SyncSubdomainsWithConsolidated(c.ScanID, c.F.ConsolidatedSubs); err == nil && purged > 0 {
+			logger.FileDebug("purged %d out-of-scope subdomains from database", purged)
+		}
+	}
+
 	// Sync consolidated subdomains to DB
 	if c.ScanID > 0 {
 		if count, err := ingest.ParseSubdomainsFile(c.ScanID, c.F.ConsolidatedSubs, "consolidated"); err != nil {
@@ -206,6 +213,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			}
 			return line == c.Domain || strings.HasSuffix(line, "."+c.Domain)
 		})
+		c.filterSubsToScope(c.F.ConsolidatedSubs)
 		if merged, _ := utils.CountFileLines(c.F.ConsolidatedSubs); merged > 0 {
 			logger.FileDebug("consolidated subs after shuffledns merge: %d", merged)
 		}
@@ -376,7 +384,9 @@ func stepTLSAnalysis(c *Ctx) bool {
 									seen[san] = true
 									if utils.ValidateDomain(san) == nil {
 										if (san == c.Domain || strings.HasSuffix(san, "."+c.Domain)) && !existingSubs[san] {
-											newSANs = append(newSANs, san)
+											if c.ScopeFilter == nil || (c.ScopeFilter.IsInScope(san) && !c.ScopeFilter.IsOutOfScope(san)) {
+												newSANs = append(newSANs, san)
+											}
 										}
 									}
 								}
@@ -532,4 +542,21 @@ func stepPortScanning(c *Ctx) bool {
 		c.markStepCompleteIfNoFailure("port_scanning")
 	}
 	return c.cancelled()
+}
+
+func (c *Ctx) filterSubsToScope(filePath string) {
+	if c.ScopeFilter == nil || !utils.FileExists(filePath) {
+		return
+	}
+	subCount, _ := utils.CountFileLines(filePath)
+	if err := utils.FilterFileLines(filePath, func(line string) bool {
+		line = strings.TrimSpace(line)
+		return c.ScopeFilter.IsInScope(line) && !c.ScopeFilter.IsOutOfScope(line)
+	}); err == nil {
+		afterCount, _ := utils.CountFileLines(filePath)
+		if filtered := subCount - afterCount; filtered > 0 {
+			logger.Info("  Filtered %d out-of-scope subdomains", filtered)
+			logger.FileDebug("scope filter (%s): %d -> %d subdomains", filePath, subCount, afterCount)
+		}
+	}
 }

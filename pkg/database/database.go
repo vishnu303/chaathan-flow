@@ -454,6 +454,62 @@ func AddSubdomains(scanID int64, domains []string, source string) error {
 	return tx.Commit()
 }
 
+// PurgeUnconsolidatedSubdomains deletes any subdomains for scanID that are not present in validDomains.
+func PurgeUnconsolidatedSubdomains(scanID int64, validDomains []string) (int64, error) {
+	if DB == nil {
+		return 0, ErrDBNotInitialized
+	}
+	if len(validDomains) == 0 {
+		res, err := DB.Exec(`DELETE FROM subdomains WHERE scan_id = ?`, scanID)
+		if err != nil {
+			return 0, err
+		}
+		rows, _ := res.RowsAffected()
+		return rows, nil
+	}
+
+	tx, err := DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS temp_valid_subs (domain TEXT PRIMARY KEY)`)
+	if err != nil {
+		return 0, err
+	}
+	_, err = tx.Exec(`DELETE FROM temp_valid_subs`)
+	if err != nil {
+		return 0, err
+	}
+
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO temp_valid_subs (domain) VALUES (?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	for _, domain := range validDomains {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if domain != "" {
+			if _, err := stmt.Exec(domain); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	res, err := tx.Exec(`DELETE FROM subdomains WHERE scan_id = ? AND domain NOT IN (SELECT domain FROM temp_valid_subs)`, scanID)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, _ := res.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return rowsAffected, nil
+}
+
 func UpdateSubdomainLive(scanID int64, domain string, isLive bool, ipAddress string) error {
 	if DB == nil {
 		return ErrDBNotInitialized
