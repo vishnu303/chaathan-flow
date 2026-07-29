@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -51,14 +52,15 @@ type httpSignal struct {
 }
 
 // CollectHostMetadata fetches lightweight metadata for live host URLs and
-// stores one record per host for ROI scoring.
-func CollectHostMetadata(scanID int64, urls []string, proxy string) (int, error) {
+// stores one record per host for ROI scoring. The ctx is propagated to every
+// HTTP request so the scan cancels promptly on SIGINT/SIGTERM.
+func CollectHostMetadata(ctx context.Context, scanID int64, urls []string, proxy string) (int, error) {
 	targets := DedupeByHost(urls)
 	if len(targets) == 0 {
 		return 0, nil
 	}
 
-	results := collectSignals(targets, proxy)
+	results := collectSignals(ctx, targets, proxy)
 	count := 0
 	for _, signal := range results {
 		err := database.UpsertHostMetadata(scanID, database.HostMetadata{
@@ -83,14 +85,15 @@ func CollectHostMetadata(scanID int64, urls []string, proxy string) (int, error)
 }
 
 // CollectURLMetadata fetches lightweight metadata for selected high-value URLs
-// and stores per-path signals for ROI scoring.
-func CollectURLMetadata(scanID int64, urls []string, proxy string) (int, error) {
+// and stores per-path signals for ROI scoring. The ctx is propagated to every
+// HTTP request so the scan cancels promptly on SIGINT/SIGTERM.
+func CollectURLMetadata(ctx context.Context, scanID int64, urls []string, proxy string) (int, error) {
 	targets := DedupeByURL(urls)
 	if len(targets) == 0 {
 		return 0, nil
 	}
 
-	results := collectSignals(targets, proxy)
+	results := collectSignals(ctx, targets, proxy)
 	count := 0
 	for _, signal := range results {
 		err := database.UpsertURLMetadata(scanID, database.URLMetadata{
@@ -113,7 +116,7 @@ func CollectURLMetadata(scanID int64, urls []string, proxy string) (int, error) 
 	return count, nil
 }
 
-func collectSignals(urls []string, proxy string) []httpSignal {
+func collectSignals(ctx context.Context, urls []string, proxy string) []httpSignal {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   5 * time.Second,
@@ -145,7 +148,10 @@ func collectSignals(urls []string, proxy string) []httpSignal {
 		go func() {
 			defer wg.Done()
 			for target := range jobs {
-				if signal, ok := fetchSignal(client, target); ok {
+				if ctx.Err() != nil {
+					return
+				}
+				if signal, ok := fetchSignal(ctx, client, target); ok {
 					results <- signal
 				}
 			}
@@ -159,10 +165,23 @@ func collectSignals(urls []string, proxy string) []httpSignal {
 		limiter := time.NewTicker(200 * time.Millisecond)
 		defer limiter.Stop()
 		for _, target := range urls {
-			<-limiter.C
-			jobs <- target
+			select {
+			case <-ctx.Done():
+				close(jobs)
+				return
+			case <-limiter.C:
+				select {
+				case jobs <- target:
+				case <-ctx.Done():
+					close(jobs)
+					return
+				}
+			}
 		}
 		close(jobs)
+	}()
+
+	go func() {
 		wg.Wait()
 		close(results)
 	}()
@@ -175,13 +194,13 @@ func collectSignals(urls []string, proxy string) []httpSignal {
 	return collected
 }
 
-func fetchSignal(client *http.Client, rawURL string) (httpSignal, bool) {
+func fetchSignal(ctx context.Context, client *http.Client, rawURL string) (httpSignal, bool) {
 	parsed, err := neturl.Parse(strings.TrimSpace(rawURL))
 	if err != nil || parsed.Hostname() == "" {
 		return httpSignal{}, false
 	}
 
-	req, err := http.NewRequest("GET", rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
 	if err != nil {
 		return httpSignal{}, false
 	}
@@ -245,7 +264,7 @@ func fetchSignal(client *http.Client, rawURL string) (httpSignal, bool) {
 	hasInsecureCookies, hasSessionCookie := AnalyzeCookies(resp.Header["Set-Cookie"])
 
 	// OPTIONS method detection (follow-up request for dangerous methods)
-	hasDangerousMethods := checkDangerousMethods(client, rawURL)
+	hasDangerousMethods := checkDangerousMethods(ctx, client, rawURL)
 
 	return httpSignal{
 		URL:                 rawURL,
@@ -343,8 +362,8 @@ func AnalyzeCookies(setCookies []string) (bool, bool) {
 
 // checkDangerousMethods sends an OPTIONS request and checks if the server
 // advertises PUT or DELETE in the Allow header.
-func checkDangerousMethods(client *http.Client, rawURL string) bool {
-	req, err := http.NewRequest("OPTIONS", rawURL, nil)
+func checkDangerousMethods(ctx context.Context, client *http.Client, rawURL string) bool {
+	req, err := http.NewRequestWithContext(ctx, "OPTIONS", rawURL, nil)
 	if err != nil {
 		return false
 	}

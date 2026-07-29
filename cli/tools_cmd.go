@@ -64,16 +64,16 @@ func runToolsList(_ *cobra.Command, _ []string) {
 	line := strings.Repeat("─", w)
 
 	// Header box
-	fmt.Printf("\n  %s╭%s╮%s\n", logger.Cyan+logger.Bold, line, logger.Reset)
-	fmt.Printf("  %s│%s  🧰 %s%-46s%s %s│%s\n",
+	logger.Print("\n  %s╭%s╮%s\n", logger.Cyan+logger.Bold, line, logger.Reset)
+	logger.Print("  %s│%s  🧰 %s%-46s%s %s│%s\n",
 		logger.Cyan+logger.Bold, logger.Reset,
 		logger.White+logger.Bold, "Chaathan Tool Suite", logger.Reset,
 		logger.Cyan+logger.Bold, logger.Reset)
-	fmt.Printf("  %s│%s  %s%-50s%s %s│%s\n",
+	logger.Print("  %s│%s  %s%-50s%s %s│%s\n",
 		logger.Cyan+logger.Bold, logger.Reset,
 		logger.Dim, fmt.Sprintf("%d tools • %d required", len(allTools), tools.CountRequired()), logger.Reset,
 		logger.Cyan+logger.Bold, logger.Reset)
-	fmt.Printf("  %s╰%s╯%s\n\n", logger.Cyan+logger.Bold, line, logger.Reset)
+	logger.Print("  %s╰%s╯%s\n\n", logger.Cyan+logger.Bold, line, logger.Reset)
 
 	// Group tools by category (preserve order)
 	type catGroup struct {
@@ -97,7 +97,7 @@ func runToolsList(_ *cobra.Command, _ []string) {
 
 	for _, g := range groups {
 		meta := categoryStyles[g.name]
-		fmt.Printf("  %s┌─%s %s %s%s%s\n",
+		logger.Print("  %s┌─%s %s %s%s%s\n",
 			logger.Cyan, logger.Reset,
 			meta.icon, meta.color+logger.Bold, g.name, logger.Reset)
 
@@ -106,17 +106,17 @@ func runToolsList(_ *cobra.Command, _ []string) {
 			if t.Required {
 				req = fmt.Sprintf(" %s[required]%s", logger.BrightYellow, logger.Reset)
 			}
-			fmt.Printf("  %s│%s  %-22s %s%s%s%s\n",
+			logger.Print("  %s│%s  %-22s %s%s%s%s\n",
 				logger.Dim, logger.Reset,
 				t.Name,
 				logger.Dim, t.Description, logger.Reset, req)
 		}
-		fmt.Println()
+		logger.Print("\n")
 	}
 
 	// Footer
-	fmt.Printf("  %s%s%s\n", logger.Dim, strings.Repeat("━", 50), logger.Reset)
-	fmt.Printf("  %s💡 Run 'chaathan tools check' to see installation status%s\n\n", logger.Dim, logger.Reset)
+	logger.Print("  %s%s%s\n", logger.Dim, strings.Repeat("━", 50), logger.Reset)
+	logger.Print("  %s💡 Run 'chaathan tools check' to see installation status%s\n\n", logger.Dim, logger.Reset)
 }
 
 // ── Tools Check ──────────────────────────────────────────────────────────────
@@ -127,12 +127,12 @@ func runToolsCheck(_ *cobra.Command, _ []string) {
 	line := strings.Repeat("─", w)
 
 	// Header box
-	fmt.Printf("\n  %s╭%s╮%s\n", logger.Cyan+logger.Bold, line, logger.Reset)
-	fmt.Printf("  %s│%s  🔍 %s%-46s%s %s│%s\n",
+	logger.Print("\n  %s╭%s╮%s\n", logger.Cyan+logger.Bold, line, logger.Reset)
+	logger.Print("  %s│%s  🔍 %s%-46s%s %s│%s\n",
 		logger.Cyan+logger.Bold, logger.Reset,
 		logger.White+logger.Bold, "Tool Installation Check", logger.Reset,
 		logger.Cyan+logger.Bold, logger.Reset)
-	fmt.Printf("  %s╰%s╯%s\n", logger.Cyan+logger.Bold, line, logger.Reset)
+	logger.Print("  %s╰%s╯%s\n", logger.Cyan+logger.Bold, line, logger.Reset)
 
 	installed := 0
 	missing := 0
@@ -185,7 +185,7 @@ func runToolsCheck(_ *cobra.Command, _ []string) {
 	// Render each category
 	for _, g := range groups {
 		meta := categoryStyles[g.name]
-		fmt.Printf("\n  %s┌─%s %s %s%s%s\n",
+		logger.Print("\n  %s┌─%s %s %s%s%s\n",
 			logger.Cyan, logger.Reset,
 			meta.icon, meta.color+logger.Bold, g.name, logger.Reset)
 
@@ -196,7 +196,7 @@ func runToolsCheck(_ *cobra.Command, _ []string) {
 				if len(shortPath) > 35 {
 					shortPath = "…" + shortPath[len(shortPath)-34:]
 				}
-				fmt.Printf("  %s│%s  %s✓%s %-22s %s%s%s\n",
+				logger.Print("  %s│%s  %s✓%s %-22s %s%s%s\n",
 					logger.Dim, logger.Reset,
 					logger.BrightGreen, logger.Reset,
 					r.name,
@@ -210,7 +210,7 @@ func runToolsCheck(_ *cobra.Command, _ []string) {
 					color = logger.BrightRed
 					icon = "✗"
 				}
-				fmt.Printf("  %s│%s  %s%s%s %-22s %s%s%s\n",
+				logger.Print("  %s│%s  %s%s%s %-22s %s%s%s\n",
 					logger.Dim, logger.Reset,
 					color, icon, logger.Reset,
 					r.name,
@@ -220,8 +220,8 @@ func runToolsCheck(_ *cobra.Command, _ []string) {
 	}
 
 	// ── Summary bar ──
-	fmt.Println()
-	fmt.Printf("  %s%s%s\n", logger.Dim, strings.Repeat("━", 50), logger.Reset)
+	logger.Print("\n")
+	logger.Print("  %s%s%s\n", logger.Dim, strings.Repeat("━", 50), logger.Reset)
 
 	// Progress indicator
 	total := len(allTools)
@@ -242,7 +242,7 @@ func runToolsCheck(_ *cobra.Command, _ []string) {
 	bar := barColor + strings.Repeat("━", filled) + logger.Reset +
 		logger.Dim + strings.Repeat("╌", barW-filled) + logger.Reset
 
-	fmt.Printf("  %s %s%d%s/%d tools  %s%.0f%%%s\n",
+	logger.Print("  %s %s%d%s/%d tools  %s%.0f%%%s\n",
 		bar,
 		logger.Bold, installed, logger.Reset, total,
 		barColor+logger.Bold, pct, logger.Reset)
@@ -257,17 +257,17 @@ func runToolsCheck(_ *cobra.Command, _ []string) {
 	if missingRequired > 0 {
 		parts = append(parts, fmt.Sprintf("%s✗ %d required missing%s", logger.BrightRed, missingRequired, logger.Reset))
 	}
-	fmt.Printf("  %s\n", strings.Join(parts, "  "))
-	fmt.Printf("  %s%s%s\n", logger.Dim, strings.Repeat("━", 50), logger.Reset)
+	logger.Print("  %s\n", strings.Join(parts, "  "))
+	logger.Print("  %s%s%s\n", logger.Dim, strings.Repeat("━", 50), logger.Reset)
 
 	// Status message
 	if missingRequired > 0 {
-		fmt.Printf("\n  %s✗%s %s%d required tool(s) missing!%s\n", logger.BrightRed, logger.Reset, logger.Red, missingRequired, logger.Reset)
-		fmt.Printf("  %s💡 Run: %schaathan setup%s\n\n", logger.Dim, logger.Reset+logger.BrightCyan, logger.Reset)
+		logger.Print("\n  %s✗%s %s%d required tool(s) missing!%s\n", logger.BrightRed, logger.Reset, logger.Red, missingRequired, logger.Reset)
+		logger.Print("  %s💡 Run: %schaathan setup%s\n\n", logger.Dim, logger.Reset+logger.BrightCyan, logger.Reset)
 	} else if missing > 0 {
-		fmt.Printf("\n  %s⚠%s %s%d optional tool(s) missing.%s\n", logger.BrightYellow, logger.Reset, logger.Yellow, missing, logger.Reset)
-		fmt.Printf("  %s💡 Run '%schaathan setup%s%s' to install all.%s\n\n", logger.Dim, logger.Reset+logger.BrightCyan, logger.Reset, logger.Dim, logger.Reset)
+		logger.Print("\n  %s⚠%s %s%d optional tool(s) missing.%s\n", logger.BrightYellow, logger.Reset, logger.Yellow, missing, logger.Reset)
+		logger.Print("  %s💡 Run '%schaathan setup%s%s' to install all.%s\n\n", logger.Dim, logger.Reset+logger.BrightCyan, logger.Reset, logger.Dim, logger.Reset)
 	} else {
-		fmt.Printf("\n  %s✓%s %sAll tools installed! You're good to go.%s 🚀\n\n", logger.BrightGreen, logger.Reset, logger.BrightGreen, logger.Reset)
+		logger.Print("\n  %s✓%s %sAll tools installed! You're good to go.%s 🚀\n\n", logger.BrightGreen, logger.Reset, logger.BrightGreen, logger.Reset)
 	}
 }

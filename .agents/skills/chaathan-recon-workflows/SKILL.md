@@ -109,5 +109,5 @@ To process huge URL lists (100k+ inputs) without crashing VPS systems:
    ```go
    return c.markStepCompleteIfNoFailure(stepName)
    ```
-4. **Context Propagation:** Ensure all tool executions receive `c.GoCtx` to enable clean halts when receiving SIGINT/SIGTERM.
+4. **Context Propagation (§3.8):** Any function that calls a tool, sends an HTTP request, or performs DNS resolution MUST accept `ctx context.Context` as its first parameter, and callers MUST pass `c.GoCtx`. This applies to internal sub-helpers too — not just the top-level step function. The `contextcheck` linter (enabled in `.golangci.yml`) enforces this; never invent `context.Background()` at an internal boundary to silence it — propagate the parent ctx instead. Verified examples post-audit: `pkg/metadata.{CollectHostMetadata, CollectURLMetadata, fetchSignal, checkDangerousMethods}`, `pkg/wildcard_flow.{ValidateTakeoversFile, ValidateTakeoverCandidate}`. NEVER swap `http.NewRequest` for `http.NewRequestWithContext` blindly when `ctx` is in scope — always pass `ctx` through.
 5. **Documentation Integrity (Meta-Rule):** Every time you make changes to scan pipelines, workflow steps, or execution ordering in the codebase, you **must** update this `SKILL.md` and the root `README.md` to keep all step definitions, indices, and tool configurations in sync (only if necessary).

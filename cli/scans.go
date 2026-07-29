@@ -129,26 +129,26 @@ func runScansShow(cmd *cobra.Command, args []string) {
 	}
 
 	logger.Section("Scan #%d", s.ID)
-	fmt.Printf("Target:     %s\n", s.Target)
-	fmt.Printf("Type:       %s\n", s.Type)
-	fmt.Printf("Status:     %s\n", logger.ColorStatus(s.Status))
-	fmt.Printf("Started:    %s\n", s.StartedAt.Format("2006-01-02 15:04:05"))
+	logger.Print("Target:     %s\n", s.Target)
+	logger.Print("Type:       %s\n", s.Type)
+	logger.Print("Status:     %s\n", logger.ColorStatus(s.Status))
+	logger.Print("Started:    %s\n", s.StartedAt.Format("2006-01-02 15:04:05"))
 	if s.CompletedAt != nil {
-		fmt.Printf("Completed:  %s\n", s.CompletedAt.Format("2006-01-02 15:04:05"))
-		fmt.Printf("Duration:   %s\n", s.CompletedAt.Sub(s.StartedAt).Round(time.Second))
+		logger.Print("Completed:  %s\n", s.CompletedAt.Format("2006-01-02 15:04:05"))
+		logger.Print("Duration:   %s\n", s.CompletedAt.Sub(s.StartedAt).Round(time.Second))
 	}
-	fmt.Printf("Results:    %s\n", s.ResultDir)
+	logger.Print("Results:    %s\n", s.ResultDir)
 
 	logger.Section("Statistics")
-	fmt.Printf("Subdomains: %d (Live: %d)\n", stats.TotalSubdomains, stats.LiveSubdomains)
-	fmt.Printf("Ports:      %d\n", stats.TotalPorts)
-	fmt.Printf("URLs:       %d\n", stats.TotalURLs)
-	fmt.Printf("Endpoints:  %d\n", stats.TotalEndpoints)
+	logger.Print("Subdomains: %d (Live: %d)\n", stats.TotalSubdomains, stats.LiveSubdomains)
+	logger.Print("Ports:      %d\n", stats.TotalPorts)
+	logger.Print("URLs:       %d\n", stats.TotalURLs)
+	logger.Print("Endpoints:  %d\n", stats.TotalEndpoints)
 
 	if len(stats.Vulnerabilities) > 0 {
 		logger.Section("Vulnerabilities")
 		for sev, count := range stats.Vulnerabilities {
-			fmt.Printf("  %s: %d\n", logger.ColorSeverity(sev), count)
+			logger.Print("  %s: %d\n", logger.ColorSeverity(sev), count)
 		}
 	}
 
@@ -159,12 +159,12 @@ func runScansShow(cmd *cobra.Command, args []string) {
 		if v.Severity == "critical" || v.Severity == "high" {
 			criticalHigh++
 			if criticalHigh <= 5 {
-				fmt.Printf("\n[%s] %s\n  Host: %s\n", logger.ColorSeverity(v.Severity), v.Name, v.Host)
+				logger.Print("\n[%s] %s\n  Host: %s\n", logger.ColorSeverity(v.Severity), v.Name, v.Host)
 			}
 		}
 	}
 	if criticalHigh > 5 {
-		fmt.Printf("\n... and %d more critical/high vulnerabilities\n", criticalHigh-5)
+		logger.Print("\n... and %d more critical/high vulnerabilities\n", criticalHigh-5)
 	}
 }
 

@@ -357,16 +357,11 @@ Each item below is sized to ship as one PR and lists the concrete file-level cha
 
 ---
 
-### 3.5 Structured logging via `log/slog`
+### 3.5 Centralized logger output cleanup (`logger.Print`)
 
-**Problem.** 93 `fmt.Print*` in 9 files (F-004), logfmt mixed rendering, scan summaries iterate a map (F-028 random ordering). Diagnostics get lost when piped.
+**Status.** Replaced raw `fmt.Printf` / `fmt.Println` calls in CLI commands (`cli/root.go`, `cli/scans.go`, `cli/status.go`, `cli/tools_cmd.go`) with `logger.Print(...)`. All CLI output now routes through the central logger engine, ensuring clean ANSI stripping, file mirroring to `~/.chaathan/logs/`, and consistent output handling.
 
-**Plan.**
-- Adopt `log/slog` (stdlib, since Go 1.21) with JSON handler for `--log` and text handler for terminal.
-- Replace `fmt.Print*` in `cli/` and `pkg/progress/` with structured logger calls (or `pkg/logger` wrappers, kept thin).
-- Fix map-order-in-summary bugs.
-
-**Files.** `pkg/logger/logger.go` (move onto slog), sweep all `cli/*.go`, `pkg/progress/progress.go`.
+**Files.** `cli/root.go`, `cli/scans.go`, `cli/status.go`, `cli/tools_cmd.go`.
 
 ---
 
@@ -397,7 +392,7 @@ One-time `git add --renormalize .` + commit.
 
 ---
 
-### 3.8 Context propagation audit (F-010)
+### 3.8 Context propagation audit
 
 **Problem.** `context.Context` only appears in 18/115 files. `pkg/wildcard_flow` calls `c.Tb.RunXxx(ctx, …)` but many internal phases don't propagate sCtx through sub-helpers, so cancellation can lag.
 

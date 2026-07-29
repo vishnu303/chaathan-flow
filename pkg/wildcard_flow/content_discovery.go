@@ -755,7 +755,7 @@ func stepURLConsolidation(c *Ctx) bool {
 		if metaTargetCount > 0 {
 			logger.SubStep("Collecting lightweight metadata for %d high-value URLs...", metaTargetCount)
 			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, 0)
-			if count, err := metadata.CollectURLMetadata(c.ScanID, metaTargets, c.Proxy); err != nil {
+			if count, err := metadata.CollectURLMetadata(c.GoCtx, c.ScanID, metaTargets, c.Proxy); err != nil {
 				logger.Warning("URL metadata enrichment failed: %v", err)
 			} else if count > 0 {
 				logger.Info("  Stored path metadata for %d ROI candidate URLs", count)

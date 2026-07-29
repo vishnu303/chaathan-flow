@@ -1,6 +1,7 @@
 package metadata_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -151,7 +152,7 @@ func TestFetchSignal(t *testing.T) {
 
 	client := server.Client()
 
-	signal, ok := metadata.FetchSignal(client, server.URL)
+	signal, ok := metadata.FetchSignal(context.Background(), client, server.URL)
 	if !ok {
 		t.Fatal("fetchSignal failed")
 	}
@@ -195,6 +196,6 @@ func BenchmarkFetchSignal(b *testing.B) {
 	client := server.Client()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = metadata.FetchSignal(client, server.URL)
+		_, _ = metadata.FetchSignal(context.Background(), client, server.URL)
 	}
 }

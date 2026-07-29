@@ -463,7 +463,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 
 			logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
 			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, 0)
-			if count, err := metadata.CollectHostMetadata(c.ScanID, hostTargets, c.Proxy); err != nil {
+			if count, err := metadata.CollectHostMetadata(c.GoCtx, c.ScanID, hostTargets, c.Proxy); err != nil {
 				logger.Warning("Host metadata enrichment failed: %v", err)
 			} else if count > 0 {
 				logger.Info("  Stored metadata for %d live hosts", count)

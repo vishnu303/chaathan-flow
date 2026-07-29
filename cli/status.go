@@ -79,7 +79,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 
 	states, _ := stateMgr.ListResumableScans()
 	if len(states) > 0 {
-		fmt.Println()
+		logger.Print("\n")
 		logger.Section("Running Scans")
 		for _, state := range states {
 			completed := len(state.CompletedSteps)
@@ -112,7 +112,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 	}
 
 	// ── Quick Stats ──
-	fmt.Println()
+	logger.Print("\n")
 	logger.Section("Overall Statistics")
 	totalScans, _ := database.GetTotalScansCount()
 	totalSubs, _ := database.GetTotalSubdomainsCount()
@@ -125,7 +125,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 	logger.Info("Total Vulnerabilities: %d", totalVulns)
 
 	// ── Usage Hints ──
-	fmt.Println()
+	logger.Print("\n")
 	logger.Info("Quick commands:")
 	logger.Info("  chaathan wildcard -d example.com    # Start a new scan")
 	logger.Info("  chaathan company -n \"Company Inc\"   # Company discovery")
