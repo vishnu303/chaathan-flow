@@ -46,7 +46,7 @@ func scanJSONLines(filePath string, fn func(line string)) error {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScanBufferSize)
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
@@ -119,6 +119,7 @@ func getTargetDomain(scanID int64) string {
 // isDomainInScope checks if a given domain/hostname is within the target domain scope
 func isDomainInScope(domain, targetDomain string) bool {
 	domain = strings.ToLower(strings.TrimSpace(domain))
+	targetDomain = strings.ToLower(strings.TrimSpace(targetDomain))
 	if targetDomain == "" {
 		return utils.ValidateDomain(domain) == nil
 	}
@@ -179,9 +180,9 @@ func ParseSubdomainsFile(scanID int64, filePath, source string) (int, error) {
 			if !isDomainInScope(d, targetDomain) {
 				continue
 			}
-			dLower := strings.ToLower(d)
-			if !seen[dLower] {
-				seen[dLower] = true
+			d = strings.ToLower(d)
+			if !seen[d] {
+				seen[d] = true
 				domains = append(domains, d)
 			}
 		}
@@ -228,6 +229,10 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 			return
 		}
 
+		if strings.TrimSpace(result.URL) == "" {
+			return
+		}
+
 		if targetDomain != "" && !isURLInScope(result.URL, targetDomain) {
 			return
 		}
@@ -248,10 +253,7 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 		if parsed, err := neturl.Parse(result.URL); err == nil && parsed.Hostname() != "" {
 			subdomain = strings.ToLower(parsed.Hostname())
 		} else {
-			subdomain = strings.ToLower(result.Input)
-			if idx := strings.LastIndex(subdomain, ":"); idx != -1 {
-				subdomain = subdomain[:idx]
-			}
+			subdomain = utils.NormalizeHostValue(result.Input)
 		}
 
 		if subdomain != "" {
@@ -327,10 +329,19 @@ func ParseNucleiOutput(scanID int64, filePath string) (int, error) {
 			name = result.TemplateID
 		}
 
+		// matched-at is the per-finding URL; if a template omits it, fall
+		// back to the host so distinct findings of the same template across
+		// hosts are not collapsed by the (scan_id, host, template_id, url)
+		// unique index.
+		matchedAt := result.MatchedAt
+		if matchedAt == "" {
+			matchedAt = result.Host
+		}
+
 		err := database.AddVulnerability(
 			scanID,
 			result.Host,
-			result.MatchedAt,
+			matchedAt,
 			result.TemplateID,
 			name,
 			strings.ToLower(result.Info.Severity),
@@ -354,6 +365,19 @@ type NaabuResult struct {
 	IP       string `json:"ip"`
 	Port     int    `json:"port"`
 	Protocol string `json:"protocol"`
+}
+
+// validNaabuHost reports whether a naabu host value is a plausible network
+// target: a valid domain name or a parseable IP address. Bare tokens like
+// "foo" (host:123 lines from noisy output) are rejected.
+func validNaabuHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	return utils.ValidateDomain(host) == nil
 }
 
 // FfufResult represents a single ffuf discovery item.
@@ -396,13 +420,18 @@ func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
 			proto = "tcp"
 		}
 
-		if host != "" && port > 0 {
-			if err := database.AddPort(scanID, host, port, proto, ""); err != nil {
-				logger.FileDebug("parser: AddPort failed for %s:%d: %v", host, port, err)
-				return
-			}
-			count++
+		if host == "" || port < 1 || port > 65535 {
+			return
 		}
+		if !validNaabuHost(host) {
+			return
+		}
+
+		if err := database.AddPort(scanID, host, port, proto, ""); err != nil {
+			logger.FileDebug("parser: AddPort failed for %s:%d: %v", host, port, err)
+			return
+		}
+		count++
 	})
 
 	return count, err
@@ -424,8 +453,13 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 			url = parts[1]
 		}
 
-		if targetDomain != "" && !isURLInScope(url, targetDomain) {
-			return
+		// Relative/path-only endpoints (e.g. golinkfinder output like
+		// "/api/v1/users") carry no host, so scope cannot apply — keep
+		// them. Absolute URLs with a host are filtered against the target.
+		if targetDomain != "" {
+			if u, err := neturl.Parse(url); err == nil && u.Hostname() != "" && !isURLInScope(url, targetDomain) {
+				return
+			}
 		}
 
 		if err := database.AddEndpoint(scanID, url, method, source); err != nil {
@@ -473,7 +507,11 @@ func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 			return
 		}
 		url := fields[0]
-		if url == "" || seen[url] {
+		if url == "" {
+			return
+		}
+		key := strings.ToLower(url)
+		if seen[key] {
 			return
 		}
 
@@ -481,7 +519,7 @@ func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 			return
 		}
 
-		seen[url] = true
+		seen[key] = true
 		if err := database.AddURL(scanID, url, 0, "", "", "", source); err != nil {
 			logger.FileDebug("parser: AddURL failed for %s: %v", url, err)
 			return
@@ -508,19 +546,28 @@ func ParseFfufOutput(scanID int64, filePath string) (int, error) {
 		return 0, err
 	}
 
+	targetDomain := getTargetDomain(scanID)
 	count := 0
 	for _, result := range payload.Results {
 		if strings.TrimSpace(result.URL) == "" {
 			continue
 		}
+		if targetDomain != "" && !isURLInScope(result.URL, targetDomain) {
+			continue
+		}
 
+		urlOK := true
 		if err := database.AddURL(scanID, result.URL, result.Status, "", "", "", "ffuf"); err != nil {
 			logger.FileDebug("parser: AddURL failed for %s: %v", result.URL, err)
+			urlOK = false
 		}
 		if err := database.AddEndpoint(scanID, result.URL, "GET", "ffuf"); err != nil {
 			logger.FileDebug("parser: AddEndpoint failed for %s: %v", result.URL, err)
+			urlOK = false
 		}
-		count++
+		if urlOK {
+			count++
+		}
 	}
 
 	return count, nil
@@ -548,6 +595,7 @@ type TlsxResult struct {
 // Extracts SANs as new subdomains and flags expired/weak certs as vulnerabilities.
 func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSubs int, vulns int, err error) {
 	seenSANs := make(map[string]bool)
+	var sanBatch []string
 
 	err = scanJSONLines(filePath, func(line string) {
 		var result TlsxResult
@@ -556,23 +604,26 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 		}
 
 		// Extract SANs as new subdomains. Newer tlsx JSON uses subject_an,
-		// while older probe-driven output may still emit san.
+		// while older probe-driven output may still emit san. Collect them
+		// and insert once after the scan; newSubs counts the unique in-scope
+		// SANs discovered (INSERT OR IGNORE may store fewer if the DB
+		// already holds them from a prior source).
 		sans := result.SANs
 		if len(sans) == 0 {
 			sans = result.SubjectAN
 		}
 		for _, san := range sans {
 			san = strings.TrimPrefix(san, "*.")
-			if utils.ValidateDomain(san) == nil {
-				if targetDomain != "" && !seenSANs[san] && (san == targetDomain || strings.HasSuffix(san, "."+targetDomain)) {
-					seenSANs[san] = true
-					if err := database.AddSubdomains(scanID, []string{san}, "tlsx-san"); err != nil {
-						logger.FileDebug("parser: AddSubdomains failed for %s: %v", san, err)
-					} else {
-						newSubs++
-					}
-				}
+			san = strings.ToLower(strings.TrimSpace(san))
+			if utils.ValidateDomain(san) != nil {
+				continue
 			}
+			if targetDomain == "" || seenSANs[san] || !isDomainInScope(san, targetDomain) {
+				continue
+			}
+			seenSANs[san] = true
+			sanBatch = append(sanBatch, san)
+			newSubs++
 		}
 
 		// Flag expired certificates
@@ -638,6 +689,13 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 		}
 	})
 
+	// Persist all unique in-scope SANs in a single transaction.
+	if len(sanBatch) > 0 {
+		if err := database.AddSubdomains(scanID, sanBatch, "tlsx-san"); err != nil {
+			logger.FileDebug("parser: AddSubdomains batch failed for %d SANs: %v", len(sanBatch), err)
+		}
+	}
+
 	return newSubs, vulns, err
 }
 
@@ -666,9 +724,10 @@ func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (sub
 		if host == "" {
 			host = result.IP
 		}
+		host = strings.ToLower(strings.TrimSpace(host))
 		if host != "" && !seenHosts[host] {
 			seenHosts[host] = true
-			if utils.ValidateDomain(host) == nil && (targetDomain == "" || host == targetDomain || strings.HasSuffix(host, "."+targetDomain)) {
+			if utils.ValidateDomain(host) == nil && isDomainInScope(host, targetDomain) {
 				if err := database.AddSubdomains(scanID, []string{host}, "uncover-"+result.Source); err != nil {
 					logger.FileDebug("parser: AddSubdomains failed for %s: %v", host, err)
 				} else {
@@ -787,6 +846,8 @@ func ParseDalfoxOutput(scanID int64, filePath string) (int, error) {
 
 			if targetURL != "" {
 				host = utils.NormalizeHostValue(targetURL)
+			} else {
+				return
 			}
 
 			err := database.AddVulnerability(
