@@ -326,13 +326,11 @@ Each item below is sized to ship as one PR and lists the concrete file-level cha
 
 ---
 
-### 3.2 Schema versioning + `migrate` framework
+### 3.2 Canonical database schema (Migrations framework omitted)
 
-**Problem.** `runMigrations()` (`pkg/database/database.go:287`) is "best-effort, errors swallowed" and additive-only. Documented as "schema-version table is not yet implemented."
+**Status.** Consolidated into a clean, single-pass canonical schema setup in `createTables()`. `runMigrations()` was removed entirely. External migration versioning frameworks are omitted since local database resets are handled directly.
 
-**Plan.** Introduce `schema_meta(version INTEGER, applied_at TEXT)` and numbered migration files `migrations/0001_initial.sql` ... `migrations/00NN_<name>.sql`. On boot, apply only pending migrations in a transaction. Document the policy.
-
-**Files.** `pkg/database/migrations.go`, `migrations/` directory, `pkg/database/database.go` (drop `runMigrations`).
+**Files.** `pkg/database/database.go`.
 
 ---
 
