@@ -95,8 +95,17 @@ type APIKeysConfig struct {
 	// Censys is a combined shorthand: set to "id:secret" for uncover -e censys support
 	Censys string `yaml:"censys"`
 
-	// Fofa API key for uncover -e fofa support
-	Fofa string `yaml:"fofa"`
+	// Fofa API key (FOFA classic two-factor auth)
+	Fofa      string `yaml:"fofa"`
+	FofaEmail string `yaml:"fofa_email"`
+
+	// Quake (360) API credentials — email + key pair for uncover -e quake
+	Quake      string `yaml:"quake"`
+	QuakeEmail string `yaml:"quake_email"`
+
+	// ZoomEye API credentials — email + key pair for uncover -e zoomeye
+	ZoomEye      string `yaml:"zoomeye"`
+	ZoomEyeEmail string `yaml:"zoomeye_email"`
 
 	// SecurityTrails API key
 	SecurityTrails string `yaml:"securitytrails"`
@@ -545,11 +554,22 @@ var apiKeyEnvMap = map[string]string{
 	"securitytrails": "SECURITYTRAILS_KEY",
 	"virustotal":     "VT_API_KEY",
 	"chaos":          "CHAOS_KEY",
+	"fofa":           "FOFA_KEY",
+	"fofa_email":     "FOFA_EMAIL",
+	"quake":          "QUAKE_KEY",
+	"quake_email":    "QUAKE_EMAIL",
+	"zoomeye":        "ZOOMEYE_KEY",
+	"zoomeye_email":  "ZOOMEYE_EMAIL",
 }
 
 // GetAPIKey retrieves an API key from config or environment.
 // Config values win; the environment fallback only applies to keys listed in
 // apiKeyEnvMap.
+//
+// For the email-style API services (fofa, quake, zoomeye), the bare key name
+// returns "<key>:<email>" when both halves are configured; callers that need
+// the raw key alone may pass the "<svc>_email" key separately (mirroring the
+// Censys "id:secret" shorthand).
 func (c *Config) GetAPIKey(name string) string {
 	nameLower := strings.ToLower(name)
 	var val string
@@ -571,6 +591,25 @@ func (c *Config) GetAPIKey(name string) string {
 		}
 	case "fofa":
 		val = c.APIKeys.Fofa
+		if val != "" && c.APIKeys.FofaEmail != "" {
+			val = val + ":" + c.APIKeys.FofaEmail
+		}
+	case "fofa_email":
+		val = c.APIKeys.FofaEmail
+	case "quake":
+		val = c.APIKeys.Quake
+		if val != "" && c.APIKeys.QuakeEmail != "" {
+			val = val + ":" + c.APIKeys.QuakeEmail
+		}
+	case "quake_email":
+		val = c.APIKeys.QuakeEmail
+	case "zoomeye":
+		val = c.APIKeys.ZoomEye
+		if val != "" && c.APIKeys.ZoomEyeEmail != "" {
+			val = val + ":" + c.APIKeys.ZoomEyeEmail
+		}
+	case "zoomeye_email":
+		val = c.APIKeys.ZoomEyeEmail
 	}
 	if val != "" {
 		return val

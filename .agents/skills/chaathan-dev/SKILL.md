@@ -109,6 +109,8 @@ func stepExampleTool(c *Ctx) bool {
    - Access config parameters within step files via the embedded `Ctx` (e.g., `c.SkipAmass`).
 5. **Logs Redirection:** If `--log` is supplied, logs are written to `~/.chaathan/logs/<domain>_<scanID>_<timestamp>.log`. Ensure any custom logs redirect through `logger.Info` or `logger.Write` to mirror them correctly.
 6. **Test Locations:** All test files (`*_test.go`) and test support/mock utilities must reside strictly within the `test/` folder hierarchy. No tests are allowed to remain in the `pkg/` or `utils/` production packages.
+7. **Config Defaults Single Source of Truth:** `config.DefaultConfig()` is the only source of defaults. Never re-introduce a second `applyDefaults`-style helper — `DefaultConfig()` is pre-seeded before YAML decode in `Load`, so sparse configs inherit defaults automatically. The `TestLoadMatchesDefaultConfig` test (in `test/pkg/config/config_test.go`) pins this invariant and must keep passing.
+8. **API Key Dispatch (`config.Config.GetAPIKey`):** Email-style engines (FOFA, Quake, ZoomEye) require both a `key` and an `*_email` half. The switch returns a combined `"<key>:<email>"` shorthand when both are set, and falls back to bare `key` if only the key is configured. The env fallback list (`apiKeyEnvMap`) must include `*_email` names for these engines so `FOFA_EMAIL` / `QUAKE_EMAIL` / `ZOOMEYE_EMAIL` work without a YAML file. `pkg/tools` uncover wiring only selects an email-style engine when both halves are present (mirrors Censys `id:secret` handling).
 
 ---
 

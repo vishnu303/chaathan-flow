@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/config"
-	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/runner"
 	"github.com/vishnu303/chaathan/utils"
 )
@@ -1001,13 +1000,9 @@ func (t *ToolBox) RunTlsx(ctx context.Context, inputFile string, outputFile stri
 // 100% passive — no packets sent to the target.
 // Returns ErrNoAPIKeys if no API keys are configured for any engine.
 func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile string) error {
-	if t.APIKeys != nil && t.APIKeys.Fofa != "" {
-		logger.Warning("FOFA is configured but not wired (missing FofaEmail). Skipping FOFA engine.")
-	}
-
 	engines := t.uncoverEngines()
 	if len(engines) == 0 {
-		return fmt.Errorf("no uncover API keys configured — set shodan/censys/fofa keys in config.yaml")
+		return fmt.Errorf("no uncover API keys configured — set shodan/censys/fofa/quake/zoomeye keys in config.yaml")
 	}
 
 	args := []string{
@@ -1032,6 +1027,18 @@ func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile stri
 				envVars = append(envVars, "CENSYS_API_ID="+parts[0], "CENSYS_API_SECRET="+parts[1])
 			}
 		}
+		// FOFA classic two-factor auth requires both key + email.
+		if t.APIKeys.Fofa != "" && t.APIKeys.FofaEmail != "" {
+			envVars = append(envVars, "FOFA_KEY="+t.APIKeys.Fofa, "FOFA_EMAIL="+t.APIKeys.FofaEmail)
+		}
+		// Quake (360) — email + key pair.
+		if t.APIKeys.Quake != "" && t.APIKeys.QuakeEmail != "" {
+			envVars = append(envVars, "QUAKE_KEY="+t.APIKeys.Quake, "QUAKE_EMAIL="+t.APIKeys.QuakeEmail)
+		}
+		// ZoomEye — email + key pair.
+		if t.APIKeys.ZoomEye != "" && t.APIKeys.ZoomEyeEmail != "" {
+			envVars = append(envVars, "ZOOMEYE_KEY="+t.APIKeys.ZoomEye, "ZOOMEYE_EMAIL="+t.APIKeys.ZoomEyeEmail)
+		}
 		if len(envVars) > 0 {
 			opts = append(opts, runner.WithEnv(envVars...))
 		}
@@ -1054,6 +1061,18 @@ func (t *ToolBox) uncoverEngines() []string {
 	}
 	if t.APIKeys.Censys != "" || (t.APIKeys.CensysID != "" && t.APIKeys.CensysSecret != "") {
 		engines = append(engines, "censys")
+	}
+	// FOFA classic needs both key and email; anything less is treated as unconfigured.
+	if t.APIKeys.Fofa != "" && t.APIKeys.FofaEmail != "" {
+		engines = append(engines, "fofa")
+	}
+	// Quake (360) needs both key and email.
+	if t.APIKeys.Quake != "" && t.APIKeys.QuakeEmail != "" {
+		engines = append(engines, "quake")
+	}
+	// ZoomEye needs both key and email.
+	if t.APIKeys.ZoomEye != "" && t.APIKeys.ZoomEyeEmail != "" {
+		engines = append(engines, "zoomeye")
 	}
 	return engines
 }

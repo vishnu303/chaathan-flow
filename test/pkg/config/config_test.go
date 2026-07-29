@@ -66,6 +66,55 @@ func TestConfigDefaultsAndSerialization(t *testing.T) {
 	}
 }
 
+// TestGetAPIKeyEmailStyle covers F-022 (FOFA dispatch fix) plus the GetAPIKey
+// extension that 3.3 calls for: fofa, quake, and zoomeye now return a
+// combined "<key>:<email>" when both halves are configured, env fallback is
+// applied via the apiKeyEnvMap, and bare *_email names resolve independently.
+func TestGetAPIKeyEmailStyle(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("CHAATHAN_HOME", tempDir)
+
+	cfg := config.DefaultConfig()
+	cfg.APIKeys.Fofa = "fofa_key"
+	cfg.APIKeys.FofaEmail = "fofa@example.com"
+	cfg.APIKeys.Quake = "quake_key"
+	cfg.APIKeys.QuakeEmail = "quake@example.com"
+	cfg.APIKeys.ZoomEye = "zoomeye_key"
+	cfg.APIKeys.ZoomEyeEmail = "zoomeye@example.com"
+
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"fofa", "fofa_key:fofa@example.com"},
+		{"fofa_email", "fofa@example.com"},
+		{"quake", "quake_key:quake@example.com"},
+		{"quake_email", "quake@example.com"},
+		{"zoomeye", "zoomeye_key:zoomeye@example.com"},
+		{"zoomeye_email", "zoomeye@example.com"},
+	}
+	for _, tc := range cases {
+		if got := cfg.GetAPIKey(tc.name); got != tc.want {
+			t.Errorf("GetAPIKey(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	// Partial config: only key, no email — must return bare key (not "key:").
+	cfg.APIKeys.FofaEmail = ""
+	if got := cfg.GetAPIKey("fofa"); got != "fofa_key" {
+		t.Errorf("GetAPIKey(%q) partial config = %q, want bare %q (no colon suffix)",
+			"fofa", got, "fofa_key")
+	}
+
+	// Empty config — env fallback must kick in via apiKeyEnvMap.
+	cfg.APIKeys.Fofa = ""
+	cfg.APIKeys.FofaEmail = ""
+	t.Setenv("FOFA_KEY", "env_fofa_key")
+	if got := cfg.GetAPIKey("fofa"); got != "env_fofa_key" {
+		t.Errorf("GetAPIKey(%q) env fallback = %q, want %q", "fofa", got, "env_fofa_key")
+	}
+}
+
 func TestGetDefaultConfigPath(t *testing.T) {
 	path := config.GetDefaultConfigPath()
 	expected := paths.ConfigPath()

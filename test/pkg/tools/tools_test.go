@@ -220,6 +220,80 @@ func TestRunUncoverEnvVars(t *testing.T) {
 			t.Errorf("expected env var %q, not found in options.Env: %v", env, opts.Env)
 		}
 	}
+
+	// Only shodan + censys were configured; fofa/quake/zoomeye must NOT be selected.
+	argsJoined := strings.Join(dr.LastArgs, " ")
+	for _, unwanted := range []string{"fofa", "quake", "zoomeye"} {
+		if strings.Contains(argsJoined, ","+unwanted) || strings.Contains(argsJoined, unwanted+",") || argsJoined == "-e "+unwanted {
+			t.Errorf("engine %q should not be selected when its keys are missing; got args %q", unwanted, argsJoined)
+		}
+	}
+}
+
+// TestRunUncoverFofaQuakeZoomEye covers the F-022 wiring fix: when FOFA,
+// Quake, and ZoomEye are fully configured (key + email), all three engines
+// must be selected and their env vars must be exported to the runner.
+func TestRunUncoverFofaQuakeZoomEye(t *testing.T) {
+	dr := &runnerfaketest.DummyRunner{}
+	tb := tools.New(dr)
+	tb.APIKeys = &config.APIKeysConfig{
+		Fofa:         "fofa_key",
+		FofaEmail:    "fofa@example.com",
+		Quake:        "quake_key",
+		QuakeEmail:   "quake@example.com",
+		ZoomEye:      "zoomeye_key",
+		ZoomEyeEmail: "zoomeye@example.com",
+	}
+
+	ctx := context.Background()
+	if err := tb.RunUncover(ctx, "target.com", "out.txt"); err != nil {
+		t.Fatalf("unexpected error running RunUncover: %v", err)
+	}
+
+	// Engines selection: all three must appear in -e.
+	argsJoined := strings.Join(dr.LastArgs, " ")
+	for _, want := range []string{"fofa", "quake", "zoomeye"} {
+		if !strings.Contains(argsJoined, want) {
+			t.Errorf("engine %q missing from -e selection; got %q", want, argsJoined)
+		}
+	}
+
+	// Env var wiring.
+	opts := dr.GetOptions()
+	wantEnv := []string{
+		"FOFA_KEY=fofa_key", "FOFA_EMAIL=fofa@example.com",
+		"QUAKE_KEY=quake_key", "QUAKE_EMAIL=quake@example.com",
+		"ZOOMEYE_KEY=zoomeye_key", "ZOOMEYE_EMAIL=zoomeye@example.com",
+	}
+	for _, env := range wantEnv {
+		found := false
+		for _, e := range opts.Env {
+			if e == env {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected env var %q, not found in options.Env: %v", env, opts.Env)
+		}
+	}
+}
+
+// TestRunUncoverFofaPartialConfig verifies F-022 fix robustness: a half-set
+// FOFA (key only, email missing) must NOT select the fofa engine, and must
+// NOT emit a stale warning. It should run with no engines selected and
+// surface the actionable error message.
+func TestRunUncoverFofaPartialConfig(t *testing.T) {
+	dr := &runnerfaketest.DummyRunner{}
+	tb := tools.New(dr)
+	tb.APIKeys = &config.APIKeysConfig{
+		Fofa:      "fofa_key",
+		FofaEmail: "", // intentionally missing — must drop fofa from engines
+	}
+
+	if err := tb.RunUncover(context.Background(), "target.com", "out.txt"); err == nil {
+		t.Fatalf("expected no-api-keys error when only a partial FOFA is configured, got nil")
+	}
 }
 
 func TestRunKatanaProxy(t *testing.T) {
