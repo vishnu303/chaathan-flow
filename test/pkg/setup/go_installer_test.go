@@ -28,10 +28,16 @@ func TestParseGoVersion(t *testing.T) {
 			wantVerStr: "go1.27.0",
 		},
 		{
-			name:       "valid version 1.26rc1",
+			name:       "invalid pre-release version 1.26rc1",
 			version:    "go version go1.26rc1 darwin/amd64",
-			wantOK:     true,
+			wantOK:     false,
 			wantVerStr: "go1.26rc1",
+		},
+		{
+			name:       "valid pre-release version 1.27rc1",
+			version:    "go version go1.27rc1 darwin/amd64",
+			wantOK:     true,
+			wantVerStr: "go1.27rc1",
 		},
 		{
 			name:       "invalid version 1.25.0",

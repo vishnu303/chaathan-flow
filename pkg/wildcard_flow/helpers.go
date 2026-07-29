@@ -19,12 +19,12 @@ import (
 )
 
 const (
-	jsAnalysisHostCap   = 1000
-	ffufHostCap         = 1000
-	paramDiscoveryCap   = 150
-	metadataHostCap     = 250
-	jsSecretMaxMatches  = 100
-	jsFileMaxBytes      = 10 * 1024 * 1024
+	jsAnalysisHostCap  = 1000
+	ffufHostCap        = 1000
+	paramDiscoveryCap  = 150
+	metadataHostCap    = 250
+	jsSecretMaxMatches = 100
+	jsFileMaxBytes     = 10 * 1024 * 1024
 )
 
 var jsGFPatterns = map[string]bool{
@@ -191,7 +191,6 @@ func fileModifiedAfter(path string, after time.Time) bool {
 	return info.ModTime().After(after)
 }
 
-
 // collectLiveHostTargetsFromHttpx reads a JSONL httpx output file and
 // writes unique host URLs to outputFile. Returns the number written.
 func collectLiveHostTargetsFromHttpx(inputFile, outputFile string) int {
@@ -308,12 +307,10 @@ func collectROIMetadataTargetsFromFile(inputFile, outputFile string, perHostLimi
 	return count
 }
 
-
 // writeEmptyFile truncates or creates a file so retry paths do not reuse stale output.
 func writeEmptyFile(path string) {
 	_ = os.WriteFile(path, nil, 0644)
 }
-
 
 // isHighValueURL returns true for parameterised URLs or those containing
 // known sensitive path markers (admin panels, APIs, auth endpoints, etc.).
@@ -455,13 +452,14 @@ func filterCNAMESubdomains(dnsxJSONFile, outputFile string) int {
 
 // junkDomainSuffixes are 3rd-party domains that should never be scanned.
 func getJunkDomains() []string {
-	return utils.JunkDomains
+	return utils.JunkDomains()
 }
 
 // staticExtensions are file extensions that can't have injection points.
 func getStaticExtensions() map[string]bool {
-	res := make(map[string]bool, len(utils.StaticExtensions))
-	for _, ext := range utils.StaticExtensions {
+	exts := utils.StaticExtensions()
+	res := make(map[string]bool, len(exts))
+	for _, ext := range exts {
 		res[strings.ToLower(ext)] = true
 	}
 	return res
@@ -469,12 +467,12 @@ func getStaticExtensions() map[string]bool {
 
 // getHighValueMarkers returns path markers that identify high-value/sensitive components.
 func getHighValueMarkers() []string {
-	return utils.HighValueMarkers
+	return utils.HighValueMarkers()
 }
 
 // getInterestingParameters returns parameters names that often contain security vulnerabilities.
 func getInterestingParameters() []string {
-	return utils.InterestingParameters
+	return utils.InterestingParameters()
 }
 
 // isJunkDomain returns true if the host belongs to a known 3rd-party service.
@@ -600,7 +598,6 @@ func CollectScopedURLs(c *Ctx, inputFile, outputFile string, maxURLs int) int {
 				continue
 			}
 
-
 			// Score this URL for ROI ordering
 			score := urlROIScore(line)
 			pk := pathKey(line)
@@ -679,7 +676,6 @@ func CollectScopedURLs(c *Ctx, inputFile, outputFile string, maxURLs int) int {
 			if filterJunk && isJunkDomain(host) {
 				continue
 			}
-
 
 			score := urlROIScore(line)
 			pk := pathKey(line)

@@ -161,7 +161,7 @@ var versionCmd = &cobra.Command{
 		fmt.Printf("%s%sChaathan%s %s\n", logger.BrightCyan, logger.Bold, logger.Reset, Version)
 		fmt.Printf("%sBuilt: %s%s\n", logger.Dim, BuildTime, logger.Reset)
 		fmt.Printf("%sPentesting Recon Framework%s\n", logger.Dim, logger.Reset)
-		fmt.Printf("%s%d tools • 23-step wildcard • 3-step company%s\n", logger.Dim, len(tools.AllTools), logger.Reset)
+		fmt.Printf("%s%d tools • 23-step wildcard • 3-step company%s\n", logger.Dim, len(tools.GetAllTools()), logger.Reset)
 		fmt.Printf("%shttps://github.com/vishnu303/chaathan%s\n", logger.Dim, logger.Reset)
 
 		fmt.Printf("\n%sChecking for updates...%s\n", logger.Dim, logger.Reset)

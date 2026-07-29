@@ -26,8 +26,8 @@ type RotatorConfig struct {
 
 // Rotator manages the mubeng background process.
 type Rotator struct {
-	Addr     string   // actual listen address (e.g. "127.0.0.1:38291")
-	ProxyURL string   // full proxy URL for tools (e.g. "http://127.0.0.1:38291")
+	Addr     string // actual listen address (e.g. "127.0.0.1:38291")
+	ProxyURL string // full proxy URL for tools (e.g. "http://127.0.0.1:38291")
 	cmd      *exec.Cmd
 }
 

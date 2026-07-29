@@ -10,7 +10,7 @@ import (
 
 func TestCountFindingsForStep(t *testing.T) {
 	tempDir := t.TempDir()
-	
+
 	c := &company_flow.Ctx{
 		ResultDir: tempDir,
 	}

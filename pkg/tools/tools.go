@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/config"
-	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/runner"
+	"github.com/vishnu303/chaathan/utils"
 )
 
 // ToolBox wraps the runner and provides methods to invoke external recon tools.
@@ -41,11 +41,32 @@ func (r *resultDirRunner) Run(ctx context.Context, command string, args []string
 	return r.base.Run(ctx, command, args, opts...)
 }
 
+var (
+	defaultToolsConfig *config.ToolsConfig
+	defaultToolsOnce   sync.Once
+)
+
+func getDefaultToolsConfig() *config.ToolsConfig {
+	defaultToolsOnce.Do(func() {
+		defaultToolsConfig = &config.DefaultConfig().Tools
+	})
+	return defaultToolsConfig
+}
+
+func (t *ToolBox) config() *config.ToolsConfig {
+	if t.Config != nil {
+		return t.Config
+	}
+	return getDefaultToolsConfig()
+}
+
 // New creates a ToolBox. If cfg is nil, sensible defaults are used.
 func New(r runner.Runner, cfg ...*config.ToolsConfig) *ToolBox {
 	tb := &ToolBox{Runner: r}
 	if len(cfg) > 0 && cfg[0] != nil {
 		tb.Config = cfg[0]
+	} else {
+		tb.Config = getDefaultToolsConfig()
 	}
 	return tb
 }
@@ -110,10 +131,10 @@ func (t *ToolBox) WithAPIKeys(keys *config.APIKeysConfig) *ToolBox {
 // --- User-Agent rotation pool ---
 
 // TODO(ua-refresh): The User-Agent pool is currently hardcoded and will age over time.
-// RealUserAgents contains common, high-frequency browser User-Agent strings.
+// realUserAgents contains common, high-frequency browser User-Agent strings.
 // Rotating through these prevents WAF fingerprinting from static tool UAs
 // like "httpx - Open-source project" or "Nuclei - Open-source project".
-var RealUserAgents = []string{
+var realUserAgents = []string{
 	// Chrome 147 on Windows 10
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
 	// Chrome 147 on macOS
@@ -132,7 +153,7 @@ var RealUserAgents = []string{
 
 // RandomUA returns a random User-Agent from the pool.
 func RandomUA() string {
-	return RealUserAgents[rand.N(len(RealUserAgents))]
+	return realUserAgents[rand.N(len(realUserAgents))]
 }
 
 // uaEnabled returns true when UA rotation is active.
@@ -269,120 +290,130 @@ func (t *ToolBox) effectiveRate(perToolRate int) int {
 	return perToolRate
 }
 
-// --- helpers to read config with fallback defaults ---
+// --- Timeouts and Config Helpers ---
+
+const (
+	subfinderMaxTimeout        = 15 * time.Minute
+	sublist3rMaxTimeout        = 15 * time.Minute
+	gauMaxTimeout              = 30 * time.Minute
+	waybackurlsMaxTimeout      = 20 * time.Minute
+	x8MaxTimeout               = 120 * time.Minute
+	uncoverMaxTimeout          = 10 * time.Minute
+	githubSubdomainsMaxTimeout = 15 * time.Minute
+	hakrawlerMaxTimeout        = 30 * time.Minute
+)
 
 func (t *ToolBox) subfinderThreads() int {
-	if t.Config != nil && t.Config.Subfinder.Threads > 0 {
-		return t.Config.Subfinder.Threads
+	if val := t.config().Subfinder.Threads; val > 0 {
+		return val
 	}
-	return 30
+	return getDefaultToolsConfig().Subfinder.Threads
 }
 
 func (t *ToolBox) subfinderTimeout() int {
-	if t.Config != nil && t.Config.Subfinder.Timeout > 0 {
-		return t.Config.Subfinder.Timeout
+	if val := t.config().Subfinder.Timeout; val > 0 {
+		return val
 	}
-	return 30
+	return getDefaultToolsConfig().Subfinder.Timeout
 }
 
 func (t *ToolBox) httpxThreads() int {
-	if t.Config != nil && t.Config.Httpx.Threads > 0 {
-		return t.Config.Httpx.Threads
+	if val := t.config().Httpx.Threads; val > 0 {
+		return val
 	}
-	return 50
+	return getDefaultToolsConfig().Httpx.Threads
 }
 
 func (t *ToolBox) httpxTimeout() int {
-	if t.Config != nil && t.Config.Httpx.Timeout > 0 {
-		return t.Config.Httpx.Timeout
+	if val := t.config().Httpx.Timeout; val > 0 {
+		return val
 	}
-	return 10
+	return getDefaultToolsConfig().Httpx.Timeout
 }
 
 func (t *ToolBox) httpxPorts() string {
-	if t.Config != nil && len(t.Config.Httpx.Ports) > 0 {
-		return strings.Join(t.Config.Httpx.Ports, ",")
+	ports := t.config().Httpx.Ports
+	if len(ports) == 0 {
+		ports = getDefaultToolsConfig().Httpx.Ports
 	}
-	return "80,443,8080,8443,8081,8000,8008,8888"
+	return strings.Join(ports, ",")
 }
 
 func (t *ToolBox) naabuThreads() int {
-	if t.Config != nil && t.Config.Naabu.Threads > 0 {
-		return t.Config.Naabu.Threads
+	if val := t.config().Naabu.Threads; val > 0 {
+		return val
 	}
-	return 25
+	return getDefaultToolsConfig().Naabu.Threads
 }
 
 func (t *ToolBox) naabuRate() int {
-	if t.Config != nil && t.Config.Naabu.Rate > 0 {
-		return t.Config.Naabu.Rate
+	if val := t.config().Naabu.Rate; val > 0 {
+		return val
 	}
-	return 1000
+	return getDefaultToolsConfig().Naabu.Rate
 }
 
 func (t *ToolBox) naabuPorts() string {
-	if t.Config != nil && t.Config.Naabu.Ports != "" {
-		return t.Config.Naabu.Ports
-	}
-	return "" // empty means use -top-ports 1000 flag
+	return t.config().Naabu.Ports
 }
 
 func (t *ToolBox) naabuTopPorts() int {
-	// Default to top 1000 ports when no explicit port list is set
-	if t.Config != nil && t.Config.Naabu.Ports != "" {
-		return 0 // explicit port list set, don't use -top-ports
+	if t.config().Naabu.Ports != "" {
+		return 0
 	}
 	return 1000
 }
 
 func (t *ToolBox) nucleiConcurrency() int {
-	if t.Config != nil && t.Config.Nuclei.Concurrency > 0 {
-		return t.Config.Nuclei.Concurrency
+	if val := t.config().Nuclei.Concurrency; val > 0 {
+		return val
 	}
-	return 25
+	return getDefaultToolsConfig().Nuclei.Concurrency
 }
 
 func (t *ToolBox) nucleiRateLimit() int {
-	if t.Config != nil && t.Config.Nuclei.RateLimit > 0 {
-		return t.Config.Nuclei.RateLimit
+	if val := t.config().Nuclei.RateLimit; val > 0 {
+		return val
 	}
-	return 150
+	return getDefaultToolsConfig().Nuclei.RateLimit
 }
 
 func (t *ToolBox) nucleiExcludeTags() []string {
-	if t.Config != nil && len(t.Config.Nuclei.ExcludeTags) > 0 {
-		return t.Config.Nuclei.ExcludeTags
+	tags := t.config().Nuclei.ExcludeTags
+	if len(tags) == 0 {
+		tags = getDefaultToolsConfig().Nuclei.ExcludeTags
 	}
-	return []string{"dos", "fuzz"}
+	return tags
 }
 
 func (t *ToolBox) nucleiDisableOOB() bool {
-	if t.Config != nil && t.Config.Nuclei.DisableOOB != nil {
-		return *t.Config.Nuclei.DisableOOB
+	if val := t.config().Nuclei.DisableOOB; val != nil {
+		return *val
 	}
-	return true // disabled by default — Interactsh hangs are a major stuck source
+	val := getDefaultToolsConfig().Nuclei.DisableOOB
+	if val != nil {
+		return *val
+	}
+	return true
 }
 
 func (t *ToolBox) nucleiMaxTimeout() time.Duration {
-	if t.Config != nil && t.Config.Nuclei.MaxTimeout > 0 {
-		return time.Duration(t.Config.Nuclei.MaxTimeout) * time.Minute
+	val := t.config().Nuclei.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Nuclei.MaxTimeout
 	}
-	return 300 * time.Minute
+	return time.Duration(val) * time.Minute
 }
 
 func (t *ToolBox) dastAggression() string {
-	if t.Config != nil && t.Config.Nuclei.DASTAggression != "" {
-		return t.Config.Nuclei.DASTAggression
+	if val := t.config().Nuclei.DASTAggression; val != "" {
+		return val
 	}
-	return "high"
+	return getDefaultToolsConfig().Nuclei.DASTAggression
 }
 
-
 func (t *ToolBox) nucleiSeverity() []string {
-	if t.Config != nil && len(t.Config.Nuclei.Severity) > 0 {
-		return t.Config.Nuclei.Severity
-	}
-	return nil // default: all severities
+	return t.config().Nuclei.Severity
 }
 
 func (t *ToolBox) nucleiInfraTags() []string {
@@ -390,98 +421,74 @@ func (t *ToolBox) nucleiInfraTags() []string {
 }
 
 func (t *ToolBox) nucleiURLTags() []string {
-	// xss is handled by Dalfox (Step 21) — no duplication needed here
 	return []string{"sqli", "ssrf", "lfi", "rce", "ssti", "idor"}
 }
 
 func (t *ToolBox) ffufThreads() int {
-	if t.Config != nil && t.Config.Ffuf.Threads > 0 {
-		return t.Config.Ffuf.Threads
+	if val := t.config().Ffuf.Threads; val > 0 {
+		return val
 	}
-	return 50
+	return getDefaultToolsConfig().Ffuf.Threads
 }
 
 func (t *ToolBox) ffufTimeout() int {
-	if t.Config != nil && t.Config.Ffuf.Timeout > 0 {
-		return t.Config.Ffuf.Timeout
+	if val := t.config().Ffuf.Timeout; val > 0 {
+		return val
 	}
-	return 10
+	return getDefaultToolsConfig().Ffuf.Timeout
 }
 
 func (t *ToolBox) ffufMatchCodes() string {
-	if t.Config != nil && len(t.Config.Ffuf.MatchCodes) > 0 {
-		var codes []string
-		for _, c := range t.Config.Ffuf.MatchCodes {
-			codes = append(codes, strconv.Itoa(c))
-		}
-		return strings.Join(codes, ",")
+	codes := t.config().Ffuf.MatchCodes
+	if len(codes) == 0 {
+		codes = getDefaultToolsConfig().Ffuf.MatchCodes
 	}
-	return "200,201,204,301,302,307,401,403,405,500"
+	var strCodes []string
+	for _, c := range codes {
+		strCodes = append(strCodes, strconv.Itoa(c))
+	}
+	return strings.Join(strCodes, ",")
 }
 
 func (t *ToolBox) naabuMaxTimeout() time.Duration {
-	if t.Config != nil && t.Config.Naabu.Timeout > 0 {
-		return time.Duration(t.Config.Naabu.Timeout) * time.Minute
+	val := t.config().Naabu.Timeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Naabu.Timeout
 	}
-	return 240 * time.Minute
+	return time.Duration(val) * time.Minute
 }
 
 func (t *ToolBox) ffufMaxTimeout() time.Duration {
-	if t.Config != nil && t.Config.Ffuf.MaxTimeout > 0 {
-		return time.Duration(t.Config.Ffuf.MaxTimeout) * time.Minute
+	val := t.config().Ffuf.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Ffuf.MaxTimeout
 	}
-	return 180 * time.Minute
+	return time.Duration(val) * time.Minute
 }
 
 func (t *ToolBox) katanaMaxTimeout() time.Duration {
-	if t.Config != nil && t.Config.Katana.Timeout > 0 {
-		return time.Duration(t.Config.Katana.Timeout) * time.Minute
+	val := t.config().Katana.Timeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Katana.Timeout
 	}
-	return 300 * time.Minute
+	return time.Duration(val) * time.Minute
 }
 
 func (t *ToolBox) goSpiderMaxTimeout() time.Duration {
-	if t.Config != nil && t.Config.GoSpider.Timeout > 0 {
-		return time.Duration(t.Config.GoSpider.Timeout) * time.Minute
+	val := t.config().GoSpider.Timeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().GoSpider.Timeout
 	}
-	return 300 * time.Minute
+	return time.Duration(val) * time.Minute
 }
 
 func (t *ToolBox) amassMaxTimeout() time.Duration {
-	if t.Config != nil && t.Config.Amass.Timeout > 0 {
-		return time.Duration(t.Config.Amass.Timeout) * time.Minute
+	val := t.config().Amass.Timeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Amass.Timeout
 	}
-	return 60 * time.Minute
+	return time.Duration(val) * time.Minute
 }
-
-func (t *ToolBox) subfinderMaxTimeout() time.Duration {
-	return 15 * time.Minute
-}
-
-func (t *ToolBox) sublist3rMaxTimeout() time.Duration {
-	return 15 * time.Minute
-}
-
-func (t *ToolBox) gauMaxTimeout() time.Duration {
-	return 30 * time.Minute
-}
-
-func (t *ToolBox) waybackurlsMaxTimeout() time.Duration {
-	return 20 * time.Minute
-}
-
-func (t *ToolBox) x8MaxTimeout() time.Duration {
-	return 120 * time.Minute
-}
-
-func (t *ToolBox) uncoverMaxTimeout() time.Duration {
-	return 10 * time.Minute
-}
-
-func (t *ToolBox) githubSubdomainsMaxTimeout() time.Duration {
-	return 15 * time.Minute
-}
-
 
 // --- Passive Enumeration ---
 
@@ -504,12 +511,15 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 		if t.APIKeys.Chaos != "" {
 			envVars = append(envVars, "PDCP_API_KEY="+t.APIKeys.Chaos)
 		}
+		if t.APIKeys.SecurityTrails != "" {
+			envVars = append(envVars, "SECURITYTRAILS_API_KEY="+t.APIKeys.SecurityTrails)
+		}
 		if len(envVars) > 0 {
 			opts = append(opts, runner.WithEnv(envVars...))
 		}
 	}
 
-	opts = append(opts, runner.WithTimeout(t.subfinderMaxTimeout()))
+	opts = append(opts, runner.WithTimeout(subfinderMaxTimeout))
 	_, err := t.Runner.Run(ctx, "subfinder", args, opts...)
 	return err
 }
@@ -518,7 +528,7 @@ func (t *ToolBox) RunAssetfinder(ctx context.Context, domain string, outputFile 
 	args := []string{"--subs-only", domain}
 	output, err := t.Runner.Run(ctx, "assetfinder", args)
 	if strings.TrimSpace(output) != "" {
-		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -530,7 +540,7 @@ func (t *ToolBox) RunAssetfinder(ctx context.Context, domain string, outputFile 
 // Therefore, Sublist3r runs natively only; docker runner will fail due to lack of python in the alpine base.
 func (t *ToolBox) RunSublist3r(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"-d", domain, "-t", "50", "-v", "-o", outputFile}
-	_, err := t.Runner.Run(ctx, "sublist3r", args, runner.WithTimeout(t.sublist3rMaxTimeout()))
+	_, err := t.Runner.Run(ctx, "sublist3r", args, runner.WithTimeout(sublist3rMaxTimeout))
 	return err
 }
 
@@ -555,13 +565,12 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 	return err
 }
 
-
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"--providers", "wayback", "--subs", domain}
 	args = t.appendProxy(args, "--proxy")
-	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(t.gauMaxTimeout()))
+	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(gauMaxTimeout))
 	if strings.TrimSpace(output) != "" {
-		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -575,7 +584,7 @@ func (t *ToolBox) RunDnsx(ctx context.Context, inputFile string, outputFile stri
 		"-l", inputFile,
 		"-a", "-aaaa", "-cname", "-mx", "-txt", "-resp", "-json",
 		"-timeout", "3", // seconds per DNS query
-		"-retry", "2",  // retry failed queries twice before giving up
+		"-retry", "2", // retry failed queries twice before giving up
 		"-o", outputFile,
 	}
 	_, err := t.Runner.Run(ctx, "dnsx", args)
@@ -645,7 +654,7 @@ func (t *ToolBox) RunGoSpider(ctx context.Context, inputFile string, outputFile 
 	args = t.appendGoSpiderUA(args)
 	output, err := t.Runner.Run(ctx, "gospider", args, runner.WithTimeout(t.goSpiderMaxTimeout()))
 	if strings.TrimSpace(output) != "" {
-		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -721,22 +730,6 @@ func (t *ToolBox) RunFfufWithFUZZ(ctx context.Context, baseURL string, wordlist 
 	return err
 }
 
-// --- Vulnerability Scanning ---
-
-func (t *ToolBox) RunNuclei(ctx context.Context, targetsFile string, outputFile string) error {
-	s, err := t.GetScanner("nuclei")
-	if err != nil {
-		return err
-	}
-	return s.Scan(ctx, targetsFile, outputFile, ScanOptions{
-		Mode:        "standard",
-		Concurrency: t.nucleiConcurrency(),
-		RateLimit:   t.effectiveRate(t.nucleiRateLimit()),
-		Severity:    t.nucleiSeverity(),
-		ExcludeTags: t.nucleiExcludeTags(),
-	})
-}
-
 // RunNucleiSmartCVE runs tech-targeted CVE scanning using Nuclei's -as (automatic scan).
 // Wappalyzer fingerprints each host and selects only templates matching detected technologies.
 // This reduces effective template count from ~3,800 to ~100-400 per host.
@@ -802,7 +795,7 @@ func (t *ToolBox) RunMetabigorNet(ctx context.Context, org string, outputFile st
 	args := []string{"net", "--org", "-v", org}
 	output, err := t.Runner.Run(ctx, "metabigor", args)
 	if strings.TrimSpace(output) != "" {
-		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -817,13 +810,6 @@ func (t *ToolBox) RunCloudEnum(ctx context.Context, keyword string, outputFile s
 	return err
 }
 
-
-
-// TODO(config): Add General.HakrawlerTimeout to config.go and use it here.
-func (t *ToolBox) hakrawlerMaxTimeout() time.Duration {
-	return 30 * time.Minute
-}
-
 func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile string) error {
 	args := []string{"-subs", "-u", "-d", "3"}
 	if t.uaEnabled() {
@@ -831,9 +817,9 @@ func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile strin
 	}
 	args = t.appendProxy(args, "-proxy")
 
-	output, err := t.Runner.Run(ctx, "hakrawler", args, runner.WithStdin(strings.NewReader(url+"\n")), runner.WithTimeout(t.hakrawlerMaxTimeout()))
+	output, err := t.Runner.Run(ctx, "hakrawler", args, runner.WithStdin(strings.NewReader(url+"\n")), runner.WithTimeout(hakrawlerMaxTimeout))
 	if strings.TrimSpace(output) != "" {
-		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -846,9 +832,9 @@ func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile strin
 func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile string) error {
 	args := []string{}
 	// waybackurls reads the domain from standard input
-	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")), runner.WithTimeout(t.waybackurlsMaxTimeout()))
+	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")), runner.WithTimeout(waybackurlsMaxTimeout))
 	if strings.TrimSpace(output) != "" {
-		if writeErr := writeToFile(outputFile, output); writeErr != nil {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -888,7 +874,7 @@ func (t *ToolBox) RunX8WithWordlist(ctx context.Context, inputFile string, outpu
 		args = append(args, "-x", p)
 	}
 
-	_, err := t.Runner.Run(ctx, "x8", args, runner.WithTimeout(t.x8MaxTimeout()))
+	_, err := t.Runner.Run(ctx, "x8", args, runner.WithTimeout(x8MaxTimeout))
 	return err
 }
 
@@ -925,7 +911,7 @@ func (t *ToolBox) RunGithubSubdomains(ctx context.Context, domain string, github
 		return fmt.Errorf("github-subdomains requires a GitHub token")
 	}
 	args := []string{"-d", domain, "-t", githubToken, "-o", outputFile}
-	_, err := t.Runner.Run(ctx, "github-subdomains", args, runner.WithTimeout(t.githubSubdomainsMaxTimeout()))
+	_, err := t.Runner.Run(ctx, "github-subdomains", args, runner.WithTimeout(githubSubdomainsMaxTimeout))
 	return err
 }
 
@@ -979,8 +965,15 @@ func (t *ToolBox) RunDalfox(ctx context.Context, inputFile string, outputFile st
 		return err
 	}
 	concurrency := 20 // Default parallel worker threads for XSS fuzzing
+	var maxTimeout time.Duration
+	if t.config().Dalfox.MaxTimeout > 0 {
+		maxTimeout = time.Duration(t.config().Dalfox.MaxTimeout) * time.Minute
+	} else {
+		maxTimeout = time.Duration(getDefaultToolsConfig().Dalfox.MaxTimeout) * time.Minute
+	}
 	return s.Scan(ctx, inputFile, outputFile, ScanOptions{
 		Concurrency: concurrency,
+		MaxTimeout:  maxTimeout,
 	})
 }
 
@@ -1010,13 +1003,9 @@ func (t *ToolBox) RunTlsx(ctx context.Context, inputFile string, outputFile stri
 // 100% passive — no packets sent to the target.
 // Returns ErrNoAPIKeys if no API keys are configured for any engine.
 func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile string) error {
-	if t.APIKeys != nil && t.APIKeys.Fofa != "" {
-		logger.Warning("FOFA is configured but not wired (missing FofaEmail). Skipping FOFA engine.")
-	}
-
 	engines := t.uncoverEngines()
 	if len(engines) == 0 {
-		return fmt.Errorf("no uncover API keys configured — set shodan/censys/fofa keys in config.yaml")
+		return fmt.Errorf("no uncover API keys configured — set shodan/censys/fofa/quake/zoomeye keys in config.yaml")
 	}
 
 	args := []string{
@@ -1041,19 +1030,30 @@ func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile stri
 				envVars = append(envVars, "CENSYS_API_ID="+parts[0], "CENSYS_API_SECRET="+parts[1])
 			}
 		}
+		// FOFA classic two-factor auth requires both key + email.
+		if t.APIKeys.Fofa != "" && t.APIKeys.FofaEmail != "" {
+			envVars = append(envVars, "FOFA_KEY="+t.APIKeys.Fofa, "FOFA_EMAIL="+t.APIKeys.FofaEmail)
+		}
+		// Quake (360) — email + key pair.
+		if t.APIKeys.Quake != "" && t.APIKeys.QuakeEmail != "" {
+			envVars = append(envVars, "QUAKE_KEY="+t.APIKeys.Quake, "QUAKE_EMAIL="+t.APIKeys.QuakeEmail)
+		}
+		// ZoomEye — email + key pair.
+		if t.APIKeys.ZoomEye != "" && t.APIKeys.ZoomEyeEmail != "" {
+			envVars = append(envVars, "ZOOMEYE_KEY="+t.APIKeys.ZoomEye, "ZOOMEYE_EMAIL="+t.APIKeys.ZoomEyeEmail)
+		}
 		if len(envVars) > 0 {
 			opts = append(opts, runner.WithEnv(envVars...))
 		}
 	}
 
-	opts = append(opts, runner.WithTimeout(t.uncoverMaxTimeout()))
+	opts = append(opts, runner.WithTimeout(uncoverMaxTimeout))
 	_, err := t.Runner.Run(ctx, "uncover", args, opts...)
 	return err
 }
 
 // uncoverEngines returns only the engines for which API keys are configured.
 // If no keys are set, returns an empty slice so RunUncover can skip gracefully.
-// TODO: Add support for fofa once FofaEmail field is added to APIKeysConfig.
 func (t *ToolBox) uncoverEngines() []string {
 	if t.APIKeys == nil {
 		return nil
@@ -1064,6 +1064,18 @@ func (t *ToolBox) uncoverEngines() []string {
 	}
 	if t.APIKeys.Censys != "" || (t.APIKeys.CensysID != "" && t.APIKeys.CensysSecret != "") {
 		engines = append(engines, "censys")
+	}
+	// FOFA classic needs both key and email; anything less is treated as unconfigured.
+	if t.APIKeys.Fofa != "" && t.APIKeys.FofaEmail != "" {
+		engines = append(engines, "fofa")
+	}
+	// Quake (360) needs both key and email.
+	if t.APIKeys.Quake != "" && t.APIKeys.QuakeEmail != "" {
+		engines = append(engines, "quake")
+	}
+	// ZoomEye needs both key and email.
+	if t.APIKeys.ZoomEye != "" && t.APIKeys.ZoomEyeEmail != "" {
+		engines = append(engines, "zoomeye")
 	}
 	return engines
 }
@@ -1103,7 +1115,7 @@ func (t *ToolBox) RunNucleiWAF(ctx context.Context, inputFile string, outputFile
 		"-l", inputFile,
 		"-c", strconv.Itoa(concurrency),
 		"-rl", strconv.Itoa(rateLimit),
-		"-timeout", "5",        // per-request timeout (seconds)
+		"-timeout", "5", // per-request timeout (seconds)
 		"-max-host-error", "3", // bail out of unresponsive hosts quickly
 		"-tags", "waf",
 		"-jsonl",
@@ -1116,20 +1128,4 @@ func (t *ToolBox) RunNucleiWAF(ctx context.Context, inputFile string, outputFile
 	})
 	_, err := t.Runner.Run(ctx, "nuclei", args)
 	return err
-}
-
-// Helper
-func writeToFile(path string, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err = f.WriteString(content); err != nil {
-		return err
-	}
-	return f.Sync()
 }

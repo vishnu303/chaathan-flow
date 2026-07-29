@@ -2,11 +2,13 @@ package progress
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/logger"
+	"github.com/vishnu303/chaathan/utils"
 )
 
 // ── ANSI codes ───────────────────────────────────────────────────────────────
@@ -15,7 +17,6 @@ const (
 	Reset   = logger.Reset
 	Bold    = logger.Bold
 	Dim     = logger.Dim
-	// L6: progress color constants are aliased directly from logger.Red to maintain single source of truth.
 	Red     = logger.Red
 	Green   = logger.Green
 	Yellow  = logger.Yellow
@@ -28,6 +29,9 @@ const (
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // ── Display helpers ──────────────────────────────────────────────────────────
+// All line-based output goes through logger.Print so it is mirrored to the
+// scan log file and ANSI-stripped when stdout is not a terminal. Only the
+// transient spinner/carriage-return frames write directly to the terminal.
 
 // Header prints a styled header box.
 func Header(title string) {
@@ -35,54 +39,51 @@ func Header(title string) {
 	top := "╭" + strings.Repeat("─", w) + "╮"
 	mid := "│  " + title + "  │"
 	bot := "╰" + strings.Repeat("─", w) + "╯"
-	fmt.Printf("\n%s%s%s%s\n%s%s%s\n%s%s%s%s\n",
-		Cyan+Bold, top, Reset, "",
+	logger.Print("\n%s%s%s\n%s%s%s\n%s%s%s\n",
+		Cyan+Bold, top, Reset,
 		Cyan+Bold, mid, Reset,
-		Cyan+Bold, bot, Reset, "")
+		Cyan+Bold, bot, Reset)
 }
 
 // Section prints a section header with optional detail text.
 func Section(name string, detail string) {
 	if detail != "" {
-		fmt.Printf("\n  %s▸ %s%s  %s%s%s\n", White+Bold, name, Reset, Dim, detail, Reset)
+		logger.Print("\n  %s▸ %s%s  %s%s%s\n", White+Bold, name, Reset, Dim, detail, Reset)
 	} else {
-		fmt.Printf("\n  %s▸ %s%s\n", White+Bold, name, Reset)
+		logger.Print("\n  %s▸ %s%s\n", White+Bold, name, Reset)
 	}
 }
 
 // ItemOK prints a green ✓ status line.
 func ItemOK(name string) {
-	fmt.Printf("    %s✓%s %s\n", Green, Reset, name)
+	logger.Print("    %s✓%s %s\n", Green, Reset, name)
 }
 
 // ItemFail prints a red ✗ status line.
 func ItemFail(name string, detail string) {
 	if detail != "" {
-		runes := []rune(detail)
-		if len(runes) > 40 {
-			detail = string(runes[:37]) + "..."
-		}
-		fmt.Printf("    %s✗%s %s  %s%s%s\n", Red, Reset, name, Red+Dim, detail, Reset)
+		detail = utils.Truncate(detail, 40)
+		logger.Print("    %s✗%s %s  %s%s%s\n", Red, Reset, name, Red+Dim, detail, Reset)
 	} else {
-		fmt.Printf("    %s✗%s %s\n", Red, Reset, name)
+		logger.Print("    %s✗%s %s\n", Red, Reset, name)
 	}
 }
 
 // ItemPending prints a → pending item.
 func ItemPending(name string) {
-	fmt.Printf("    %s→%s %s\n", Yellow, Reset, name)
+	logger.Print("    %s→%s %s\n", Yellow, Reset, name)
 }
 
 // ItemInfo prints a dim info line.
 func ItemInfo(msg string) {
-	fmt.Printf("    %s%s%s\n", Dim, msg, Reset)
+	logger.Print("    %s%s%s\n", Dim, msg, Reset)
 }
 
 // Summary prints the final aggregated summary bar.
 func Summary(installed, skipped, failed int32, duration time.Duration) {
-	fmt.Println()
+	logger.Print("\n")
 	line := strings.Repeat("━", 50)
-	fmt.Printf("  %s%s%s\n", Dim, line, Reset)
+	logger.Print("  %s%s%s\n", Dim, line, Reset)
 
 	var parts []string
 	if installed > 0 {
@@ -96,19 +97,19 @@ func Summary(installed, skipped, failed int32, duration time.Duration) {
 	}
 	parts = append(parts, fmt.Sprintf("%s⏱  %s%s", Dim, fmtDuration(duration), Reset))
 
-	fmt.Printf("  %s\n", strings.Join(parts, "  "))
-	fmt.Printf("  %s%s%s\n", Dim, line, Reset)
+	logger.Print("  %s\n", strings.Join(parts, "  "))
+	logger.Print("  %s%s%s\n", Dim, line, Reset)
 }
 
 // Tip prints a dim tip line.
 func Tip(msg string) {
-	fmt.Printf("\n  %s💡 %s%s\n\n", Dim, msg, Reset)
+	logger.Print("\n  %s💡 %s%s\n\n", Dim, msg, Reset)
 }
 
 // ── Tracker ──────────────────────────────────────────────────────────────────
 // Thread-safe progress tracker with a live spinner.
 // Contract: Safe for sequential Start/Complete/Fail; the only concurrency
-// is the internal render goroutine.
+// is the internal render goroutine. StopSpinner is idempotent.
 
 type Tracker struct {
 	mu sync.Mutex
@@ -124,8 +125,13 @@ type Tracker struct {
 
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
+	stopOnce  sync.Once
+	spinning  bool
 }
 
+// writefLocked writes a transient terminal frame (spinner redraws, line
+// erases). Terminal-only on purpose: carriage-return animation must not be
+// mirrored into log files. Caller must hold t.mu.
 func (t *Tracker) writefLocked(format string, args ...any) {
 	fmt.Printf(format, args...)
 }
@@ -134,6 +140,12 @@ func (t *Tracker) writef(format string, args ...any) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.writefLocked(format, args...)
+}
+
+// linefLocked prints a completed status line through the logger so it is
+// mirrored to the scan log file. Caller must hold t.mu.
+func (t *Tracker) linefLocked(format string, args ...any) {
+	logger.Print(format, args...)
 }
 
 // NewTracker creates a new tracker for `total` items to install.
@@ -149,6 +161,10 @@ func NewTracker(total int) *Tracker {
 
 // RunSpinner starts the animated spinner in a background goroutine.
 func (t *Tracker) RunSpinner() {
+	t.mu.Lock()
+	t.spinning = true
+	t.mu.Unlock()
+
 	go func() {
 		defer close(t.stoppedCh)
 		ticker := time.NewTicker(80 * time.Millisecond)
@@ -166,9 +182,16 @@ func (t *Tracker) RunSpinner() {
 }
 
 // StopSpinner stops the spinner goroutine and waits for it to finish.
+// It is safe to call multiple times, and safe to call without RunSpinner.
 func (t *Tracker) StopSpinner() {
-	close(t.stopCh)
-	<-t.stoppedCh
+	t.stopOnce.Do(func() { close(t.stopCh) })
+
+	t.mu.Lock()
+	spinning := t.spinning
+	t.mu.Unlock()
+	if spinning {
+		<-t.stoppedCh
+	}
 }
 
 func (t *Tracker) render() {
@@ -192,11 +215,12 @@ func (t *Tracker) render() {
 	}
 	bar := Green + strings.Repeat("━", filled) + Reset + Dim + strings.Repeat("╌", barW-filled) + Reset
 
-	// ── active tool names ──
-	var names []string
+	// ── active tool names (sorted for a stable, non-flickering display) ──
+	names := make([]string, 0, len(t.active))
 	for n := range t.active {
 		names = append(names, n)
 	}
+	slices.Sort(names)
 	activeStr := ""
 	if len(names) > 0 {
 		if len(names) <= 3 {
@@ -237,7 +261,7 @@ func (t *Tracker) Complete(name string) {
 	t.completed++
 
 	t.writefLocked("\r%s", ClearLn)
-	t.writefLocked("    %s✓%s %-30s %s%s%s\n", Green, Reset, name, Dim, fmtShort(dur), Reset)
+	t.linefLocked("    %s✓%s %-30s %s%s%s\n", Green, Reset, name, Dim, fmtShort(dur), Reset)
 }
 
 // Fail marks a tool as failed. Prints a ✗ line.
@@ -245,19 +269,13 @@ func (t *Tracker) Fail(name string, errMsg string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	_, ok := t.active[name]
 	delete(t.active, name)
-	_ = ok
 	t.failed++
 
-	runes := []rune(errMsg)
-	short := errMsg
-	if len(runes) > 35 {
-		short = string(runes[:32]) + "..."
-	}
+	short := utils.Truncate(errMsg, 35)
 
 	t.writefLocked("\r%s", ClearLn)
-	t.writefLocked("    %s✗%s %-30s %s%s%s\n", Red, Reset, name, Red+Dim, short, Reset)
+	t.linefLocked("    %s✗%s %-30s %s%s%s\n", Red, Reset, name, Red+Dim, short, Reset)
 }
 
 // Skip records a skipped item (already installed).

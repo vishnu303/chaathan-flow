@@ -1,5 +1,7 @@
 package tools
 
+import "github.com/vishnu303/chaathan/utils"
+
 // RunFfufArgsTestHelper exports buildFfufArgs for testing.
 func (t *ToolBox) RunFfufArgsTestHelper(url string, wordlist string, outputFile string) []string {
 	return t.buildFfufArgs(url, wordlist, outputFile)
@@ -18,5 +20,5 @@ func (t *ToolBox) AppendCommonTestHelper(args []string, uaHeader bool, tlsOpSec 
 
 // WriteToFileTestHelper exports writeToFile for testing.
 func (t *ToolBox) WriteToFileTestHelper(path string, content string) error {
-	return writeToFile(path, content)
+	return utils.WriteToFile(path, content)
 }

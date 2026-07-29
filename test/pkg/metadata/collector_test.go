@@ -1,13 +1,14 @@
 package metadata_test
- 
+
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/metadata"
 )
- 
+
 func TestAnalyzeCookies_NoCookies(t *testing.T) {
 	insecure, session := metadata.AnalyzeCookies(nil)
 	if insecure || session {
@@ -69,8 +70,8 @@ func TestAnalyzeCookies_NonSessionCookie(t *testing.T) {
 
 func TestAnalyzeCookies_MultipleCookies(t *testing.T) {
 	cookies := []string{
-		"_ga=GA1.2.123; Path=/",                          // tracking, insecure
-		"PHPSESSID=abc123; Path=/; Secure; HttpOnly",      // session, secure
+		"_ga=GA1.2.123; Path=/",                      // tracking, insecure
+		"PHPSESSID=abc123; Path=/; Secure; HttpOnly", // session, secure
 	}
 	insecure, session := metadata.AnalyzeCookies(cookies)
 	if !insecure {
@@ -151,7 +152,7 @@ func TestFetchSignal(t *testing.T) {
 
 	client := server.Client()
 
-	signal, ok := metadata.FetchSignal(client, server.URL)
+	signal, ok := metadata.FetchSignal(context.Background(), client, server.URL)
 	if !ok {
 		t.Fatal("fetchSignal failed")
 	}
@@ -195,6 +196,6 @@ func BenchmarkFetchSignal(b *testing.B) {
 	client := server.Client()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = metadata.FetchSignal(client, server.URL)
+		_, _ = metadata.FetchSignal(context.Background(), client, server.URL)
 	}
 }

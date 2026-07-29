@@ -41,4 +41,3 @@ func stepAmassIntel(c *Ctx) (bool, error) {
 
 	return c.cancelled(), nil
 }
-

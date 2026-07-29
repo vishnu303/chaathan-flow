@@ -17,6 +17,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/notify"
 	"github.com/vishnu303/chaathan/pkg/orchestrate"
@@ -43,18 +44,18 @@ type RunConfig struct {
 	Cfg       *config.Config
 
 	// Optional flags
-	SkipAmass         bool
-	SkipNuclei        bool
-	SkipNaabu         bool
-	SkipCrawl         bool
-	SkipTakeovers     bool
-	SkipDalfox        bool
-	SkipUncover       bool
-	SkipTlsx          bool
-	SkipX8            bool
-	SkipShuffleDNS    bool
-	SkipHakrawler     bool
-	SkipFingerprint   bool
+	SkipAmass       bool
+	SkipNuclei      bool
+	SkipNaabu       bool
+	SkipCrawl       bool
+	SkipTakeovers   bool
+	SkipDalfox      bool
+	SkipUncover     bool
+	SkipTlsx        bool
+	SkipX8          bool
+	SkipShuffleDNS  bool
+	SkipHakrawler   bool
+	SkipFingerprint bool
 
 	// Paths / tokens
 	WordlistPath    string
@@ -75,9 +76,9 @@ type RunConfig struct {
 	SaveLog bool
 
 	// Playbook - Evasion & Auth Coverage
-	CustomCookie       string
-	CustomHeaders      []string
-	CustomToken        string
+	CustomCookie  string
+	CustomHeaders []string
+	CustomToken   string
 
 	// Proxy automation
 	AutoProxy bool
@@ -89,55 +90,55 @@ type RunConfig struct {
 
 // Files holds every output file path used across the workflow.
 type Files struct {
-	SubfinderOut       string
-	AssetfinderOut     string
-	Sublist3rOut       string
-	AmassOut           string
-	GithubSubsOut      string
-	WaybackOut         string
-	GauOut             string
-	UncoverOut         string
-	UncoverHostsOut    string
-	ConsolidatedSubs   string
-	HttpxInput         string
-	DnsxOut            string
-	ShufflednsOut      string
-	HttpxOut           string
-	HttpxLiveHosts     string
-	TlsxOut            string
-	NaabuOut           string
-	KatanaOut          string
-	GospiderOut        string
-	GoLinkFinderOut    string
-	HakrawlerOut       string
-	X8Out              string
-	X8URLsOut          string
-	AllURLsRaw         string
-	AllURLsLive        string
-	JSURLsFile         string
-	GFJSMatches        string
-	GFSecretsMatches   string
-	GFSecretsFinal     string
-	ROIMetadataTargets string
-	FfufOut            string
-	FfufDiscoveredURLs string
-	NucleiOut          string
-	NucleiURLTargets   string
-	SubjackOut         string
-	ParamURLsFile      string
-	DalfoxOut          string
-	HttpxTechOut       string
-	NucleiWafOut       string
-	NucleiMisconfigOut string
-	NucleiDASTOut      string
-	TakeoverCandidates string
+	SubfinderOut        string
+	AssetfinderOut      string
+	Sublist3rOut        string
+	AmassOut            string
+	GithubSubsOut       string
+	WaybackOut          string
+	GauOut              string
+	UncoverOut          string
+	UncoverHostsOut     string
+	ConsolidatedSubs    string
+	HttpxInput          string
+	DnsxOut             string
+	ShufflednsOut       string
+	HttpxOut            string
+	HttpxLiveHosts      string
+	TlsxOut             string
+	NaabuOut            string
+	KatanaOut           string
+	GospiderOut         string
+	GoLinkFinderOut     string
+	HakrawlerOut        string
+	X8Out               string
+	X8URLsOut           string
+	AllURLsRaw          string
+	AllURLsLive         string
+	JSURLsFile          string
+	GFJSMatches         string
+	GFSecretsMatches    string
+	GFSecretsFinal      string
+	ROIMetadataTargets  string
+	FfufOut             string
+	FfufDiscoveredURLs  string
+	NucleiOut           string
+	NucleiURLTargets    string
+	SubjackOut          string
+	ParamURLsFile       string
+	DalfoxOut           string
+	HttpxTechOut        string
+	NucleiWafOut        string
+	NucleiMisconfigOut  string
+	NucleiDASTOut       string
+	TakeoverCandidates  string
 	ProxyScrapingConfig string // intermediate_files/proxy_scraping_config.toml
-	ProxyPool          string // intermediate_files/proxy_pool.txt
-	TlsSanNewSubs      string
-	TlsSanHttpxOut     string
-	TlsSanHttpxLive    string
-	X8Input            string
-	GfSecretsMetadata  string
+	ProxyPool           string // intermediate_files/proxy_pool.txt
+	TlsSanNewSubs       string
+	TlsSanHttpxOut      string
+	TlsSanHttpxLive     string
+	X8Input             string
+	GfSecretsMetadata   string
 }
 
 // newFiles builds all output paths from the result directory.
@@ -179,29 +180,29 @@ func newFiles(dir string) Files {
 		JSURLsFile:         j("js_urls.txt"),
 		GFJSMatches:        j("gf_js_matches.txt"),
 		GFSecretsMatches:   j("gf_secrets_matches.txt"),
-		GFSecretsFinal:     jf("gf_secrets_findings.txt"),
+		GFSecretsFinal:     jf(utils.FileGFSecrets),
 		ROIMetadataTargets: j("roi_metadata_targets.txt"),
 		FfufOut:            j("ffuf_results.json"),
 		FfufDiscoveredURLs: j("ffuf_discovered_urls.txt"),
 		// Nuclei JSON outputs go to final_files/ — they are product files
-		NucleiOut:        jf("nuclei_vulns.json"),
-		DalfoxOut:        jf("dalfox_xss.jsonl"),
+		NucleiOut: jf(utils.FileNucleiVulns),
+		DalfoxOut: jf(utils.FileDalfoxXSS),
 		// Nuclei working files (URL target lists) stay in intermediate_files/
-		NucleiURLTargets: j("nuclei_url_targets.txt"),
-		SubjackOut:       j("subjack_takeovers.txt"),
-		ParamURLsFile:    j("param_urls_live.txt"),
-		HttpxTechOut:     jf("httpx_tech.json"),
-		NucleiWafOut:     jf("nuclei_waf.json"),
-		NucleiMisconfigOut: jf("nuclei_misconfig.json"),
-		NucleiDASTOut:    jf("nuclei_dast.json"),
-		TakeoverCandidates: j("takeover_candidates.txt"),
+		NucleiURLTargets:    j("nuclei_url_targets.txt"),
+		SubjackOut:          j("subjack_takeovers.txt"),
+		ParamURLsFile:       j("param_urls_live.txt"),
+		HttpxTechOut:        jf("httpx_tech.json"),
+		NucleiWafOut:        jf("nuclei_waf.json"),
+		NucleiMisconfigOut:  jf("nuclei_misconfig.json"),
+		NucleiDASTOut:       jf("nuclei_dast.json"),
+		TakeoverCandidates:  j("takeover_candidates.txt"),
 		ProxyScrapingConfig: j("proxy_scraping_config.toml"),
-		ProxyPool:          j("proxy_pool.txt"),
-		TlsSanNewSubs:      j("tls_san_new_subs.txt"),
-		TlsSanHttpxOut:     j("tls_san_httpx_out.json"),
-		TlsSanHttpxLive:    j("tls_san_httpx_live.txt"),
-		X8Input:            j("x8_input.txt"),
-		GfSecretsMetadata:  j("gf_secrets_metadata.txt"),
+		ProxyPool:           j("proxy_pool.txt"),
+		TlsSanNewSubs:       j("tls_san_new_subs.txt"),
+		TlsSanHttpxOut:      j("tls_san_httpx_out.json"),
+		TlsSanHttpxLive:     j("tls_san_httpx_live.txt"),
+		X8Input:             j("x8_input.txt"),
+		GfSecretsMetadata:   j("gf_secrets_metadata.txt"),
 	}
 }
 
@@ -226,10 +227,10 @@ type Ctx struct {
 	StartTime time.Time
 
 	// Tools & infrastructure
-	Tb       *tools.ToolBox
-	StateMgr *scan.Manager
-	State    *scan.State
-	Notifier *notify.Notifier
+	Tb          *tools.ToolBox
+	StateMgr    *scan.Manager
+	State       *scan.State
+	Notifier    *notify.Notifier
 	ScopeFilter *scope.Scope // compiled scope rules from config (nil = no filtering)
 
 	// All file paths
@@ -246,8 +247,8 @@ type Ctx struct {
 
 	// Proxy rotation
 	Rotator           *proxy_scraping.Rotator // mubeng background process (nil if not using auto-proxy)
-	ProxyTotalScraped int                    // total proxies found during fetch phase
-	ProxyTotalValid   int                    // proxies that passed target domain validation
+	ProxyTotalScraped int                     // total proxies found during fetch phase
+	ProxyTotalValid   int                     // proxies that passed target domain validation
 
 	// Findings
 	FfufTotalFindings int // total valid fuzzing discoveries
@@ -294,10 +295,26 @@ func Run(cfg RunConfig) error {
 	go func() {
 		buf := make([]byte, 1)
 		for {
+			select {
+			case <-goCtx.Done():
+				return
+			default:
+			}
+
 			n, err := os.Stdin.Read(buf)
-			if err != nil || n == 0 {
+			if err != nil {
+				return
+			}
+			if n == 0 {
 				continue
 			}
+
+			select {
+			case <-goCtx.Done():
+				return
+			default:
+			}
+
 			if buf[0] == 's' || buf[0] == 'S' {
 				select {
 				case skipChan <- struct{}{}:
@@ -310,38 +327,106 @@ func Run(cfg RunConfig) error {
 		}
 	}()
 
-	// ── Database record ──────────────────────────────────────
+	// ── Database record & scan state ─────────────────────────
 	configJSON, _ := json.Marshal(map[string]any{
-		"skip_amass":         cfg.SkipAmass,
-		"skip_nuclei":        cfg.SkipNuclei,
-		"skip_naabu":         cfg.SkipNaabu,
-		"skip_crawl":         cfg.SkipCrawl,
-		"skip_takeovers":     cfg.SkipTakeovers,
-		"skip_dalfox":        cfg.SkipDalfox,
-		"skip_uncover":       cfg.SkipUncover,
-		"skip_tlsx":          cfg.SkipTlsx,
-		"skip_x8":            cfg.SkipX8,
-		"skip_shuffledns":    cfg.SkipShuffleDNS,
-		"skip_hakrawler":     cfg.SkipHakrawler,
-		"skip_fingerprint":   cfg.SkipFingerprint,
-		"wordlist":           cfg.WordlistPath,
-		"dns_wordlist":       cfg.DNSWordlistPath,
-		"resolvers":          cfg.ResolversPath,
-		"github":             cfg.GitHubToken != "",
-		"auto_proxy":         cfg.AutoProxy,
-		"save_log":           cfg.SaveLog,
-		"custom_cookie":      cfg.CustomCookie,
-		"custom_headers":     cfg.CustomHeaders,
-		"custom_token":       cfg.CustomToken,
+		"skip_amass":       cfg.SkipAmass,
+		"skip_nuclei":      cfg.SkipNuclei,
+		"skip_naabu":       cfg.SkipNaabu,
+		"skip_crawl":       cfg.SkipCrawl,
+		"skip_takeovers":   cfg.SkipTakeovers,
+		"skip_dalfox":      cfg.SkipDalfox,
+		"skip_uncover":     cfg.SkipUncover,
+		"skip_tlsx":        cfg.SkipTlsx,
+		"skip_x8":          cfg.SkipX8,
+		"skip_shuffledns":  cfg.SkipShuffleDNS,
+		"skip_hakrawler":   cfg.SkipHakrawler,
+		"skip_fingerprint": cfg.SkipFingerprint,
+		"wordlist":         cfg.WordlistPath,
+		"dns_wordlist":     cfg.DNSWordlistPath,
+		"resolvers":        cfg.ResolversPath,
+		"github":           cfg.GitHubToken != "",
+		"auto_proxy":       cfg.AutoProxy,
+		"save_log":         cfg.SaveLog,
+		"custom_cookie":    cfg.CustomCookie,
+		"custom_headers":   cfg.CustomHeaders,
+		"custom_token":     cfg.CustomToken,
 	})
 
-	dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))
-	if err != nil {
-		logger.Warning("Failed to create scan record: %v", err)
-	}
-	scanID := int64(0)
-	if dbScan != nil {
-		scanID = dbScan.ID
+	stateMgr := scan.NewManager(paths.StateDir())
+	var scanState *scan.State
+	var scanID int64
+
+	if cfg.ResumeScanID > 0 {
+		scanID = cfg.ResumeScanID
+		existingState, err := stateMgr.LoadState(scanID)
+		if err != nil {
+			return fmt.Errorf("cannot resume scan #%d: %w", scanID, err)
+		}
+		scanState = existingState
+
+		// Validate target match
+		if scanState.Target != cfg.Domain {
+			return fmt.Errorf("target mismatch for resumed scan #%d: state target is %q, but requested target is %q", scanID, scanState.Target, cfg.Domain)
+		}
+
+		// Validate result directory match
+		if scanState.ResultDir != "" && scanState.ResultDir != cfg.ResultDir {
+			logger.Warning("Result directory mismatch for resumed scan #%d: state directory is %q, but current configuration is %q. Adopting state result directory %q.",
+				scanID, scanState.ResultDir, cfg.ResultDir, scanState.ResultDir)
+			cfg.ResultDir = scanState.ResultDir
+		}
+
+		// Reconcile and compare against persisted scanState.Config
+		var persistedMap map[string]any
+		if err := json.Unmarshal(scanState.Config, &persistedMap); err == nil && persistedMap != nil {
+			checkBoolDiff := func(key string, current bool) {
+				if val, ok := persistedMap[key].(bool); ok && val != current {
+					logger.Warning("Config change detected for option %s: persisted value is %t, current is %t. Resumed scan will use the persisted state/skip config for steps.", key, val, current)
+				}
+			}
+			checkBoolDiff("skip_amass", cfg.SkipAmass)
+			checkBoolDiff("skip_nuclei", cfg.SkipNuclei)
+			checkBoolDiff("skip_naabu", cfg.SkipNaabu)
+			checkBoolDiff("skip_crawl", cfg.SkipCrawl)
+			checkBoolDiff("skip_takeovers", cfg.SkipTakeovers)
+			checkBoolDiff("skip_dalfox", cfg.SkipDalfox)
+			checkBoolDiff("skip_uncover", cfg.SkipUncover)
+			checkBoolDiff("skip_tlsx", cfg.SkipTlsx)
+			checkBoolDiff("skip_x8", cfg.SkipX8)
+			checkBoolDiff("skip_shuffledns", cfg.SkipShuffleDNS)
+			checkBoolDiff("skip_hakrawler", cfg.SkipHakrawler)
+			checkBoolDiff("skip_fingerprint", cfg.SkipFingerprint)
+			checkBoolDiff("auto_proxy", cfg.AutoProxy)
+			checkBoolDiff("save_log", cfg.SaveLog)
+
+			checkStringDiff := func(key string, current string) {
+				if val, ok := persistedMap[key].(string); ok && val != current {
+					logger.Warning("Config change detected for option %s: persisted value is %q, current is %q.", key, val, current)
+				}
+			}
+			checkStringDiff("wordlist", cfg.WordlistPath)
+			checkStringDiff("dns_wordlist", cfg.DNSWordlistPath)
+			checkStringDiff("resolvers", cfg.ResolversPath)
+			checkStringDiff("custom_cookie", cfg.CustomCookie)
+			checkStringDiff("custom_token", cfg.CustomToken)
+		}
+
+		logger.Info("Resuming scan #%d (%.1f%% complete, %d/%d steps done)",
+			scanID, scanState.Progress(), len(scanState.CompletedSteps), scanState.TotalSteps)
+	} else {
+		dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))
+		if err != nil {
+			logger.Warning("Failed to create scan record: %v", err)
+		}
+		if dbScan != nil {
+			scanID = dbScan.ID
+		}
+
+		var errState error
+		scanState, errState = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
+		if errState != nil {
+			return fmt.Errorf("cannot create scan state: %w", errState)
+		}
 	}
 
 	// ── File logging ──────────────────────────────────────
@@ -362,29 +447,9 @@ func Run(cfg RunConfig) error {
 		}
 	}
 
-	// ── Scan header & state ──────────────────────────────────
+	// ── Scan header & state UI ──────────────────────────────
 	logger.ScanHeader("Wildcard", cfg.Domain, scanID)
 	logger.InitScanUI(len(scan.WildcardSteps))
-
-	stateMgr := scan.NewManager(paths.StateDir())
-
-	var scanState *scan.State
-	if cfg.ResumeScanID > 0 {
-		existingState, err := stateMgr.LoadState(cfg.ResumeScanID)
-		if err != nil {
-			return fmt.Errorf("cannot resume scan #%d: %w", cfg.ResumeScanID, err)
-		}
-		scanState = existingState
-		scanID = cfg.ResumeScanID
-		logger.Info("Resuming scan #%d (%.1f%% complete, %d/%d steps done)",
-			scanID, scanState.Progress(), len(scanState.CompletedSteps), scanState.TotalSteps)
-	} else {
-		var err error
-		scanState, err = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
-		if err != nil {
-			return fmt.Errorf("cannot create scan state: %w", err)
-		}
-	}
 
 	// ── Runner, ToolBox & Notifier ──────────────────────────
 	infra := orchestrate.NewInfra(cfg.Mode, cfg.Verbose, cfg.Cfg)
@@ -430,7 +495,6 @@ func Run(cfg RunConfig) error {
 	if err := c.SetupResolvers(); err != nil {
 		logger.Warning("SetupResolvers failed: %v", err)
 	}
-
 
 	// Wire notification logging (FileDebug no-ops if --log is inactive)
 	if c.Notifier != nil {
@@ -644,20 +708,33 @@ func finalizeScan(c *Ctx, status string) {
 		c.StateMgr.DeleteState(c.State.ScanID)
 	}
 
-	stats := make(map[string]string)
+	stats := make([]logger.Stat, 0, 8)
 	if c.ScanID > 0 {
 		dbStats, err := database.GetScanStats(c.ScanID)
 		if err == nil {
-			stats["Subdomains"] = fmt.Sprintf("%d (Live: %d)", dbStats.TotalSubdomains, dbStats.LiveSubdomains)
-			stats["Open Ports"] = fmt.Sprintf("%d", dbStats.TotalPorts)
-			stats["URLs"] = fmt.Sprintf("%d", dbStats.TotalURLs)
-			stats["Endpoints"] = fmt.Sprintf("%d", dbStats.TotalEndpoints)
+			stats = append(stats,
+				logger.Stat{Label: "Subdomains", Value: fmt.Sprintf("%d (Live: %d)", dbStats.TotalSubdomains, dbStats.LiveSubdomains)},
+				logger.Stat{Label: "Open Ports", Value: fmt.Sprintf("%d", dbStats.TotalPorts)},
+				logger.Stat{Label: "URLs", Value: fmt.Sprintf("%d", dbStats.TotalURLs)},
+				logger.Stat{Label: "Endpoints", Value: fmt.Sprintf("%d", dbStats.TotalEndpoints)},
+			)
+			// Canonical severity order first, then any non-standard ones.
+			printed := make(map[string]bool, len(dbStats.Vulnerabilities))
+			for _, sev := range utils.SeverityOrder() {
+				if count, ok := dbStats.Vulnerabilities[sev]; ok {
+					stats = append(stats, logger.Stat{Label: "Vuln (" + sev + ")", Value: fmt.Sprintf("%d", count)})
+					printed[sev] = true
+				}
+			}
 			for sev, count := range dbStats.Vulnerabilities {
+				if printed[sev] {
+					continue
+				}
 				label := sev
 				if label == "" {
 					label = "unknown"
 				}
-				stats["Vuln ("+label+")"] = fmt.Sprintf("%d", count)
+				stats = append(stats, logger.Stat{Label: "Vuln (" + label + ")", Value: fmt.Sprintf("%d", count)})
 			}
 
 			if c.Notifier != nil {
@@ -683,12 +760,12 @@ func finalizeScan(c *Ctx, status string) {
 		if status == "completed" || status == "cancelled" {
 			finalDir := filepath.Join(c.ResultDir, "final_files")
 			logger.Info("\nExporting results to final_files/...")
-			if err := utils.ExportResults(c.ScanID, finalDir); err != nil {
+			if err := ingest.ExportResults(c.ScanID, finalDir); err != nil {
 				logger.Warning("Failed to export some results: %v", err)
 			} else {
 				logger.Success("Results exported to final_files/")
 			}
-			if err := utils.ExportSummary(c.ScanID, finalDir, c.Domain); err != nil {
+			if err := ingest.ExportSummary(c.ScanID, finalDir, c.Domain); err != nil {
 				logger.Warning("Failed to create summary: %v", err)
 			}
 		}

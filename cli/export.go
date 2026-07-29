@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 	"github.com/vishnu303/chaathan/utils"
@@ -19,22 +20,16 @@ var exportCmd = &cobra.Command{
 	Long: `Export all results from a scan to organized text files.
 
 Output files created:
-  - final_subdomains.txt          All discovered subdomains
-  - live_subdomains.txt           Only live/responsive subdomains  
-  - live_subdomains_with_ip.txt   Live subdomains with IP addresses
-  - open_ports.txt                Open ports (host:port format)
-  - open_ports_detailed.txt       Ports with protocol and service info
-  - all_urls.txt                  All discovered URLs
-  - urls_200.txt                  Only URLs returning 200 OK
-  - urls_with_status.txt          URLs with status codes
-  - urls_with_titles.txt          URLs with page titles
-  - vulnerabilities.txt           All vulnerabilities summary
-  - vulnerabilities_detailed.txt  Full vulnerability details
+  - final_subdomains.txt             All discovered subdomains
+  - live_subdomains.txt              Live/responsive subdomains (with IP when known)
+  - open_ports.txt                   Open ports (host:port with protocol/service)
+  - all_urls.txt                     All discovered URLs with status codes
+  - urls_200.txt                     Only URLs returning 200 OK
+  - vulnerabilities.txt              All vulnerabilities (detailed)
   - vulnerabilities_critical_high.txt  Critical/High severity only
-  - vulnerable_hosts.txt          Unique hosts with vulnerabilities
-  - endpoints.txt                 All discovered endpoints
-  - endpoints_interesting.txt     API/admin/interesting endpoints
-  - SUMMARY.txt                   Overall scan summary
+  - endpoints.txt                    All discovered endpoints (with method)
+  - endpoints_interesting.txt        API/admin/interesting endpoints
+  - SUMMARY.txt                      Overall scan summary
 `,
 	Args: cobra.ExactArgs(1),
 	Run:  runExport,
@@ -85,58 +80,58 @@ func runExport(cmd *cobra.Command, args []string) {
 
 	// Subdomains
 	logger.SubStep("Exporting subdomains...")
-	if err := utils.ExportSubdomains(scanID, outputDir); err != nil {
+	if err := ingest.ExportSubdomains(scanID, outputDir); err != nil {
 		logger.Warning("Subdomains export failed: %v", err)
 	} else {
-		logger.Success("final_subdomains.txt created")
+		logger.Success("%s created", utils.FileFinalSubdomains)
 	}
 
 	// Live subdomains
 	logger.SubStep("Exporting live subdomains...")
-	if err := utils.ExportLiveSubdomains(scanID, outputDir); err != nil {
+	if err := ingest.ExportLiveSubdomains(scanID, outputDir); err != nil {
 		logger.Warning("Live subdomains export failed: %v", err)
 	} else {
-		logger.Success("live_subdomains.txt created")
+		logger.Success("%s created", utils.FileLiveSubdomains)
 	}
 
 	// Ports
 	logger.SubStep("Exporting ports...")
-	if err := utils.ExportPorts(scanID, outputDir); err != nil {
+	if err := ingest.ExportPorts(scanID, outputDir); err != nil {
 		logger.Warning("Ports export failed: %v", err)
 	} else {
-		logger.Success("open_ports.txt created")
+		logger.Success("%s created", utils.FileOpenPorts)
 	}
 
 	// URLs
 	logger.SubStep("Exporting URLs...")
-	if err := utils.ExportURLs(scanID, outputDir); err != nil {
+	if err := ingest.ExportURLs(scanID, outputDir); err != nil {
 		logger.Warning("URLs export failed: %v", err)
 	} else {
-		logger.Success("all_urls.txt created")
+		logger.Success("%s created", utils.FileAllURLs)
 	}
 
 	// Vulnerabilities
 	logger.SubStep("Exporting vulnerabilities...")
-	if err := utils.ExportVulnerabilities(scanID, outputDir); err != nil {
+	if err := ingest.ExportVulnerabilities(scanID, outputDir); err != nil {
 		logger.Warning("Vulnerabilities export failed: %v", err)
 	} else {
-		logger.Success("vulnerabilities.txt created")
+		logger.Success("%s created", utils.FileVulnerabilities)
 	}
 
 	// Endpoints
 	logger.SubStep("Exporting endpoints...")
-	if err := utils.ExportEndpoints(scanID, outputDir); err != nil {
+	if err := ingest.ExportEndpoints(scanID, outputDir); err != nil {
 		logger.Warning("Endpoints export failed: %v", err)
 	} else {
-		logger.Success("endpoints.txt created")
+		logger.Success("%s created", utils.FileEndpoints)
 	}
 
 	// Summary
 	logger.SubStep("Creating summary...")
-	if err := utils.ExportSummary(scanID, outputDir, scan.Target); err != nil {
+	if err := ingest.ExportSummary(scanID, outputDir, scan.Target); err != nil {
 		logger.Warning("Summary creation failed: %v", err)
 	} else {
-		logger.Success("SUMMARY.txt created")
+		logger.Success("%s created", utils.FileSummary)
 	}
 
 	logger.Section("Export Complete")

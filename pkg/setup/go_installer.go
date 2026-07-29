@@ -51,15 +51,16 @@ func parseGoVersion(versionStr string) (bool, string) {
 	for _, f := range fields {
 		if strings.HasPrefix(f, "go") && f != "go" {
 			v := strings.TrimPrefix(f, "go")
-			// Remove non-numeric suffixes like rc1, beta2
+			hasPreReleaseSuffix := false
 			if idx := strings.IndexAny(v, "abcdefghijklmnopqrstuvwxyz"); idx >= 0 {
+				hasPreReleaseSuffix = true
 				v = v[:idx]
 			}
 			parts := strings.Split(v, ".")
 			if len(parts) >= 2 {
 				major, _ := strconv.Atoi(parts[0])
 				minor, _ := strconv.Atoi(parts[1])
-				if major > 1 || (major == 1 && minor >= minGoVersion) {
+				if major > 1 || (major == 1 && minor > minGoVersion) || (major == 1 && minor == minGoVersion && !hasPreReleaseSuffix) {
 					return true, f
 				}
 			}
@@ -68,7 +69,6 @@ func parseGoVersion(versionStr string) (bool, string) {
 	}
 	return false, ""
 }
-
 
 // ensureSystemGoOnPath checks if Go is installed under the user-local or system directory
 // and adds it to the current process's PATH if found.
@@ -97,19 +97,19 @@ func ensureSystemGoOnPath() {
 }
 
 // downloadLatestGo fetches the latest Go version string from go.dev, falling back to go1.26.0 on failure.
-func downloadLatestGo(ctx *SetupContext) (string, error) {
+func downloadLatestGo(ctx *SetupContext) string {
 	progress.ItemPending("Checking latest Go version on go.dev...")
 	client := setupHTTPClient(30 * time.Second)
 	resp, err := client.Get("https://go.dev/VERSION?m=text")
 	if err != nil {
 		progress.ItemInfo("Failed to check go.dev/VERSION (using go1.26.0 as fallback)")
-		return "go1.26.0", nil
+		return "go1.26.0"
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		progress.ItemInfo("Failed to read go.dev/VERSION (using go1.26.0 as fallback)")
-		return "go1.26.0", nil
+		return "go1.26.0"
 	}
 	version := strings.TrimSpace(string(body))
 	if idx := strings.Index(version, "\n"); idx >= 0 {
@@ -117,10 +117,10 @@ func downloadLatestGo(ctx *SetupContext) (string, error) {
 	}
 	if !strings.HasPrefix(version, "go") {
 		progress.ItemInfo("Invalid go.dev/VERSION output (using go1.26.0 as fallback)")
-		return "go1.26.0", nil
+		return "go1.26.0"
 	}
 	progress.ItemOK(fmt.Sprintf("Latest Go version: %s", version))
-	return version, nil
+	return version
 }
 
 // downloadTarball downloads the Go binary and its sha256 checksum from go.dev, verifies it,
@@ -175,8 +175,10 @@ func downloadTarball(ctx *SetupContext, version, destPath string) error {
 		return fmt.Errorf("failed to save Go archive: %w", err)
 	}
 
-	// Close the file before verifying to avoid access issues
-	_ = out.Close()
+	// Explicitly check the Close() error on success path
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("failed to close Go archive: %w", err)
+	}
 
 	// Verify checksum
 	r, err := os.Open(destPath)
@@ -282,10 +284,7 @@ func EnsureGoInstalled(ctx *SetupContext) (bool, error) {
 
 	progress.ItemPending("Preparing Go installer...")
 
-	version, err := downloadLatestGo(ctx)
-	if err != nil {
-		return false, fmt.Errorf("failed to detect latest Go version: %w", err)
-	}
+	version := downloadLatestGo(ctx)
 
 	// Create temp folder inside user space to avoid global /tmp pollution or permissions issues
 	home, err := os.UserHomeDir()

@@ -307,11 +307,11 @@ func finalizeScan(c *Ctx, status string) {
 		completedCount = len(c.State.CompletedSteps)
 		totalCount = c.State.TotalSteps
 	}
-	stats := map[string]string{
-		"Steps completed": fmt.Sprintf("%d/%d", completedCount, totalCount),
+	stats := []logger.Stat{
+		{Label: "Steps completed", Value: fmt.Sprintf("%d/%d", completedCount, totalCount)},
 	}
 	if c.Failed > 0 {
-		stats["Failed"] = fmt.Sprintf("%d", c.Failed)
+		stats = append(stats, logger.Stat{Label: "Failed", Value: fmt.Sprintf("%d", c.Failed)})
 	}
 
 	// Count non-empty output files
@@ -326,7 +326,7 @@ func finalizeScan(c *Ctx, status string) {
 			}
 		}
 		if count > 0 {
-			stats["Output files"] = fmt.Sprintf("%d", count)
+			stats = append(stats, logger.Stat{Label: "Output files", Value: fmt.Sprintf("%d", count)})
 		}
 	}
 

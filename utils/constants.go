@@ -1,8 +1,9 @@
 package utils
 
-// JunkDomains are 3rd-party domains that should never be scanned.
-// This slice is read-only; do not mutate.
-var JunkDomains = []string{
+import "slices"
+
+// junkDomains are 3rd-party domains that should never be scanned.
+var junkDomains = []string{
 	"googleapis.com",
 	"gstatic.com",
 	"google-analytics.com",
@@ -47,9 +48,8 @@ var JunkDomains = []string{
 	"hcaptcha.com",
 }
 
-// StaticExtensions are file extensions that cannot have injection points.
-// This slice is read-only; do not mutate.
-var StaticExtensions = []string{
+// staticExtensions are file extensions that cannot have injection points.
+var staticExtensions = []string{
 	".js",
 	".css",
 	".png",
@@ -77,9 +77,8 @@ var StaticExtensions = []string{
 	".tif",
 }
 
-// HighValueMarkers are path markers identifying high-value/sensitive components.
-// This slice is read-only; do not mutate.
-var HighValueMarkers = []string{
+// highValueMarkers are path markers identifying high-value/sensitive components.
+var highValueMarkers = []string{
 	"/admin",
 	"/login",
 	"/signin",
@@ -111,9 +110,8 @@ var HighValueMarkers = []string{
 	"/webhook",
 }
 
-// InterestingParameters are parameter names that often contain security vulnerabilities.
-// This slice is read-only; do not mutate.
-var InterestingParameters = []string{
+// interestingParameters are parameter names that often contain security vulnerabilities.
+var interestingParameters = []string{
 	"url",
 	"uri",
 	"path",
@@ -135,9 +133,8 @@ var InterestingParameters = []string{
 	"callback",
 }
 
-// InterestingEndpointsPatterns are path substrings used to identify high-value or sensitive API endpoints.
-// This slice is read-only; do not mutate.
-var InterestingEndpointsPatterns = []string{
+// interestingEndpointsPatterns are path substrings used to identify high-value or sensitive API endpoints.
+var interestingEndpointsPatterns = []string{
 	"/api/", "/v1/", "/v2/", "/v3/",
 	"/admin", "/login", "/auth",
 	"/graphql", "/rest/",
@@ -148,12 +145,17 @@ var InterestingEndpointsPatterns = []string{
 	"/swagger", "/docs",
 }
 
-// JunkDomainsSet returns a read-only set (map) of JunkDomains for O(1) lookup.
-func JunkDomainsSet() map[string]bool {
-	set := make(map[string]bool, len(JunkDomains))
-	for _, domain := range JunkDomains {
-		set[domain] = true
-	}
-	return set
-}
+// JunkDomains returns a copy of the 3rd-party junk domain list (callers may not mutate the source).
+func JunkDomains() []string { return slices.Clone(junkDomains) }
 
+// StaticExtensions returns a copy of the static file extension list.
+func StaticExtensions() []string { return slices.Clone(staticExtensions) }
+
+// HighValueMarkers returns a copy of the high-value path marker list.
+func HighValueMarkers() []string { return slices.Clone(highValueMarkers) }
+
+// InterestingParameters returns a copy of the interesting parameter name list.
+func InterestingParameters() []string { return slices.Clone(interestingParameters) }
+
+// InterestingEndpointsPatterns returns a copy of the interesting endpoint pattern list.
+func InterestingEndpointsPatterns() []string { return slices.Clone(interestingEndpointsPatterns) }

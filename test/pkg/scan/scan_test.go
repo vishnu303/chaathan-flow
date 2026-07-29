@@ -1,5 +1,5 @@
 package scan_test
- 
+
 import (
 	"fmt"
 	"os"

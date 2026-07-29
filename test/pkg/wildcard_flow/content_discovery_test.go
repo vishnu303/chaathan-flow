@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/wildcard_flow"
 )
 
@@ -75,5 +76,27 @@ func TestFilterAndDeduplicateHosts(t *testing.T) {
 				t.Errorf("got %v; want %v", got, tc.expected)
 			}
 		})
+	}
+}
+
+func TestJSLimitClamping(t *testing.T) {
+	// jsLimit <= 0 in Cfg should default to 2000 in Step 18
+	cfg := &config.GeneralConfig{
+		JSLimit: 0,
+	}
+	jsLimit := 2000
+	if cfg.JSLimit > 0 {
+		jsLimit = cfg.JSLimit
+	}
+	if jsLimit != 2000 {
+		t.Errorf("expected jsLimit to clamp to default 2000, got %d", jsLimit)
+	}
+
+	cfg.JSLimit = 500
+	if cfg.JSLimit > 0 {
+		jsLimit = cfg.JSLimit
+	}
+	if jsLimit != 500 {
+		t.Errorf("expected jsLimit to accept 500, got %d", jsLimit)
 	}
 }

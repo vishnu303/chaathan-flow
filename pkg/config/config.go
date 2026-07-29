@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -94,8 +95,17 @@ type APIKeysConfig struct {
 	// Censys is a combined shorthand: set to "id:secret" for uncover -e censys support
 	Censys string `yaml:"censys"`
 
-	// Fofa API key for uncover -e fofa support
-	Fofa string `yaml:"fofa"`
+	// Fofa API key (FOFA classic two-factor auth)
+	Fofa      string `yaml:"fofa"`
+	FofaEmail string `yaml:"fofa_email"`
+
+	// Quake (360) API credentials — email + key pair for uncover -e quake
+	Quake      string `yaml:"quake"`
+	QuakeEmail string `yaml:"quake_email"`
+
+	// ZoomEye API credentials — email + key pair for uncover -e zoomeye
+	ZoomEye      string `yaml:"zoomeye"`
+	ZoomEyeEmail string `yaml:"zoomeye_email"`
 
 	// SecurityTrails API key
 	SecurityTrails string `yaml:"securitytrails"`
@@ -174,13 +184,13 @@ type NaabuConfig struct {
 	Ports   string `yaml:"ports"`   // port spec: "top-1000", "80,443,8080", or range (default: top-1000)
 	// Timeout represents the maximum runtime in minutes for Naabu.
 	// For backwards compatibility, it is kept as "Timeout" rather than "MaxTimeout".
-	Timeout int    `yaml:"timeout"` // max runtime in minutes for Naabu (default: 240)
+	Timeout int `yaml:"timeout"` // max runtime in minutes for Naabu (default: 240)
 }
 
 type FfufConfig struct {
-	Threads    int   `yaml:"threads"`     // concurrent fuzzing threads (default: 50)
-	Timeout    int   `yaml:"timeout"`     // per-request timeout in seconds (default: 10)
-	MatchCodes []int `yaml:"match_codes"` // HTTP status codes to report as findings (default: 200,201,204,301,...)
+	Threads    int   `yaml:"threads"`         // concurrent fuzzing threads (default: 50)
+	Timeout    int   `yaml:"timeout"`         // per-request timeout in seconds (default: 10)
+	MatchCodes []int `yaml:"match_codes"`     // HTTP status codes to report as findings (default: 200,201,204,301,...)
 	MaxTimeout int   `yaml:"max_timeout_min"` // hard process timeout per ffuf run in minutes (default: 180)
 }
 
@@ -259,132 +269,50 @@ type ProxyScrapingConfig struct {
 	RotateEvery int `yaml:"rotate_every"`
 }
 
-
-// Global config instance
+// Cfg is the process-wide configuration instance, set by Load/LoadOrCreate.
+// It is the single sanctioned mutable global in the codebase: commands and
+// workflows read it, but only the config package may assign it.
 var Cfg *Config
 
-var expectedKeys = map[string]interface{}{
-	"": map[string]interface{}{
-		"general":       "GeneralConfig",
-		"api_keys":      "APIKeysConfig",
-		"tools":         "ToolsConfig",
-		"notifications": "NotificationConfig",
-		"scope":         "ScopeConfig",
-		"rate_limits":   "RateLimitConfig",
-	},
-	"general": map[string]interface{}{
-		"mode":            "string",
-		"verbose":         "bool",
-		"max_retries":     "int",
-		"retry_delay_sec": "int",
-		"ua_rotation":     "bool",
-		"user_agent":      "string",
-		"proxy":           "string",
-		"resolvers_file":  "string",
-		"output_dir":      "string",
-		"database_path":   "string",
-		"wordlists":       "WordlistsConfig",
-		"js_limit":        "int",
-		"proxy_scraping":  "ProxyScrapingConfig",
-	},
-	"general.wordlists": map[string]interface{}{
-		"subdomains":  "string",
-		"directories": "string",
-		"parameters":  "string",
-	},
-	"general.proxy_scraping": map[string]interface{}{
-		"timeout_min":    "int",
-		"max_concurrent": "int",
-		"proxy_types":    "slice",
-		"rotate_method":  "string",
-		"rotate_every":   "int",
-	},
-	"api_keys": map[string]interface{}{
-		"shodan":         "string",
-		"censys":         "string",
-		"censys_id":      "string",
-		"censys_secret":  "string",
-		"fofa":           "string",
-		"github":         "string",
-		"securitytrails": "string",
-		"virustotal":     "string",
-		"chaos":          "string",
-	},
-	"tools": map[string]interface{}{
-		"subfinder": "SubfinderConfig",
-		"amass":     "AmassConfig",
-		"nuclei":    "NucleiConfig",
-		"httpx":     "HttpxConfig",
-		"naabu":     "NaabuConfig",
-		"ffuf":      "FfufConfig",
-		"dalfox":    "DalfoxConfig",
-		"katana":    "KatanaConfig",
-		"gospider":  "GoSpiderConfig",
-	},
-	"tools.subfinder": map[string]interface{}{
-		"threads": "int",
-		"timeout": "int",
-	},
-	"tools.amass": map[string]interface{}{
-		"timeout": "int",
-	},
-	"tools.nuclei": map[string]interface{}{
-		"concurrency":     "int",
-		"rate_limit":      "int",
-		"exclude_tags":    "slice",
-		"severity":        "slice",
-		"disable_oob":     "bool",
-		"max_timeout_min": "int",
-		"dast_aggression": "string",
-	},
-	"tools.httpx": map[string]interface{}{
-		"threads":          "int",
-		"timeout":          "int",
-		"ports":            "slice",
-		"follow_redirects": "bool",
-	},
-	"tools.naabu": map[string]interface{}{
-		"threads": "int",
-		"rate":    "int",
-		"ports":   "string",
-		"timeout": "int",
-	},
-	"tools.ffuf": map[string]interface{}{
-		"threads":         "int",
-		"timeout":         "int",
-		"match_codes":     "slice",
-		"max_timeout_min": "int",
-	},
-	"tools.dalfox": map[string]interface{}{
-		"max_urls":         "int",
-		"skip_third_party": "bool",
-		"max_timeout_min":  "int",
-	},
-	"tools.katana": map[string]interface{}{
-		"timeout": "int",
-	},
-	"tools.gospider": map[string]interface{}{
-		"timeout": "int",
-	},
-	"notifications": map[string]interface{}{
-		"enabled":            "bool",
-		"step_complete":      "bool",
-		"min_severity":       "string",
-		"discord_webhook":    "string",
-		"slack_webhook":      "string",
-		"telegram_bot_token": "string",
-		"telegram_chat_id":   "string",
-		"webhook_url":        "string",
-	},
-	"scope": map[string]interface{}{
-		"in_scope":      "slice",
-		"out_of_scope":  "slice",
-		"exclude_ips":   "slice",
-		"allowed_ports": "slice",
-	},
-	"rate_limits": map[string]interface{}{
-		"global_rps": "int",
-	},
+// expectedKeys maps each config path ("" for root, "general",
+// "tools.nuclei", ...) to the set of valid YAML keys at that level. It is
+// generated from the Config struct's yaml tags, so new fields are validated
+// automatically and can never drift from the schema.
+var expectedKeys = buildExpectedKeys(reflect.TypeOf(Config{}))
+
+// buildExpectedKeys walks a config struct type via reflection and collects
+// the valid yaml key names for every nesting level.
+func buildExpectedKeys(t reflect.Type) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	var walk func(t reflect.Type, path string)
+	walk = func(t reflect.Type, path string) {
+		if t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct {
+			return
+		}
+		set, ok := out[path]
+		if !ok {
+			set = map[string]bool{}
+			out[path] = set
+		}
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			tag := strings.Split(f.Tag.Get("yaml"), ",")[0]
+			if tag == "" || tag == "-" {
+				continue
+			}
+			set[tag] = true
+			child := tag
+			if path != "" {
+				child = path + "." + tag
+			}
+			walk(f.Type, child)
+		}
+	}
+	walk(t, "")
+	return out
 }
 
 func validateYAMLNode(node *yaml.Node, path string) []string {
@@ -396,41 +324,36 @@ func validateYAMLNode(node *yaml.Node, path string) []string {
 		return warnings
 	}
 
-	if node.Kind == yaml.MappingNode {
-		expected, exists := expectedKeys[path]
-		if !exists {
-			return warnings
-		}
-		expectedMap, ok := expected.(map[string]interface{})
-		if !ok {
-			return warnings
-		}
+	if node.Kind != yaml.MappingNode {
+		return warnings
+	}
 
-		for i := 0; i < len(node.Content); i += 2 {
-			keyNode := node.Content[i]
-			valNode := node.Content[i+1]
-			key := keyNode.Value
+	expected, exists := expectedKeys[path]
+	if !exists {
+		return warnings
+	}
 
-			_, keyValid := expectedMap[key]
-			if !keyValid {
-				displayPath := key
-				if path != "" {
-					displayPath = path + "." + key
-				}
-				warnings = append(warnings, fmt.Sprintf("unknown config key: %s", displayPath))
-			} else {
-				childPath := key
-				if path != "" {
-					childPath = path + "." + key
-				}
-				warnings = append(warnings, validateYAMLNode(valNode, childPath)...)
-			}
+	for i := 0; i < len(node.Content); i += 2 {
+		keyNode := node.Content[i]
+		valNode := node.Content[i+1]
+		key := keyNode.Value
+
+		displayPath := key
+		if path != "" {
+			displayPath = path + "." + key
+		}
+		if !expected[key] {
+			warnings = append(warnings, fmt.Sprintf("unknown config key: %s", displayPath))
+		} else {
+			warnings = append(warnings, validateYAMLNode(valNode, displayPath)...)
 		}
 	}
 	return warnings
 }
 
-// Load loads configuration from a YAML file
+// Load loads configuration from a YAML file. The Config is pre-seeded with
+// DefaultConfig() before decoding, so any keys absent from the file keep
+// their documented defaults — DefaultConfig is the single source of defaults.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -446,13 +369,12 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	cfg := &Config{}
+	cfg := DefaultConfig()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
-	// Apply defaults
-	applyDefaults(cfg)
+	resolveWordlists(cfg)
 
 	Cfg = cfg
 	return cfg, nil
@@ -506,15 +428,17 @@ func DefaultConfig() *Config {
 
 	return &Config{
 		General: GeneralConfig{
-			OutputDir:    filepath.Join(chaathanDir, "scans"),
-			DatabasePath: filepath.Join(chaathanDir, "chaathan.db"),
-			Mode:         "native",
-			Verbose:      false,
-			UARotation:   true,
+			OutputDir:     filepath.Join(chaathanDir, "scans"),
+			DatabasePath:  filepath.Join(chaathanDir, "chaathan.db"),
+			Mode:          "native",
+			Verbose:       false,
+			MaxRetries:    1,
+			RetryDelaySec: 3,
+			UARotation:    true,
 			Wordlists: WordlistsConfig{
-				Subdomains:  filepath.Join(resolveSeclistsBase(), "Discovery", "DNS", "subdomains-top1million-5000.txt"),
-				Directories: filepath.Join(resolveSeclistsBase(), "Discovery", "Web-Content", "common.txt"),
-				Parameters:  filepath.Join(resolveSeclistsBase(), "Discovery", "Web-Content", "burp-parameter-names.txt"),
+				Subdomains:  ResolveSecListFile("Discovery/DNS/subdomains-top1million-5000.txt"),
+				Directories: ResolveSecListFile("Discovery/Web-Content/common.txt"),
+				Parameters:  ResolveSecListFile("Discovery/Web-Content/burp-parameter-names.txt"),
 			},
 			JSLimit: 2000,
 			ProxyScraping: ProxyScrapingConfig{
@@ -566,6 +490,7 @@ func DefaultConfig() *Config {
 			Dalfox: DalfoxConfig{
 				MaxURLs:        500,
 				SkipThirdParty: newBool(true),
+				MaxTimeout:     120,
 			},
 			Katana: KatanaConfig{
 				Timeout: 300,
@@ -594,67 +519,27 @@ func newBool(b bool) *bool {
 	return &b
 }
 
-func defaultString(val *string, def string) {
-	if *val == "" {
-		*val = def
-	}
-}
-
-func defaultInt(val *int, def int) {
-	if *val == 0 {
-		*val = def
-	}
-}
-
-func applyDefaults(cfg *Config) {
-	defaultString(&cfg.General.Mode, "native")
-	defaultInt(&cfg.General.JSLimit, 2000)
-	defaultInt(&cfg.General.MaxRetries, 1)
-	defaultInt(&cfg.General.RetryDelaySec, 3)
-	defaultInt(&cfg.Tools.Nuclei.Concurrency, 25)
-	defaultInt(&cfg.Tools.Nuclei.RateLimit, 150)
-	defaultInt(&cfg.Tools.Nuclei.MaxTimeout, 180)
-	if cfg.Tools.Nuclei.DisableOOB == nil {
-		cfg.Tools.Nuclei.DisableOOB = newBool(true)
-	}
-	defaultString(&cfg.Tools.Nuclei.DASTAggression, "high")
-	defaultInt(&cfg.Tools.Dalfox.MaxURLs, 500)
-	if cfg.Tools.Dalfox.SkipThirdParty == nil {
-		cfg.Tools.Dalfox.SkipThirdParty = newBool(true)
-	}
-	defaultInt(&cfg.Tools.Dalfox.MaxTimeout, 120)
-	defaultInt(&cfg.Tools.Naabu.Timeout, 240)
-	defaultInt(&cfg.Tools.Ffuf.MaxTimeout, 180)
-	defaultInt(&cfg.Tools.Katana.Timeout, 300)
-	defaultInt(&cfg.Tools.GoSpider.Timeout, 300)
-	defaultString(&cfg.Notifications.MinSeverity, "high")
-
-	// Dynamic fallback for wordlist paths if the configured paths do not exist on disk
-	resolveWordlist := func(configuredPath, subpath string) string {
+// resolveWordlists applies the dynamic fallback for wordlist paths: a
+// configured path is kept only if it exists on disk; otherwise the seclists
+// location is tried. Called after Load so sparse configs inherit the resolved
+// defaults untouched.
+func resolveWordlists(cfg *Config) {
+	resolve := func(configuredPath, subpath string) string {
 		if configuredPath != "" {
 			if _, err := os.Stat(configuredPath); err == nil {
 				return configuredPath
 			}
 		}
-		resolved := filepath.Join(resolveSeclistsBase(), subpath)
+		resolved := filepath.Join(ResolveSecListsBase(), subpath)
 		if _, err := os.Stat(resolved); err == nil {
 			return resolved
 		}
 		return configuredPath
 	}
 
-	cfg.General.Wordlists.Subdomains = resolveWordlist(cfg.General.Wordlists.Subdomains, filepath.Join("Discovery", "DNS", "subdomains-top1million-5000.txt"))
-	cfg.General.Wordlists.Directories = resolveWordlist(cfg.General.Wordlists.Directories, filepath.Join("Discovery", "Web-Content", "common.txt"))
-	cfg.General.Wordlists.Parameters = resolveWordlist(cfg.General.Wordlists.Parameters, filepath.Join("Discovery", "Web-Content", "burp-parameter-names.txt"))
-
-	// Proxy scraping defaults
-	defaultInt(&cfg.General.ProxyScraping.TimeoutMin, 10)
-	defaultInt(&cfg.General.ProxyScraping.MaxConcurrent, 256)
-	if len(cfg.General.ProxyScraping.ProxyTypes) == 0 {
-		cfg.General.ProxyScraping.ProxyTypes = []string{"socks5", "http", "socks4"}
-	}
-	defaultString(&cfg.General.ProxyScraping.RotateMethod, "random")
-	defaultInt(&cfg.General.ProxyScraping.RotateEvery, 1)
+	cfg.General.Wordlists.Subdomains = resolve(cfg.General.Wordlists.Subdomains, filepath.Join("Discovery", "DNS", "subdomains-top1million-5000.txt"))
+	cfg.General.Wordlists.Directories = resolve(cfg.General.Wordlists.Directories, filepath.Join("Discovery", "Web-Content", "common.txt"))
+	cfg.General.Wordlists.Parameters = resolve(cfg.General.Wordlists.Parameters, filepath.Join("Discovery", "Web-Content", "burp-parameter-names.txt"))
 }
 
 // GetDefaultConfigPath returns the default config file path
@@ -669,9 +554,22 @@ var apiKeyEnvMap = map[string]string{
 	"securitytrails": "SECURITYTRAILS_KEY",
 	"virustotal":     "VT_API_KEY",
 	"chaos":          "CHAOS_KEY",
+	"fofa":           "FOFA_KEY",
+	"fofa_email":     "FOFA_EMAIL",
+	"quake":          "QUAKE_KEY",
+	"quake_email":    "QUAKE_EMAIL",
+	"zoomeye":        "ZOOMEYE_KEY",
+	"zoomeye_email":  "ZOOMEYE_EMAIL",
 }
 
-// GetAPIKey retrieves an API key from config or environment
+// GetAPIKey retrieves an API key from config or environment.
+// Config values win; the environment fallback only applies to keys listed in
+// apiKeyEnvMap.
+//
+// For the email-style API services (fofa, quake, zoomeye), the bare key name
+// returns "<key>:<email>" when both halves are configured; callers that need
+// the raw key alone may pass the "<svc>_email" key separately (mirroring the
+// Censys "id:secret" shorthand).
 func (c *Config) GetAPIKey(name string) string {
 	nameLower := strings.ToLower(name)
 	var val string
@@ -686,6 +584,32 @@ func (c *Config) GetAPIKey(name string) string {
 		val = c.APIKeys.VirusTotal
 	case "chaos":
 		val = c.APIKeys.Chaos
+	case "censys":
+		val = c.APIKeys.Censys
+		if val == "" && c.APIKeys.CensysID != "" && c.APIKeys.CensysSecret != "" {
+			val = c.APIKeys.CensysID + ":" + c.APIKeys.CensysSecret
+		}
+	case "fofa":
+		val = c.APIKeys.Fofa
+		if val != "" && c.APIKeys.FofaEmail != "" {
+			val = val + ":" + c.APIKeys.FofaEmail
+		}
+	case "fofa_email":
+		val = c.APIKeys.FofaEmail
+	case "quake":
+		val = c.APIKeys.Quake
+		if val != "" && c.APIKeys.QuakeEmail != "" {
+			val = val + ":" + c.APIKeys.QuakeEmail
+		}
+	case "quake_email":
+		val = c.APIKeys.QuakeEmail
+	case "zoomeye":
+		val = c.APIKeys.ZoomEye
+		if val != "" && c.APIKeys.ZoomEyeEmail != "" {
+			val = val + ":" + c.APIKeys.ZoomEyeEmail
+		}
+	case "zoomeye_email":
+		val = c.APIKeys.ZoomEyeEmail
 	}
 	if val != "" {
 		return val
@@ -696,12 +620,15 @@ func (c *Config) GetAPIKey(name string) string {
 	return ""
 }
 
-// resolveSeclistsBase returns the seclists installation base directory.
+// ResolveSecListsBase returns the seclists installation base directory.
 // It checks ~/.chaathan/seclists first, then Arch Linux (/usr/share/seclists),
 // and finally Debian/Kali (/usr/share/wordlists/seclists).
 // Returns whichever path exists, falling back to the Debian path.
-func resolveSeclistsBase() string {
-	home, _ := os.UserHomeDir()
+func ResolveSecListsBase() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "" // candidates below skip empty entries
+	}
 	candidates := []string{
 		filepath.Join(paths.ChaathanHome(), "seclists"),
 		filepath.Join(paths.ChaathanHome(), "SecLists"),
@@ -721,5 +648,20 @@ func resolveSeclistsBase() string {
 			return p
 		}
 	}
-	return "/usr/share/wordlists/seclists"
+	return ""
+}
+
+// ResolveSecListFile checks if SecLists is installed on the host and returns the absolute path
+// to the requested relative subpath (e.g. "Discovery/Web-Content/common.txt") if it exists.
+// Returns empty string if SecLists is not found or the target file does not exist.
+func ResolveSecListFile(subpath string) string {
+	base := ResolveSecListsBase()
+	if base == "" {
+		return ""
+	}
+	target := filepath.Join(base, filepath.FromSlash(subpath))
+	if info, err := os.Stat(target); err == nil && !info.IsDir() {
+		return target
+	}
+	return ""
 }

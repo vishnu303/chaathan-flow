@@ -41,10 +41,10 @@ func TestNewInfra(t *testing.T) {
 func TestHandleSignals_Cancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	orchestrate.HandleSignals(ctx, cancel)
-	
+
 	// Simply cancel the context and verify it doesn't hang
 	cancel()
-	
+
 	select {
 	case <-ctx.Done():
 		// OK

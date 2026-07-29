@@ -139,12 +139,12 @@ func (q *QueryConsole) initViews() {
 			SetBorders(false).
 			SetSelectable(true, false).
 			SetFixed(1, 0)
-		
+
 		table.SetBorder(true).
 			SetTitleColor(tcell.GetColor(ColorSapphire)).
 			SetBorderColor(tcell.GetColor(ColorBorder))
 		table.SetTitle(titles[i])
-		
+
 		// Style selection row
 		selectedStyle := tcell.StyleDefault.
 			Foreground(tcell.GetColor(ColorActive)).
@@ -1005,7 +1005,7 @@ func (q *QueryConsole) updateFooter(tabIndex int) {
 	}
 
 	isTruncated := total > shown
-	
+
 	helpKeys := fmt.Sprintf(
 		" [%s]Tab[-] Focus Panel  |  [%s]1-6/[/]/[-] Tabs  |  [%s]/[-] Filter  |  [%s][,] [.][-] Page  |  [%s]R[-] Reload  |  [%s]Q/Ctrl+C[-] Exit",
 		ColorActive, ColorActive, ColorActive, ColorActive, ColorActive, ColorActive,
@@ -1037,7 +1037,7 @@ func (q *QueryConsole) updateFooter(tabIndex int) {
 // showDetailsPopup opens detailed overlay modal cards
 func (q *QueryConsole) showDetailsPopup(tabIndex int, dataIndex int) {
 	var title, text string
-	
+
 	pageSize := q.pageSize
 	if pageSize <= 0 {
 		pageSize = 100
@@ -1244,7 +1244,7 @@ func (q *QueryConsole) loadScanCounts(scanID int64) {
 
 	q.subdomainsTotalCount = stats.TotalSubdomains
 	q.portsTotalCount = stats.TotalPorts
-	
+
 	vulnTotal := 0
 	if stats.Vulnerabilities != nil {
 		for _, count := range stats.Vulnerabilities {
@@ -1278,7 +1278,7 @@ func (q *QueryConsole) loadScanCounts(scanID int64) {
 			statusSymbol = "[ ]"
 			statusColor = ColorBlue
 		}
-		
+
 		q.HeaderText.SetText(fmt.Sprintf(
 			" [%s::b]CHAATHAN RECON CONSOLE[-]  |  Active Scan: [#ffffff::b]%s[-] (ID: #%d)  |  Status: [%s]%s %s[-]",
 			ColorActive, currentScan.Target, currentScan.ID, statusColor, statusSymbol, strings.ToUpper(currentScan.Status),

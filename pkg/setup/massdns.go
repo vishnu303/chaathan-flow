@@ -31,7 +31,7 @@ func installMassDNSSection(ctx *SetupContext) (installed, skipped, failed int) {
 	tracker := progress.NewTracker(3) // 3 stages: clone, compile, and install
 	tracker.RunSpinner()
 
-	goPath, err := resolveGOPATH() // L10: handle GOPATH error explicitly
+	goPath, err := resolveGOPATH() // Resolve GOPATH and check errors
 	if err != nil {
 		tracker.StopSpinner()
 		progress.ItemFail("massdns", "failed to resolve GOPATH: "+err.Error())

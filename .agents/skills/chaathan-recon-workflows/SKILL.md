@@ -57,7 +57,7 @@ Phase 5: Fingerprinting (Step 23)      ──► Output: WAF/Tech JSON
 
 ### Phase 2 — Validation (`validation.go`)
 - **Step 7: `dns_resolution`** (dnsx validation of gathered subdomains).
-- **Step 8: `dns_bruteforce`** (shuffledns + massdns brute forcing; skip with `--skip-shuffledns`).
+- **Step 8: `dns_bruteforce`** (shuffledns + massdns brute forcing; skip with `--skip-shuffledns`; auto-detects SecLists on device if `--dns-wordlist` is omitted).
 - **Step 9: `port_scanning`** (naabu TCP scan; skip with `--skip-naabu`). Open ports are merged into the target list for subsequent probing.
 - **Step 10: `http_probing`** (httpx probing for live web servers on both standard ports and naabu-discovered ports).
 - **Step 11: `tls_analysis`** (tlsx certificate extraction; skip with `--skip-tlsx`). Extracts newly discovered subdomains from SANs, probes them, and merges them back.
@@ -66,8 +66,8 @@ Phase 5: Fingerprinting (Step 23)      ──► Output: WAF/Tech JSON
 - **Step 12: `url_discovery`** (waybackurls + gau passive crawl).
 - **Step 13: `web_crawling`** (katana + gospider crawling; skip with `--skip-crawl`).
 - **Step 14: `js_analysis`** (GoLinkFinder parsing of JS links on all live hosts, capped at top 1000).
-- **Step 15: `dir_fuzzing`** (ffuf directory fuzzing on up to 1000 live hosts; requires `--wordlist`). Fuzzing results write to `ffuf_discovered_urls.txt`.
-- **Step 16: `param_discovery`** (x8 parameter discovery; skip with `--skip-x8` or `--skip-arjun`). Natively routes through the rotating proxy using direct proxy arguments `-x`. Targets ONLY curated dynamic endpoints (extracted from crawls) and fuzzed directory URLs, completely bypassing flat live hostlists.
+- **Step 15: `dir_fuzzing`** (ffuf directory fuzzing on up to 1000 live hosts; auto-detects SecLists on device if `--wordlist` is omitted). Fuzzing results write to `ffuf_discovered_urls.txt`.
+- **Step 16: `param_discovery`** (x8 parameter discovery; skip with `--skip-x8`; auto-detects SecLists parameter list on device). Natively routes through the rotating proxy using direct proxy arguments `-x`. Targets ONLY curated dynamic endpoints (extracted from crawls) and fuzzed directory URLs, completely bypassing flat live hostlists.
 - **Step 17: `url_consolidation`** (httpx live URL validation and ROI metadata collection).
 - **Step 18: `js_secret_scan`** (downloads JS files, runs gf secret search pattern).
 
@@ -109,5 +109,5 @@ To process huge URL lists (100k+ inputs) without crashing VPS systems:
    ```go
    return c.markStepCompleteIfNoFailure(stepName)
    ```
-4. **Context Propagation:** Ensure all tool executions receive `c.GoCtx` to enable clean halts when receiving SIGINT/SIGTERM.
+4. **Context Propagation (§3.8):** Any function that calls a tool, sends an HTTP request, or performs DNS resolution MUST accept `ctx context.Context` as its first parameter, and callers MUST pass `c.GoCtx`. This applies to internal sub-helpers too — not just the top-level step function. The `contextcheck` linter (enabled in `.golangci.yml`) enforces this; never invent `context.Background()` at an internal boundary to silence it — propagate the parent ctx instead. Verified examples post-audit: `pkg/metadata.{CollectHostMetadata, CollectURLMetadata, fetchSignal, checkDangerousMethods}`, `pkg/wildcard_flow.{ValidateTakeoversFile, ValidateTakeoverCandidate}`. NEVER swap `http.NewRequest` for `http.NewRequestWithContext` blindly when `ctx` is in scope — always pass `ctx` through.
 5. **Documentation Integrity (Meta-Rule):** Every time you make changes to scan pipelines, workflow steps, or execution ordering in the codebase, you **must** update this `SKILL.md` and the root `README.md` to keep all step definitions, indices, and tool configurations in sync (only if necessary).

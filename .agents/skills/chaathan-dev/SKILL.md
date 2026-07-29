@@ -18,6 +18,8 @@ pkg/wildcard_flow/   → 23-step domain recon workflow (6 phases)
 pkg/company_flow/    → 3-step company recon workflow
 pkg/orchestrate/     → Signal traps, tool-runner bootstrap, notifications wiring
 pkg/database/        → SQLite models, ROI priorities, metadata schema, database actions
+pkg/ingest/          → Tool-output parsers (Parse*Output) + DB→text exporters (Export*)
+                       Extracted from utils/ via §3.4 leaf-package inversion.
 pkg/report/          │ Report formatting engine (Markdown, HTML, JSON, TXT)
 pkg/scan/            → Scan states, step definitions (WildcardSteps, CompanySteps)
 pkg/setup/           → Install scripts (Go, Python, massdns compilation, proxy tools)
@@ -31,7 +33,10 @@ pkg/notify/          → Notifier client implementations (Discord, Slack, Telegr
 pkg/logger/          → Formatted logging layout, UI panels, file logging triggers
 pkg/progress/        → Terminal progress animations and bars
 pkg/paths/           → Centralized config/data path management (~/.chaathan)
-utils/               → File utilities, parse maps, text writers
+utils/               → Pure leaf package — file IO, string/host normalization, pure
+                       helpers only. MUST NOT import pkg/database, pkg/logger,
+                       pkg/ingest, or any other internal package. DB-coupled
+                       Parse*Output / Export* logic belongs in pkg/ingest.
 ```
 
 ## Standard Development Pattern
@@ -109,6 +114,10 @@ func stepExampleTool(c *Ctx) bool {
    - Access config parameters within step files via the embedded `Ctx` (e.g., `c.SkipAmass`).
 5. **Logs Redirection:** If `--log` is supplied, logs are written to `~/.chaathan/logs/<domain>_<scanID>_<timestamp>.log`. Ensure any custom logs redirect through `logger.Info` or `logger.Write` to mirror them correctly.
 6. **Test Locations:** All test files (`*_test.go`) and test support/mock utilities must reside strictly within the `test/` folder hierarchy. No tests are allowed to remain in the `pkg/` or `utils/` production packages.
+7. **Config Defaults Single Source of Truth:** `config.DefaultConfig()` is the only source of defaults. Never re-introduce a second `applyDefaults`-style helper — `DefaultConfig()` is pre-seeded before YAML decode in `Load`, so sparse configs inherit defaults automatically. The `TestLoadMatchesDefaultConfig` test (in `test/pkg/config/config_test.go`) pins this invariant and must keep passing.
+8. **API Key Dispatch (`config.Config.GetAPIKey`):** Email-style engines (FOFA, Quake, ZoomEye) require both a `key` and an `*_email` half. The switch returns a combined `"<key>:<email>"` shorthand when both are set, and falls back to bare `key` if only the key is configured. The env fallback list (`apiKeyEnvMap`) must include `*_email` names for these engines so `FOFA_EMAIL` / `QUAKE_EMAIL` / `ZOOMEYE_EMAIL` work without a YAML file. `pkg/tools` uncover wiring only selects an email-style engine when both halves are present (mirrors Censys `id:secret` handling).
+9. **`utils` is a Leaf Package (§3.4 inversion):** `utils/` MUST NOT import any `pkg/*` package — no `pkg/database`, no `pkg/logger`, no `pkg/ingest`. It contains only stdlib-facing helpers (file IO, string/URL/host normalization, validation, file-name constants, severity ordering). All DB-coupled parse and export logic (`Parse*Output`, `Export*`, result structs like `HttpxResult`, `NucleiResult`, `DalfoxResult`) lives in `pkg/ingest/`. Adding a back-compat shim in `utils/` that calls `pkg/ingest` would create an import cycle — do not do it; migrate callers to `pkg/ingest` directly instead.
+10. **Context Propagation Audit (§3.8):** Any function that calls a tool, performs HTTP via `net/http`, performs DNS via `net.Lookup*`, or runs an external command MUST accept `ctx context.Context` as its first parameter. Callers MUST propagate `c.GoCtx` (the scan-side context) — never invent `context.Background()` at an internal boundary to silence the linter. Use `http.NewRequestWithContext(ctx, ...)` (not bare `http.NewRequest`) whenever `ctx` is in scope. The `contextcheck` linter (enabled in `.golangci.yml`) enforces this at CI time. Pure helpers that perform only CPU work or file IO on a local path MAY omit `ctx`.
 
 ---
 
@@ -118,11 +127,14 @@ Run all tests, lints, and builds inside the WSL environment if developing on a W
 
 ### WSL Test Pipeline:
 ```bash
+# Format Go code after making changes
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && gofmt -w ."
+
 # Verify unit tests with race detector and coverage package mapping
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go test -race -count=1 -coverpkg=github.com/vishnu303/chaathan/pkg/...,github.com/vishnu303/chaathan/utils/... -coverprofile=coverage.out ./..."
 
-# Run static checks
-wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go vet ./..."
+# Run linter & static analysis
+wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && golangci-lint run ./..."
 
 # Build application binary
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && go build -buildvcs=false -o chaathan ."

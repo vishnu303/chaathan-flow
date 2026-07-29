@@ -43,9 +43,9 @@ func TestIsLikelySecret(t *testing.T) {
 		{"api-keys", "undefined", false},
 		{"api-keys", "aaaaaaaaaa", false},
 		{"api-keys", "ababababab", false},
-		{"api-keys", "aBcD1eFgH2iJkLmN", true}, // high entropy token
+		{"api-keys", "aBcD1eFgH2iJkLmN", true},  // high entropy token
 		{"slack-webhook", "placeholder", false}, // placeholder check is universal
-		{"slack-webhook", "ababababab", true},  // entropy check is only for generic "api-keys"
+		{"slack-webhook", "ababababab", true},   // entropy check is only for generic "api-keys"
 	}
 
 	for _, tc := range tests {

@@ -33,7 +33,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/metadata"
 	"github.com/vishnu303/chaathan/utils"
@@ -105,7 +107,7 @@ func stepURLDiscovery(c *Ctx) bool {
 
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.WaybackOut) {
-			count, _ := utils.ParseURLsFile(c.ScanID, c.F.WaybackOut, "waybackurls")
+			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.WaybackOut, "waybackurls")
 			if count > 0 {
 				label := ""
 				if urlDiscoverySkipped {
@@ -119,7 +121,7 @@ func stepURLDiscovery(c *Ctx) bool {
 			}
 		}
 		if utils.FileExists(c.F.GauOut) {
-			count, _ := utils.ParseURLsFile(c.ScanID, c.F.GauOut, "gau")
+			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GauOut, "gau")
 			if count > 0 {
 				label := ""
 				if urlDiscoverySkipped {
@@ -137,7 +139,7 @@ func stepURLDiscovery(c *Ctx) bool {
 	waybackCount, _ := utils.CountFileLines(c.F.WaybackOut)
 	gauCount, _ := utils.CountFileLines(c.F.GauOut)
 	if urlDiscoverySkipped || waybackOK || gauOK || waybackCount > 0 || gauCount > 0 {
-		c.markStepCompleteSafe("url_discovery")
+		c.markStepCompleteIfNoFailure("url_discovery")
 	} else {
 		c.markStepFailedSafe("url_discovery", fmt.Errorf("both Waybackurls and GAU failed"))
 	}
@@ -220,7 +222,7 @@ func stepWebCrawling(c *Ctx) bool {
 
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.KatanaOut) {
-			count, _ := utils.ParseURLsFile(c.ScanID, c.F.KatanaOut, "katana")
+			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.KatanaOut, "katana")
 			if count > 0 {
 				label := ""
 				if crawlSkipped {
@@ -234,7 +236,7 @@ func stepWebCrawling(c *Ctx) bool {
 			}
 		}
 		if utils.FileExists(c.F.GospiderOut) {
-			count, _ := utils.ParseURLsFile(c.ScanID, c.F.GospiderOut, "gospider")
+			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GospiderOut, "gospider")
 			if count > 0 {
 				label := ""
 				if crawlSkipped {
@@ -254,7 +256,7 @@ func stepWebCrawling(c *Ctx) bool {
 	katanaCount, _ := utils.CountFileLines(c.F.KatanaOut)
 	gospiderCount, _ := utils.CountFileLines(c.F.GospiderOut)
 	if crawlSkipped || katanaOK || gospiderOK || katanaCount > 0 || gospiderCount > 0 {
-		c.markStepCompleteSafe("web_crawling")
+		c.markStepCompleteIfNoFailure("web_crawling")
 	} else {
 		c.markStepFailedSafe("web_crawling", fmt.Errorf("both Katana and GoSpider failed"))
 	}
@@ -366,13 +368,16 @@ func stepJSAnalysis(c *Ctx) bool {
 
 	var golinkfinderSkipped bool
 	if err := runWithSkip(c, "GoLinkFinder", func(sCtx context.Context) error {
-		liveHosts := loadLineSlice(c.F.HttpxLiveHosts, jsAnalysisHostCap)
-		if len(liveHosts) == 0 {
-			liveHosts = []string{"https://" + c.Domain}
+		allLiveHosts := loadLineSlice(c.F.HttpxLiveHosts, 0)
+		if len(allLiveHosts) == 0 {
+			allLiveHosts = []string{"https://" + c.Domain}
 		}
 
-		// Filter standard ports 80/443 and deduplicate by hostname
-		filteredHosts := filterAndDeduplicateHosts(liveHosts)
+		// Filter standard ports 80/443 and deduplicate by hostname before capping
+		filteredHosts := filterAndDeduplicateHosts(allLiveHosts)
+		if len(filteredHosts) > jsAnalysisHostCap {
+			filteredHosts = filteredHosts[:jsAnalysisHostCap]
+		}
 		if len(filteredHosts) == 0 {
 			logger.Info("  No live hosts match standard ports 80/443. Skipping GoLinkFinder.")
 			return nil
@@ -436,7 +441,7 @@ func stepJSAnalysis(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.GoLinkFinderOut) {
-		count, _ := utils.ParseEndpointsFile(c.ScanID, c.F.GoLinkFinderOut, "golinkfinder")
+		count, _ := ingest.ParseEndpointsFile(c.ScanID, c.F.GoLinkFinderOut, "golinkfinder")
 		if count > 0 {
 			label := ""
 			if golinkfinderSkipped {
@@ -455,7 +460,7 @@ func stepJSAnalysis(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 14 — HTTP Parameter Discovery (Arjun)
+// Step 16 — HTTP Parameter Discovery (x8)
 // ─────────────────────────────────────────────────────────────
 
 // stepParamDiscovery discovers HTTP parameters with x8 (Step 16).
@@ -487,7 +492,7 @@ func stepParamDiscovery(c *Ctx) bool {
 
 	// Merge FfufDiscoveredURLs and high-signal endpoints into a temporary input file
 	x8InputFile := c.F.X8Input
-	
+
 	var x8Targets []string
 
 	// Add ffuf fuzzing results
@@ -506,8 +511,11 @@ func stepParamDiscovery(c *Ctx) bool {
 	highSignal := collectHighSignalEndpoints(crawlerFiles)
 	x8Targets = append(x8Targets, highSignal...)
 
-	// Deduplicate targets
+	// Deduplicate targets and cap at paramDiscoveryCap (150)
 	x8Targets = utils.DeduplicateSlice(x8Targets)
+	if len(x8Targets) > paramDiscoveryCap {
+		x8Targets = x8Targets[:paramDiscoveryCap]
+	}
 
 	if len(x8Targets) == 0 {
 		logger.Warning("No targets found for parameter discovery — skipping x8")
@@ -529,17 +537,18 @@ func stepParamDiscovery(c *Ctx) bool {
 
 	logger.SubStep("Running x8 on %d targets...", len(x8Targets))
 
-	// Validate parameters wordlist if configured.
+	// Validate parameters wordlist if configured or available via SecLists.
 	paramWordlist := ""
-	if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" {
-		if utils.FileExists(c.Cfg.General.Wordlists.Parameters) {
-			paramWordlist = c.Cfg.General.Wordlists.Parameters
-		} else {
+	if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" && utils.FileExists(c.Cfg.General.Wordlists.Parameters) {
+		paramWordlist = c.Cfg.General.Wordlists.Parameters
+	} else if autoWl := config.ResolveSecListFile("Discovery/Web-Content/burp-parameter-names.txt"); autoWl != "" {
+		paramWordlist = autoWl
+		logger.Info("Auto-detected SecLists parameter wordlist for x8: %s", autoWl)
+	} else {
+		if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" {
 			logger.Warning("x8 parameters wordlist not found: %s", c.Cfg.General.Wordlists.Parameters)
-			logger.Info("  Install seclists (apt install seclists / pacman -S seclists) or set a valid wordlist in config.yaml")
-			logger.Info("  Falling back to x8's built-in parameter list")
-			logger.FileDebug("x8: configured wordlist does not exist at %s — using built-in default", c.Cfg.General.Wordlists.Parameters)
 		}
+		logger.Info("  SecLists parameter wordlist not found on device — falling back to x8's built-in parameter list")
 	}
 
 	var x8Skipped bool
@@ -713,6 +722,7 @@ func stepURLConsolidation(c *Ctx) bool {
 	rawCount2, _ := utils.CountFileLines(c.F.AllURLsRaw)
 	logger.FileDebug("httpx_url_check input: %s (%d URLs) out=%s", c.F.AllURLsRaw, rawCount2, c.F.AllURLsLive)
 	var urlCheckSkipped bool
+	var usedFallback bool
 	if err := runWithSkip(c, "httpx (URL check)", func(sCtx context.Context) error {
 		return c.Tb.RunHttpxURLCheck(sCtx, c.F.AllURLsRaw, c.F.AllURLsLive)
 	}); err != nil {
@@ -725,6 +735,7 @@ func stepURLConsolidation(c *Ctx) bool {
 		// Fallback: use raw URLs if live-check fails/is skipped and no
 		// fresh output exists from this scan session.
 		if !utils.FileExists(c.F.AllURLsLive) || !fileModifiedAfter(c.F.AllURLsLive, c.StartTime) {
+			usedFallback = true
 			logger.Info("  Using raw URLs as fallback")
 			copyFile(c.F.AllURLsRaw, c.F.AllURLsLive)
 		}
@@ -737,24 +748,26 @@ func stepURLConsolidation(c *Ctx) bool {
 	// Persist live URLs into DB so GetScanStats / query commands reflect reality.
 	// This is intentionally after the skip/fallback block so both paths populate the DB.
 	if c.ScanID > 0 && utils.FileExists(c.F.AllURLsLive) {
-		if dbCount, err := utils.ParseLiveURLsFile(c.ScanID, c.F.AllURLsLive, "httpx-url-check"); err != nil {
+		if dbCount, err := ingest.ParseLiveURLsFile(c.ScanID, c.F.AllURLsLive, "httpx-url-check"); err != nil {
 			logger.Warning("Failed to persist live URLs to DB: %v", err)
 		} else {
 			label := ""
-			if urlCheckSkipped {
+			if usedFallback {
 				label = " (from fallback)"
+			} else if urlCheckSkipped {
+				label = " (partial)"
 			}
 			logger.Info("  Stored %d live URLs in database%s", dbCount, label)
 		}
 	}
 
-	// ROI metadata enrichment
+	// ROI metadata enrichment (capped at per-host 5 and total metadataHostCap=250)
 	if c.ScanID > 0 && utils.FileExists(c.F.AllURLsLive) {
-		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 0, 0)
+		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 5, metadataHostCap)
 		if metaTargetCount > 0 {
 			logger.SubStep("Collecting lightweight metadata for %d high-value URLs...", metaTargetCount)
-			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, 0)
-			if count, err := metadata.CollectURLMetadata(c.ScanID, metaTargets, c.Proxy); err != nil {
+			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, metadataHostCap)
+			if count, err := metadata.CollectURLMetadata(c.GoCtx, c.ScanID, metaTargets, c.Proxy); err != nil {
 				logger.Warning("URL metadata enrichment failed: %v", err)
 			} else if count > 0 {
 				logger.Info("  Stored path metadata for %d ROI candidate URLs", count)
@@ -1252,8 +1265,8 @@ func stepJSSecretScan(c *Ctx) bool {
 	writeEmptyFile(c.F.GFSecretsMatches)
 	writeEmptyFile(c.F.GFSecretsFinal)
 
-	jsLimit := 0
-	if c.Cfg != nil {
+	jsLimit := 2000
+	if c.Cfg != nil && c.Cfg.General.JSLimit > 0 {
 		jsLimit = c.Cfg.General.JSLimit
 	}
 	jsCount := collectJSURLsFromFile(c.F.AllURLsLive, c.F.JSURLsFile, jsLimit)
@@ -1336,7 +1349,6 @@ func stepJSSecretScan(c *Ctx) bool {
 	return c.cancelled()
 }
 
-
 // ─────────────────────────────────────────────────────────────
 // Step 17 — Directory Fuzzing (ffuf)
 // ─────────────────────────────────────────────────────────────
@@ -1349,10 +1361,15 @@ func stepDirFuzzing(c *Ctx) bool {
 	}
 
 	if c.WordlistPath == "" {
-		logger.StepHeader("Step 15: Skipping ffuf (no --wordlist provided)")
-		logger.Info("Provide --wordlist to enable ffuf")
-		c.markStepCompleteIfNoFailure("dir_fuzzing")
-		return c.cancelled()
+		if autoWl := config.ResolveSecListFile("Discovery/Web-Content/common.txt"); autoWl != "" {
+			c.WordlistPath = autoWl
+			logger.Info("Auto-detected SecLists wordlist for ffuf: %s", autoWl)
+		} else {
+			logger.StepHeader("Step 15: Skipping ffuf (no wordlist provided and SecLists not found on device)")
+			logger.Info("Provide --wordlist or run 'chaathan setup' to install SecLists")
+			c.markStepCompleteIfNoFailure("dir_fuzzing")
+			return c.cancelled()
+		}
 	}
 
 	writeEmptyFile(c.F.FfufOut)
@@ -1456,7 +1473,7 @@ func stepDirFuzzing(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.FfufOut) {
-		count, err := utils.ParseFfufOutput(c.ScanID, c.F.FfufOut)
+		count, err := ingest.ParseFfufOutput(c.ScanID, c.F.FfufOut)
 		if err != nil {
 			logger.Warning("Failed to parse ffuf results: %v", err)
 		} else {
@@ -1529,16 +1546,16 @@ func isUsefulJSURL(raw string) bool {
 	if !isJavaScriptURL(raw) {
 		return false
 	}
-	
+
 	lower := strings.ToLower(raw)
-	
+
 	stopwords := []string{
-		"jquery", "bootstrap", "react", "react-dom", "vue", "angular", 
-		"moment", "lodash", "underscore", "chart", "d3", "analytics", 
-		"gtm.js", "google-analytics", "ads.js", "tracking", "fontawesome", 
+		"jquery", "bootstrap", "react", "react-dom", "vue", "angular",
+		"moment", "lodash", "underscore", "chart", "d3", "analytics",
+		"gtm.js", "google-analytics", "ads.js", "tracking", "fontawesome",
 		"recaptcha", "polyfill", "vendor.js", "node_modules", "swagger-ui",
 	}
-	
+
 	for _, stopword := range stopwords {
 		if strings.Contains(lower, stopword) {
 			return false
@@ -1559,7 +1576,6 @@ func isJavaScriptURL(raw string) bool {
 	}
 	return strings.HasSuffix(strings.ToLower(raw), ".js")
 }
-
 
 // ─────────────────────────────────────────────────────────────
 // convertX8ToURLs — Step 16 helper

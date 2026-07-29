@@ -21,7 +21,7 @@ func getTestCmd() string {
 
 func TestNativeRunner_Success(t *testing.T) {
 	run := runner.NewWithRetry("native", false, 0, 0)
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

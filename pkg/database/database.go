@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
-	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/paths"
 )
 
@@ -100,7 +99,10 @@ func Initialize(dbPath string) error {
 	}
 
 	var err error
-	DB, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	// modernc.org/sqlite registers the "sqlite" driver. Pragmas are applied
+	// via separate exec statements below (the mattn-style query-string
+	// "_journal_mode=..." syntax is not supported by modernc).
+	DB, err = sql.Open("sqlite", dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -111,6 +113,12 @@ func Initialize(dbPath string) error {
 	DB.SetMaxOpenConns(1)
 	DB.SetMaxIdleConns(1)
 
+	// Apply WAL + busy_timeout pragmas (CGO-free driver does not parse them
+	// from the DSN query string).
+	if _, err := DB.Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;"); err != nil {
+		return fmt.Errorf("failed to apply sqlite pragmas: %w", err)
+	}
+
 	// Create tables
 	if err := createTables(); err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
@@ -118,10 +126,6 @@ func Initialize(dbPath string) error {
 
 	// Best-effort database file permissions Chmod to 0600
 	_ = os.Chmod(dbPath, 0600)
-
-	// Best-effort schema migrations — won't fail init if data constraints
-	// can't be met on an existing database (e.g. pre-existing duplicates).
-	runMigrations()
 
 	return nil
 }
@@ -263,49 +267,20 @@ func createTables() error {
 	CREATE INDEX IF NOT EXISTS idx_subdomains_domain ON subdomains(domain);
 	CREATE INDEX IF NOT EXISTS idx_ports_scan ON ports(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_urls_scan ON urls(scan_id);
+	CREATE INDEX IF NOT EXISTS idx_urls_host ON urls(host);
 	CREATE INDEX IF NOT EXISTS idx_host_metadata_scan ON host_metadata(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_url_metadata_scan ON url_metadata(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_vulns_scan ON vulnerabilities(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_vulns_severity ON vulnerabilities(severity);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_vulns_unique ON vulnerabilities(scan_id, host, IFNULL(template_id, ''), IFNULL(url, ''));
 	CREATE INDEX IF NOT EXISTS idx_endpoints_scan ON endpoints(scan_id);
+	CREATE INDEX IF NOT EXISTS idx_endpoints_host ON endpoints(host);
 	CREATE INDEX IF NOT EXISTS idx_gf_matches_scan ON gf_matches(scan_id);
 	CREATE INDEX IF NOT EXISTS idx_scans_target   ON scans(target);
 	`
 
 	_, err := DB.Exec(schema)
 	return err
-}
-
-// runMigrations applies incremental schema improvements that are safe to skip
-// on existing databases where constraints cannot be satisfied (e.g. prior
-// duplicate vulnerabilities). All errors are intentionally swallowed so that
-// existing installs keep working without a hard migration step.
-//
-// NOTE: migrations are additive-only (IF NOT EXISTS + ignored ADD COLUMN);
-// column renames or type changes require a schema-version table + conditional
-// migration path, which is not yet implemented.
-func runMigrations() {
-	// Unique compound index on vulnerabilities — prevents duplicates when a scan
-	// is resumed or the same nuclei template fires on the same host+URL twice.
-	// IFNULL() normalises NULL → '' so empty strings and NULLs compare equal.
-	if _, err := DB.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vulns_unique
-		ON vulnerabilities(scan_id, host, IFNULL(template_id, ''), IFNULL(url, ''))`); err != nil {
-		logger.Debug("Migration (vulnerabilities index) skipped or failed: %v", err)
-	}
-
-	// Add host column to urls and endpoints table if they do not exist
-	if _, err := DB.Exec(`ALTER TABLE urls ADD COLUMN host TEXT`); err != nil {
-		logger.Debug("Migration (urls host column) skipped: %v", err)
-	}
-	if _, err := DB.Exec(`ALTER TABLE endpoints ADD COLUMN host TEXT`); err != nil {
-		logger.Debug("Migration (endpoints host column) skipped: %v", err)
-	}
-	if _, err := DB.Exec(`CREATE INDEX IF NOT EXISTS idx_urls_host ON urls(host)`); err != nil {
-		logger.Debug("Migration (urls host index) skipped: %v", err)
-	}
-	if _, err := DB.Exec(`CREATE INDEX IF NOT EXISTS idx_endpoints_host ON endpoints(host)`); err != nil {
-		logger.Debug("Migration (endpoints host index) skipped: %v", err)
-	}
 }
 
 // Close closes the database connection
@@ -477,6 +452,62 @@ func AddSubdomains(scanID int64, domains []string, source string) error {
 	}
 
 	return tx.Commit()
+}
+
+// PurgeUnconsolidatedSubdomains deletes any subdomains for scanID that are not present in validDomains.
+func PurgeUnconsolidatedSubdomains(scanID int64, validDomains []string) (int64, error) {
+	if DB == nil {
+		return 0, ErrDBNotInitialized
+	}
+	if len(validDomains) == 0 {
+		res, err := DB.Exec(`DELETE FROM subdomains WHERE scan_id = ?`, scanID)
+		if err != nil {
+			return 0, err
+		}
+		rows, _ := res.RowsAffected()
+		return rows, nil
+	}
+
+	tx, err := DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`CREATE TEMP TABLE IF NOT EXISTS temp_valid_subs (domain TEXT PRIMARY KEY)`)
+	if err != nil {
+		return 0, err
+	}
+	_, err = tx.Exec(`DELETE FROM temp_valid_subs`)
+	if err != nil {
+		return 0, err
+	}
+
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO temp_valid_subs (domain) VALUES (?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	for _, domain := range validDomains {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if domain != "" {
+			if _, err := stmt.Exec(domain); err != nil {
+				return 0, err
+			}
+		}
+	}
+
+	res, err := tx.Exec(`DELETE FROM subdomains WHERE scan_id = ? AND domain NOT IN (SELECT domain FROM temp_valid_subs)`, scanID)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, _ := res.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return rowsAffected, nil
 }
 
 func UpdateSubdomainLive(scanID int64, domain string, isLive bool, ipAddress string) error {
@@ -1119,7 +1150,6 @@ func DeleteScansByTarget(target string) (int, error) {
 
 	return len(scanIDs), nil
 }
-
 
 // GetAllTargets returns a list of all unique targets in the database
 func GetAllTargets() ([]string, error) {

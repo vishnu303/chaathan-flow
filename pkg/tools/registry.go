@@ -19,60 +19,65 @@ type ToolInfo struct {
 	InstallURL  string // `go install` URL — empty for non-Go tools
 }
 
-// AllTools is the canonical tool catalogue. Order determines display
+// allTools is the canonical tool catalogue. Order determines display
 // order in `chaathan tools list` and `chaathan tools check`.
-var AllTools = []ToolInfo{
+var allTools = []ToolInfo{
 	// Subdomain Enumeration
-	{"subfinder", "Enum", "Passive subdomain discovery", true, "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"},
-	{"assetfinder", "Enum", "Passive subdomain discovery", true, "github.com/tomnomnom/assetfinder@latest"},
-	{"sublist3r", "Enum", "Passive subdomain discovery (Python)", false, ""},
-	{"amass", "Enum", "Active DNS enumeration", false, "github.com/owasp-amass/amass/v4/...@latest"},
+	{Name: "subfinder", Category: "Enum", Description: "Passive subdomain discovery", Required: true, InstallURL: "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"},
+	{Name: "assetfinder", Category: "Enum", Description: "Passive subdomain discovery", Required: true, InstallURL: "github.com/tomnomnom/assetfinder@latest"},
+	{Name: "sublist3r", Category: "Enum", Description: "Passive subdomain discovery (Python)", Required: false, InstallURL: ""},
+	{Name: "amass", Category: "Enum", Description: "Active DNS enumeration", Required: false, InstallURL: "github.com/owasp-amass/amass/v4/...@latest"},
 
 	// DNS & Resolution
-	{"dnsx", "DNS", "DNS resolution & record lookup", true, "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"},
-	{"shuffledns", "DNS", "DNS brute-force with massdns", false, "github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest"},
-	{"massdns", "DNS", "High-performance DNS resolver (from source)", false, ""},
+	{Name: "dnsx", Category: "DNS", Description: "DNS resolution & record lookup", Required: true, InstallURL: "github.com/projectdiscovery/dnsx/cmd/dnsx@latest"},
+	{Name: "shuffledns", Category: "DNS", Description: "DNS brute-force with massdns", Required: false, InstallURL: "github.com/projectdiscovery/shuffledns/cmd/shuffledns@latest"},
+	{Name: "massdns", Category: "DNS", Description: "High-performance DNS resolver (from source)", Required: false, InstallURL: ""},
 
 	// Web Probing
-	{"httpx", "Probe", "HTTP probing & tech detection", true, "github.com/projectdiscovery/httpx/cmd/httpx@latest"},
-	{"tlsx", "Probe", "TLS certificate analysis & SAN extraction", false, "github.com/projectdiscovery/tlsx/cmd/tlsx@latest"},
-	{"naabu", "Probe", "Port scanning (SYN/TCP)", false, "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"},
+	{Name: "httpx", Category: "Probe", Description: "HTTP probing & tech detection", Required: true, InstallURL: "github.com/projectdiscovery/httpx/cmd/httpx@latest"},
+	{Name: "tlsx", Category: "Probe", Description: "TLS certificate analysis & SAN extraction", Required: false, InstallURL: "github.com/projectdiscovery/tlsx/cmd/tlsx@latest"},
+	{Name: "naabu", Category: "Probe", Description: "Port scanning (SYN/TCP)", Required: false, InstallURL: "github.com/projectdiscovery/naabu/v2/cmd/naabu@latest"},
 
 	// URL Discovery
-	{"waybackurls", "URLs", "Wayback Machine URL extraction", false, "github.com/tomnomnom/waybackurls@latest"},
-	{"gau", "URLs", "Historical URL discovery", false, "github.com/lc/gau/v2/cmd/gau@latest"},
-	{"x8", "URLs", "Hidden HTTP parameter discovery (Rust)", false, ""},
-	{"katana", "Crawl", "Web crawling & spidering", false, "github.com/projectdiscovery/katana/cmd/katana@latest"},
-	{"gospider", "Crawl", "Web crawling & spidering", false, "github.com/jaeles-project/gospider@latest"},
+	{Name: "waybackurls", Category: "URLs", Description: "Wayback Machine URL extraction", Required: false, InstallURL: "github.com/tomnomnom/waybackurls@latest"},
+	{Name: "gau", Category: "URLs", Description: "Historical URL discovery", Required: false, InstallURL: "github.com/lc/gau/v2/cmd/gau@latest"},
+	{Name: "x8", Category: "URLs", Description: "Hidden HTTP parameter discovery (Rust)", Required: false, InstallURL: ""},
+	{Name: "katana", Category: "Crawl", Description: "Web crawling & spidering", Required: false, InstallURL: "github.com/projectdiscovery/katana/cmd/katana@latest"},
+	{Name: "gospider", Category: "Crawl", Description: "Web crawling & spidering", Required: false, InstallURL: "github.com/jaeles-project/gospider@latest"},
 
 	// Analysis
-	{"GoLinkFinder", "Analysis", "JavaScript endpoint extraction (Go)", false, "github.com/rix4uni/GoLinkFinder@latest"},
-	{"hakrawler", "Crawl", "Fast web crawler for endpoint & asset discovery", false, "github.com/hakluke/hakrawler@latest"},
+	{Name: "GoLinkFinder", Category: "Analysis", Description: "JavaScript endpoint extraction (Go)", Required: false, InstallURL: "github.com/rix4uni/GoLinkFinder@latest"},
+	{Name: "hakrawler", Category: "Crawl", Description: "Fast web crawler for endpoint & asset discovery", Required: false, InstallURL: "github.com/hakluke/hakrawler@latest"},
 
 	// Fuzzing & Scanning
-	{"ffuf", "Fuzz", "Web fuzzer & directory brute-force", false, "github.com/ffuf/ffuf/v2@latest"},
-	{"nuclei", "Vuln", "Template-based vulnerability scanner", true, "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"},
-	{"dalfox", "Vuln", "XSS vulnerability scanner", false, "github.com/hahwul/dalfox/v2@latest"},
+	{Name: "ffuf", Category: "Fuzz", Description: "Web fuzzer & directory brute-force", Required: false, InstallURL: "github.com/ffuf/ffuf/v2@latest"},
+	{Name: "nuclei", Category: "Vuln", Description: "Template-based vulnerability scanner", Required: true, InstallURL: "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"},
+	{Name: "dalfox", Category: "Vuln", Description: "XSS vulnerability scanner", Required: false, InstallURL: "github.com/hahwul/dalfox/v2@latest"},
 
 	// Recon
-	{"uncover", "Recon", "Shodan/Censys/Fofa search dorking", false, "github.com/projectdiscovery/uncover/cmd/uncover@latest"},
-	{"metabigor", "Recon", "ASN & org discovery", false, "github.com/j3ssie/metabigor@latest"},
-	{"github-subdomains", "Recon", "GitHub subdomain scraping", false, "github.com/gwen001/github-subdomains@latest"},
-	{"cloud_enum", "Cloud", "Cloud infrastructure enumeration (Python)", false, ""},
+	{Name: "uncover", Category: "Recon", Description: "Shodan/Censys/Fofa search dorking", Required: false, InstallURL: "github.com/projectdiscovery/uncover/cmd/uncover@latest"},
+	{Name: "metabigor", Category: "Recon", Description: "ASN & org discovery", Required: false, InstallURL: "github.com/j3ssie/metabigor@latest"},
+	{Name: "github-subdomains", Category: "Recon", Description: "GitHub subdomain scraping", Required: false, InstallURL: "github.com/gwen001/github-subdomains@latest"},
+	{Name: "cloud_enum", Category: "Cloud", Description: "Cloud infrastructure enumeration (Python)", Required: false, InstallURL: ""},
 
 	// Utility
-	{"anew", "Util", "Append unique lines to file", false, "github.com/tomnomnom/anew@latest"},
-	{"gf", "Util", "Pattern-based URL/param filtering", false, "github.com/tomnomnom/gf@latest"},
+	{Name: "anew", Category: "Util", Description: "Append unique lines to file", Required: false, InstallURL: "github.com/tomnomnom/anew@latest"},
+	{Name: "gf", Category: "Util", Description: "Pattern-based URL/param filtering", Required: false, InstallURL: "github.com/tomnomnom/gf@latest"},
 
 	// Proxy Automation
-	{"mubeng", "Proxy", "Proxy scraper, checker & IP rotator (Go)", false, "github.com/mubeng/mubeng@latest"},
+	{Name: "mubeng", Category: "Proxy", Description: "Proxy scraper, checker & IP rotator (Go)", Required: false, InstallURL: "github.com/mubeng/mubeng@latest"},
 }
 
-// GoInstallableTools returns the subset of AllTools that have a non-empty
+// GetAllTools returns a copy of the canonical tool catalogue to prevent accidental mutations.
+func GetAllTools() []ToolInfo {
+	return append([]ToolInfo(nil), allTools...)
+}
+
+// GoInstallableTools returns the subset of allTools that have a non-empty
 // InstallURL — these are the tools that `go install` can install.
 func GoInstallableTools() []ToolInfo {
 	var out []ToolInfo
-	for _, t := range AllTools {
+	for _, t := range allTools {
 		if t.InstallURL != "" {
 			out = append(out, t)
 		}
@@ -83,7 +88,7 @@ func GoInstallableTools() []ToolInfo {
 // CountRequired returns the number of tools marked as Required.
 func CountRequired() int {
 	count := 0
-	for _, t := range AllTools {
+	for _, t := range allTools {
 		if t.Required {
 			count++
 		}

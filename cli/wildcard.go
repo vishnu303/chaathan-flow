@@ -9,8 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/vishnu303/chaathan/pkg/logger"
-	"github.com/vishnu303/chaathan/utils"
 	wf "github.com/vishnu303/chaathan/pkg/wildcard_flow"
+	"github.com/vishnu303/chaathan/utils"
 )
 
 // ─────────────────────────────────────────────────────────────
@@ -18,32 +18,32 @@ import (
 // ─────────────────────────────────────────────────────────────
 
 var (
-	targetDomain      string
-	skipAmass         bool
-	skipNuclei        bool
-	skipNaabu         bool
-	skipCrawl         bool
-	skipTakeovers     bool
-	skipDalfox        bool
-	skipUncover       bool
-	skipTlsx          bool
-	skipX8            bool
-	skipShuffleDNS    bool
-	skipHakrawler     bool
-	skipFingerprint   bool
-	wordlistPath      string
-	dnsWordlistPath   string
-	resolversPath     string
-	githubToken       string
-	resumeScanID      int64
-	generateReport    bool
-	proxyURL          string
-	rateLimitRPS      int
-	saveLog           bool
-	customCookie      string
-	customHeaders     []string
-	customToken       string
-	autoProxy          bool
+	targetDomain    string
+	skipAmass       bool
+	skipNuclei      bool
+	skipNaabu       bool
+	skipCrawl       bool
+	skipTakeovers   bool
+	skipDalfox      bool
+	skipUncover     bool
+	skipTlsx        bool
+	skipX8          bool
+	skipShuffleDNS  bool
+	skipHakrawler   bool
+	skipFingerprint bool
+	wordlistPath    string
+	dnsWordlistPath string
+	resolversPath   string
+	githubToken     string
+	resumeScanID    int64
+	generateReport  bool
+	proxyURL        string
+	rateLimitRPS    int
+	saveLog         bool
+	customCookie    string
+	customHeaders   []string
+	customToken     string
+	autoProxy       bool
 )
 
 // ─────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ var wildcardCmd = &cobra.Command{
 	Use:     "wildcard",
 	Aliases: []string{"scan"},
 	Short:   "Run the Wildcard Reconnaissance Workflow",
-Long: `
+	Long: `
 Runs a comprehensive 23-step recon & vulnerability scanning workflow
 organised into 6 clean phases:
 
@@ -113,8 +113,8 @@ func init() {
 	wildcardCmd.Flags().BoolVar(&skipShuffleDNS, "skip-shuffledns", false, "Skip ShuffleDNS brute-force")
 	wildcardCmd.Flags().BoolVar(&skipHakrawler, "skip-hakrawler", false, "Skip Hakrawler JS crawling")
 	wildcardCmd.Flags().BoolVar(&skipFingerprint, "skip-fingerprint", false, "Skip Technology & WAF Fingerprinting step")
-	wildcardCmd.Flags().StringVarP(&wordlistPath, "wordlist", "w", "", "Wordlist for directory fuzzing (enables ffuf)")
-	wildcardCmd.Flags().StringVar(&dnsWordlistPath, "dns-wordlist", "", "Wordlist for DNS brute-force with ShuffleDNS")
+	wildcardCmd.Flags().StringVarP(&wordlistPath, "wordlist", "w", "", "Wordlist for directory fuzzing with ffuf (auto-detects SecLists on device if omitted)")
+	wildcardCmd.Flags().StringVar(&dnsWordlistPath, "dns-wordlist", "", "Wordlist for DNS brute-force with ShuffleDNS (auto-detects SecLists on device if omitted)")
 	wildcardCmd.Flags().StringVar(&resolversPath, "resolvers", "", "Custom DNS resolvers file for ShuffleDNS")
 	wildcardCmd.Flags().StringVar(&githubToken, "github-token", "", "GitHub token for GitHub recon (or use GITHUB_TOKEN env)")
 	wildcardCmd.Flags().Int64Var(&resumeScanID, "resume", 0, "Resume a previous scan by ID")
@@ -177,34 +177,34 @@ func runWildcard(cmd *cobra.Command, args []string) {
 
 	// Build configuration and delegate to the wildcard_flow package
 	cfg := wf.RunConfig{
-		Domain:            targetDomain,
-		ResultDir:         resultDir,
-		Mode:              Mode,
-		Verbose:           Verbose,
-		Cfg:               Cfg,
-		SkipAmass:         skipAmass,
-		SkipNuclei:        skipNuclei,
-		SkipNaabu:         skipNaabu,
-		SkipCrawl:         skipCrawl,
-		SkipTakeovers:     skipTakeovers,
-		SkipDalfox:        skipDalfox,
-		SkipUncover:       skipUncover,
-		SkipTlsx:          skipTlsx,
-		SkipX8:            skipX8,
-		SkipShuffleDNS:    skipShuffleDNS,
-		SkipHakrawler:     skipHakrawler,
-		SkipFingerprint:   skipFingerprint,
-		WordlistPath:      wl,
-		DNSWordlistPath:   dnsWl,
-		ResolversPath:     resolvers,
-		GitHubToken:       token,
-		ResumeScanID:      resumeScanID,
-		GenerateReport:    generateReport,
-		SaveLog:           saveLog,
-		CustomCookie:      customCookie,
-		CustomHeaders:     customHeaders,
-		CustomToken:       customToken,
-		AutoProxy:          autoProxy,
+		Domain:          targetDomain,
+		ResultDir:       resultDir,
+		Mode:            Mode,
+		Verbose:         Verbose,
+		Cfg:             Cfg,
+		SkipAmass:       skipAmass,
+		SkipNuclei:      skipNuclei,
+		SkipNaabu:       skipNaabu,
+		SkipCrawl:       skipCrawl,
+		SkipTakeovers:   skipTakeovers,
+		SkipDalfox:      skipDalfox,
+		SkipUncover:     skipUncover,
+		SkipTlsx:        skipTlsx,
+		SkipX8:          skipX8,
+		SkipShuffleDNS:  skipShuffleDNS,
+		SkipHakrawler:   skipHakrawler,
+		SkipFingerprint: skipFingerprint,
+		WordlistPath:    wl,
+		DNSWordlistPath: dnsWl,
+		ResolversPath:   resolvers,
+		GitHubToken:     token,
+		ResumeScanID:    resumeScanID,
+		GenerateReport:  generateReport,
+		SaveLog:         saveLog,
+		CustomCookie:    customCookie,
+		CustomHeaders:   customHeaders,
+		CustomToken:     customToken,
+		AutoProxy:       autoProxy,
 	}
 
 	if err := wf.Run(cfg); err != nil {

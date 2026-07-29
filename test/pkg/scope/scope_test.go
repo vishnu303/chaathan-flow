@@ -1,12 +1,12 @@
 package scope_test
- 
+
 import (
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/scope"
 )
- 
+
 func TestScope_IsInScope(t *testing.T) {
 	cfg := &config.ScopeConfig{
 		InScope:    []string{`^.*\.example\.com$`, `^exact-domain\.org$`},
@@ -55,7 +55,7 @@ func TestScopeAnchoringAndBypass(t *testing.T) {
 		{"example.com", true},
 		{"foo.example.com", true},
 		{"sub.foo.example.com", true},
-		{"evil-example.com", false},         // bypass attempt
+		{"evil-example.com", false},        // bypass attempt
 		{"example.com.attacker.io", false}, // bypass attempt
 		{"out.example.com", false},         // out-of-scope override
 	}

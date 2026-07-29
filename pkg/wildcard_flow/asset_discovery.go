@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/utils"
 )
@@ -100,9 +101,9 @@ func stepPassiveEnum(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		subfinderCount, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.SubfinderOut, "subfinder")
-		assetfinderCount, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.AssetfinderOut, "assetfinder")
-		sublist3rCount, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.Sublist3rOut, "sublist3r")
+		subfinderCount, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.SubfinderOut, "subfinder")
+		assetfinderCount, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.AssetfinderOut, "assetfinder")
+		sublist3rCount, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.Sublist3rOut, "sublist3r")
 		totalPassive := subfinderCount + assetfinderCount + sublist3rCount
 		if totalPassive > 0 {
 			label := ""
@@ -150,7 +151,7 @@ func stepActiveEnum(c *Ctx) bool {
 	writeEmptyFile(c.F.AmassOut)
 	logger.SubStep("Running Amass (this may take a while)...")
 	logger.FileDebug("amass input: domain=%s out=%s", c.Domain, c.F.AmassOut)
-	
+
 	var amassSkipped bool
 	if err := runWithSkip(c, "amass", func(sCtx context.Context) error {
 		return c.Tb.RunAmass(sCtx, c.Domain, c.F.AmassOut)
@@ -164,7 +165,7 @@ func stepActiveEnum(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		count, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.AmassOut, "amass")
+		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.AmassOut, "amass")
 		if count > 0 {
 			label := ""
 			if amassSkipped {
@@ -189,22 +190,22 @@ func stepActiveEnum(c *Ctx) bool {
 // stepGitHubRecon runs github-subdomains when a token is available.
 // Returns true if the scan should be cancelled.
 func stepGitHubRecon(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("github_recon", "Step 4: GitHub Subdomain Discovery"); skipped {
-		return cancelled
-	}
-
 	if c.GitHubToken == "" {
 		logger.StepHeader("Step 4: Skipping GitHub Recon (no token provided)")
-		logger.Warning("Set GITHUB_TOKEN env var or use --github-token for GitHub recon")
+		logger.Warning("Set api_keys.github in config.yaml or pass --github-token flag for GitHub recon")
 		logger.FileDebug("github_recon skipped: no token provided")
-		c.markStepCompleteSafe("github_recon")
+		c.markStepCompleteIfNoFailure("github_recon")
 		return c.cancelled()
+	}
+
+	if skipped, cancelled := c.resumeOrSkip("github_recon", "Step 4: GitHub Subdomain Discovery"); skipped {
+		return cancelled
 	}
 
 	writeEmptyFile(c.F.GithubSubsOut)
 	logger.SubStep("Running github-subdomains...")
 	logger.FileDebug("github-subdomains input: domain=%s token_len=%d out=%s", c.Domain, len(c.GitHubToken), c.F.GithubSubsOut)
-	
+
 	var githubSkipped bool
 	if err := runWithSkip(c, "github-subdomains", func(sCtx context.Context) error {
 		return c.Tb.RunGithubSubdomains(sCtx, c.Domain, c.GitHubToken, c.F.GithubSubsOut)
@@ -220,7 +221,7 @@ func stepGitHubRecon(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		count, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.GithubSubsOut, "github")
+		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.GithubSubsOut, "github")
 		if count > 0 {
 			label := ""
 			if githubSkipped {
@@ -233,7 +234,7 @@ func stepGitHubRecon(c *Ctx) bool {
 			logger.Info("  Found 0 subdomains")
 		}
 	}
-	
+
 	c.markStepCompleteIfNoFailure("github_recon")
 	return c.cancelled()
 }
@@ -258,7 +259,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 	writeEmptyFile(c.F.UncoverOut)
 	writeEmptyFile(c.F.UncoverHostsOut)
 	logger.SubStep("Running Uncover (Shodan/Censys/Fofa)...")
-	
+
 	var uncoverSkipped bool
 	if err := runWithSkip(c, "uncover", func(sCtx context.Context) error {
 		return c.Tb.RunUncover(sCtx, c.Domain, c.F.UncoverOut)
@@ -272,7 +273,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		subs, ports, _ := utils.ParseUncoverOutput(c.ScanID, c.F.UncoverOut, c.Domain)
+		subs, ports, _ := ingest.ParseUncoverOutput(c.ScanID, c.F.UncoverOut, c.Domain)
 		if subs > 0 || ports > 0 {
 			label := ""
 			if uncoverSkipped {
@@ -285,7 +286,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 			logger.Info("  Found 0 hosts and 0 open ports from search engines")
 		}
 	}
-	
+
 	// Extract hostnames into a plain-text file so Step 6 can merge them
 	if n := extractUncoverHosts(c.F.UncoverOut, c.F.UncoverHostsOut, c.Domain); n > 0 {
 		logger.SubStep("[Done] Extracted %d unique hosts from Uncover output", n)
@@ -328,7 +329,7 @@ func stepJSSubdomains(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 {
-		count, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.HakrawlerOut, "hakrawler")
+		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.HakrawlerOut, "hakrawler")
 		if count > 0 {
 			label := ""
 			if hakrawlerSkipped {

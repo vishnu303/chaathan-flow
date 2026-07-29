@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vishnu303/chaathan/pkg/paths"
 	"github.com/vishnu303/chaathan/pkg/setup"
 )
 
@@ -27,6 +28,10 @@ func TestSetupContextHelpers(t *testing.T) {
 }
 
 func TestSetupLogger(t *testing.T) {
+	t.Setenv("CHAATHAN_HOME", t.TempDir())
+	paths.ResetForTest()
+	defer paths.ResetForTest()
+
 	logger, err := setup.NewSetupLogger()
 	if err != nil {
 		t.Fatalf("unexpected error creating NewSetupLogger: %v", err)
@@ -43,7 +48,7 @@ func TestSetupLogger(t *testing.T) {
 	}
 
 	logger.Write("Test setup log entry")
-	
+
 	logger.Close()
 
 	content, err := os.ReadFile(logger.Path())
@@ -57,15 +62,24 @@ func TestSetupLogger(t *testing.T) {
 }
 
 func TestResolveGOPATH(t *testing.T) {
-	// Let's check how GOPATH is resolved when env var is set
-	tempGOPATH := filepath.Join(t.TempDir(), "custom_gopath")
-	os.Setenv("GOPATH", tempGOPATH)
-	defer os.Unsetenv("GOPATH")
+	// When GOPATH is set, it must be honoured verbatim.
+	t.Setenv("GOPATH", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home dir")
+	}
+	if got, gerr := setup.ResolveGOPATH(); gerr != nil || got != filepath.Join(home, "go") {
+		t.Errorf("ResolveGOPATH() with empty GOPATH = (%q, %v), want %q", got, gerr, filepath.Join(home, "go"))
+	}
 
-	// We can't call resolveGOPATH directly since it is unexported.
-	// But we can verify it transitively or let it run.
-	// Wait, we can test resolveGOPATH if we export it? But actually,
-	// let's look at setup.go to see if there is any other way.
-	// No, but we can call other methods that use resolveGOPATH,
-	// or we don't have to test it directly.
+	// Explicit GOPATH wins.
+	custom := filepath.Join(t.TempDir(), "custom_gopath")
+	t.Setenv("GOPATH", custom)
+	got, err := setup.ResolveGOPATH()
+	if err != nil {
+		t.Fatalf("ResolveGOPATH() error: %v", err)
+	}
+	if got != custom {
+		t.Errorf("ResolveGOPATH() = %q, want %q", got, custom)
+	}
 }

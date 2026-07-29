@@ -129,7 +129,7 @@ func RunHarvest(ctx context.Context, cfg HarvestConfig) (*HarvestResult, error) 
 
 	// 5. Phase 2: Validate with mubeng
 	liveProxiesPath := filepath.Join(workDir, "live_proxies.txt")
-	
+
 	// mubeng checking args
 	maxConcurrent := cfg.MaxConcurrent
 	if maxConcurrent <= 0 {
@@ -327,5 +327,3 @@ func fetchProxySources(ctx context.Context, proxyTypes []string, outPath string)
 
 	return len(all), nil
 }
-
-

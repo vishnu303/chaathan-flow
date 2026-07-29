@@ -15,44 +15,52 @@ import (
 	"github.com/vishnu303/chaathan/pkg/logger"
 )
 
+// Runner executes an external command, optionally with retries and a timeout.
 type Runner interface {
 	Run(ctx context.Context, command string, args []string, opts ...Option) (string, error)
 }
 
+// NativeRunner runs tools directly on the host.
 type NativeRunner struct {
 	Verbose    bool
 	MaxRetries int           // number of retries on failure (0 = no retry)
 	RetryDelay time.Duration // delay between retries
 }
 
+// DockerRunner runs tools inside Docker containers with path translation.
 type DockerRunner struct {
 	Verbose    bool
 	MaxRetries int
 	RetryDelay time.Duration
 }
 
+// RunOptions are per-run execution knobs set via Option funcs.
 type RunOptions struct {
 	Dir     string
 	Env     []string
 	Timeout time.Duration // per-tool timeout (0 = use context timeout)
 	Stdin   func() io.Reader
-	NoRetry bool          // if true, disables retries for this run
+	NoRetry bool // if true, disables retries for this run
 }
 
+// Option configures one field of RunOptions.
 type Option func(*RunOptions)
 
+// WithDir sets the working directory for the command.
 func WithDir(dir string) Option {
 	return func(o *RunOptions) {
 		o.Dir = dir
 	}
 }
 
+// WithNoRetry disables the retry loop for this single run.
 func WithNoRetry() Option {
 	return func(o *RunOptions) {
 		o.NoRetry = true
 	}
 }
 
+// WithTimeout sets a per-tool execution timeout.
 func WithTimeout(d time.Duration) Option {
 	return func(o *RunOptions) {
 		o.Timeout = d
@@ -67,11 +75,17 @@ func WithEnv(env ...string) Option {
 	}
 }
 
-// WithStdin buffers the contents of the given reader once and returns a factory that produces a fresh reader from that buffer on every attempt.
+// WithStdin buffers the contents of the given reader once and returns a factory
+// that produces a fresh reader from that buffer on every retry attempt. A read
+// failure is logged (the partial buffer is used) rather than silently swallowed.
 func WithStdin(r io.Reader) Option {
 	var buf []byte
 	if r != nil {
-		buf, _ = io.ReadAll(r)
+		var readErr error
+		buf, readErr = io.ReadAll(r)
+		if readErr != nil {
+			logger.Warning("runner: failed to buffer stdin: %v (using partial input)", readErr)
+		}
 	}
 	return func(o *RunOptions) {
 		o.Stdin = func() io.Reader {
@@ -80,12 +94,8 @@ func WithStdin(r io.Reader) Option {
 	}
 }
 
-// WithStdinFactory configures a custom reader factory function for stdin, enabling true re-readability.
-func WithStdinFactory(fn func() io.Reader) Option {
-	return func(o *RunOptions) {
-		o.Stdin = fn
-	}
-}
+// defaultRetryDelay is used when RetryDelay is zero; matches config default RetryDelaySec.
+const defaultRetryDelay = 3 * time.Second
 
 // ── Shared retry logic ──────────────────────────────────────────────────────
 
@@ -100,6 +110,7 @@ func retryRun(ctx context.Context, command string, maxRetries int, retryDelay ti
 		maxAttempts = 1
 	}
 
+	var lastOut string
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		output, err := fn(ctx)
@@ -107,6 +118,7 @@ func retryRun(ctx context.Context, command string, maxRetries int, retryDelay ti
 			return output, nil
 		}
 
+		lastOut = output
 		lastErr = err
 
 		// Don't retry on context cancellation (user pressed Ctrl+C)
@@ -118,20 +130,21 @@ func retryRun(ctx context.Context, command string, maxRetries int, retryDelay ti
 		if attempt < maxAttempts {
 			delay := retryDelay
 			if delay == 0 {
-				delay = 3 * time.Second
+				delay = defaultRetryDelay
 			}
 			logger.Warning("[Retry %d/%d] %s failed: %v — retrying in %s...",
-				attempt, maxRetries, command, err, delay)
-			
+				attempt, maxAttempts, command, err, delay)
+
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				return "", fmt.Errorf("cancelled: %w", lastErr)
+				return lastOut, fmt.Errorf("cancelled: %w", lastErr)
 			}
 		}
 	}
 
-	return "", lastErr
+	// Preserve whatever output the final attempt produced instead of dropping it.
+	return lastOut, lastErr
 }
 
 // executeWithRetry abstracts the option processing, per-tool timeout context creation,
@@ -179,7 +192,7 @@ func (r *NativeRunner) runOnce(ctx context.Context, command string, args []strin
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	cmdStr := fmt.Sprintf("%s %s", command, strings.Join(args, " "))
+	cmdStr := formatCmdStr(command, args, options)
 	// Always write command to log file (file-only, no terminal noise)
 	logger.LogCommand(cmdStr)
 	if r.Verbose {
@@ -207,7 +220,7 @@ func (r *NativeRunner) runOnce(ctx context.Context, command string, args []strin
 		}
 		// Return stderr as error description if available
 		if stderr.Len() > 0 {
-			return stdout.String(), fmt.Errorf("%v: %s", err, stderr.String())
+			return stdout.String(), fmt.Errorf("%w: %s", err, stderr.String())
 		}
 		return stdout.String(), err
 	}
@@ -264,17 +277,14 @@ func (r *DockerRunner) runOnce(ctx context.Context, command string, args []strin
 
 	dockerArgs = append(dockerArgs, image)
 
+	// For images that don't use ENTRYPOINT, the tool name must be passed as argv[0].
 	if !isEntrypointImage(command) {
-		switch command {
-		// Handle cases where command needs to be passed to container
-		default:
-			dockerArgs = append(dockerArgs, command)
-		}
+		dockerArgs = append(dockerArgs, command)
 	}
 
 	dockerArgs = append(dockerArgs, translatedArgs...)
 
-	cmdStr := fmt.Sprintf("DOCKER %s", strings.Join(dockerArgs, " "))
+	cmdStr := formatDockerCmdStr(dockerArgs, options)
 	// Always write command to log file (file-only, no terminal noise)
 	logger.LogCommand(cmdStr)
 	if r.Verbose {
@@ -300,7 +310,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, command string, args []strin
 			logger.LogToolFailure(command, cmdStr, stderr.String(), err)
 		}
 		if stderr.Len() > 0 {
-			return stdout.String(), fmt.Errorf("%v: %s", err, stderr.String())
+			return stdout.String(), fmt.Errorf("%w: %s", err, stderr.String())
 		}
 		return stdout.String(), err
 	}
@@ -328,7 +338,7 @@ func startAndWait(ctx context.Context, cmd *exec.Cmd) error {
 		return err
 	case <-ctx.Done():
 		killProcessGroup(cmd)
-		
+
 		// Wait at most 2 seconds for process and its I/O to cleanly exit.
 		// If child processes inherited stdout/stderr and didn't die from the group kill,
 		// Wait() would block indefinitely. This prevents the hang.
@@ -350,10 +360,12 @@ func killProcessGroup(cmd *exec.Cmd) {
 	}
 
 	// Negative PID targets the entire process group created via Setpgid.
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		_ = cmd.Process.Kill()
+	}
 }
 
-// ── Docker image registry (F30) ─────────────────────────────────────────────
+// ── Docker image registry ────────────────────────────────────────────────────
 //
 // Single lookup table for tool → Docker image + entry-point flag.
 // Tools without an official Docker image use "alpine" as a fallback,
@@ -367,45 +379,46 @@ type dockerImageInfo struct {
 
 var dockerImages = map[string]dockerImageInfo{
 	// Project Discovery tools — all use ENTRYPOINT
-	"subfinder":   {"projectdiscovery/subfinder", true},
-	"nuclei":      {"projectdiscovery/nuclei", true},
-	"httpx":       {"projectdiscovery/httpx", true},
-	"naabu":       {"projectdiscovery/naabu", true},
-	"dnsx":        {"projectdiscovery/dnsx", true},
-	"katana":      {"projectdiscovery/katana", true},
-	"tlsx":        {"projectdiscovery/tlsx", true},
-	"uncover":     {"projectdiscovery/uncover", true},
-	"shuffledns":  {"projectdiscovery/shuffledns", true},
+	"subfinder":  {"projectdiscovery/subfinder", true},
+	"nuclei":     {"projectdiscovery/nuclei", true},
+	"httpx":      {"projectdiscovery/httpx", true},
+	"naabu":      {"projectdiscovery/naabu", true},
+	"dnsx":       {"projectdiscovery/dnsx", true},
+	"katana":     {"projectdiscovery/katana", true},
+	"tlsx":       {"projectdiscovery/tlsx", true},
+	"uncover":    {"projectdiscovery/uncover", true},
+	"shuffledns": {"projectdiscovery/shuffledns", true},
 
 	// Third-party tools with ENTRYPOINT
-	"amass":       {"caffix/amass", true},
-	"ffuf":        {"ffuf/ffuf", true},
-	"dalfox":      {"hahwul/dalfox", true},
+	"amass":        {"caffix/amass", true},
+	"ffuf":         {"ffuf/ffuf", true},
+	"dalfox":       {"hahwul/dalfox", true},
 	"GoLinkFinder": {"alpine", false}, // no official image; go binary compiled from source
 
 	// Third-party tools WITHOUT ENTRYPOINT (need command passed)
-	"assetfinder":      {"tomnomnom/assetfinder", false},
-	"gau":              {"sxcurity/gau", false},
-	"waybackurls":      {"sxcurity/waybackurls", false},
-	"metabigor":        {"j3ssie/metabigor", false},
-	"gospider":         {"jaeles-project/gospider", false},
+	"assetfinder":       {"tomnomnom/assetfinder", false},
+	"gau":               {"sxcurity/gau", false},
+	"waybackurls":       {"sxcurity/waybackurls", false},
+	"metabigor":         {"j3ssie/metabigor", false},
+	"gospider":          {"jaeles-project/gospider", false},
 	"github-subdomains": {"gwen001/github-subdomains", false},
 
 	// No official Docker image — alpine fallback (won't work without custom image)
-	"hakrawler":      {"hakluke/hakrawler", true}, // reads stdin; official ENTRYPOINT image
-	"sublist3r":     {"alpine", false}, // Python script — no official image
-	"cloud_enum":    {"alpine", false}, // Python script — no official image
-	"massdns":       {"alpine", false}, // compiled from source
-	"anew":          {"alpine", false}, // tiny Go binary — unlikely to need Docker
-	"gf":            {"alpine", false}, // tiny Go binary — unlikely to need Docker
-	"x8":            {"alpine", false}, // Rust binary — no official Docker image
-	"mubeng":        {"alpine", false}, // Go binary — no official Docker image
+	"hakrawler":  {"hakluke/hakrawler", true}, // reads stdin; official ENTRYPOINT image
+	"sublist3r":  {"alpine", false},           // Python script — no official image
+	"cloud_enum": {"alpine", false},           // Python script — no official image
+	"massdns":    {"alpine", false},           // compiled from source
+	"anew":       {"alpine", false},           // tiny Go binary — unlikely to need Docker
+	"gf":         {"alpine", false},           // tiny Go binary — unlikely to need Docker
+	"x8":         {"alpine", false},           // Rust binary — no official Docker image
+	"mubeng":     {"alpine", false},           // Go binary — no official Docker image
 }
 
 func getDockerImage(tool string) string {
 	if info, ok := dockerImages[tool]; ok {
 		return info.Image
 	}
+	logger.Warning("runner: no docker image registered for %q — using alpine fallback (likely won't work)", tool)
 	return "alpine"
 }
 
@@ -416,8 +429,8 @@ func isEntrypointImage(tool string) bool {
 	return false
 }
 
-
-// NewWithRetry creates a runner with retry logic.
+// NewWithRetry creates a runner with retry logic for the given execution mode
+// ("native" or "docker").
 func NewWithRetry(mode string, verbose bool, maxRetries int, retryDelay time.Duration) Runner {
 	if mode == "docker" {
 		return &DockerRunner{Verbose: verbose, MaxRetries: maxRetries, RetryDelay: retryDelay}
@@ -431,12 +444,12 @@ func translatePathsForDocker(args []string, hostDir string) []string {
 	}
 	// Normalize hostDir to forward slashes for matching
 	hostDirNormalized := strings.ReplaceAll(hostDir, "\\", "/")
-	
+
 	translated := make([]string, len(args))
 	for i, arg := range args {
 		// Normalize arg to forward slashes for matching
 		argNormalized := strings.ReplaceAll(arg, "\\", "/")
-		
+
 		if len(argNormalized) >= len(hostDirNormalized) {
 			argPrefix := argNormalized[:len(hostDirNormalized)]
 			if strings.EqualFold(argPrefix, hostDirNormalized) {
@@ -450,3 +463,63 @@ func translatePathsForDocker(args []string, hostDir string) []string {
 	return translated
 }
 
+func formatCmdStr(command string, args []string, options *RunOptions) string {
+	quotedArgs := make([]string, len(args))
+	for i, arg := range args {
+		if strings.Contains(arg, " ") || strings.Contains(arg, "\t") {
+			quotedArgs[i] = fmt.Sprintf("%q", arg)
+		} else {
+			quotedArgs[i] = arg
+		}
+	}
+
+	var rawCmd string
+	if len(quotedArgs) > 0 {
+		rawCmd = command + " " + strings.Join(quotedArgs, " ")
+	} else {
+		rawCmd = command
+	}
+
+	if options != nil && options.Stdin != nil {
+		stdinContent := ""
+		if r := options.Stdin(); r != nil {
+			if b, err := io.ReadAll(r); err == nil {
+				stdinContent = strings.TrimSuffix(string(b), "\n")
+			}
+		}
+		if stdinContent != "" {
+			return fmt.Sprintf("echo %q | %s", stdinContent, rawCmd)
+		}
+		return "echo '' | " + rawCmd
+	}
+
+	return rawCmd
+}
+
+func formatDockerCmdStr(dockerArgs []string, options *RunOptions) string {
+	quotedArgs := make([]string, len(dockerArgs))
+	for i, arg := range dockerArgs {
+		if strings.Contains(arg, " ") || strings.Contains(arg, "\t") {
+			quotedArgs[i] = fmt.Sprintf("%q", arg)
+		} else {
+			quotedArgs[i] = arg
+		}
+	}
+
+	rawCmd := "DOCKER " + strings.Join(quotedArgs, " ")
+
+	if options != nil && options.Stdin != nil {
+		stdinContent := ""
+		if r := options.Stdin(); r != nil {
+			if b, err := io.ReadAll(r); err == nil {
+				stdinContent = strings.TrimSuffix(string(b), "\n")
+			}
+		}
+		if stdinContent != "" {
+			return fmt.Sprintf("echo %q | %s", stdinContent, rawCmd)
+		}
+		return "echo '' | " + rawCmd
+	}
+
+	return rawCmd
+}

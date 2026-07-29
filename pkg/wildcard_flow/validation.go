@@ -17,9 +17,12 @@ import (
 	"io"
 	neturl "net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/metadata"
 	"github.com/vishnu303/chaathan/utils"
@@ -44,9 +47,13 @@ func stepDNSConsolidation(c *Ctx) bool {
 		c.F.AmassOut,
 		c.F.GithubSubsOut,
 		c.F.HakrawlerOut,
-		c.F.UncoverHostsOut, // hostnames extracted from uncover.json in Step 4
+		c.F.UncoverHostsOut, // hostnames extracted from uncover.json in Step 5
 	)
-	logger.FileDebug("dns_consolidation: %d passive source files available (subfinder, assetfinder, sublist3r, amass, github, hakrawler, uncover_hosts)", len(passiveSources))
+	var sourceNames []string
+	for _, p := range passiveSources {
+		sourceNames = append(sourceNames, filepath.Base(p))
+	}
+	logger.FileDebug("dns_consolidation: %d passive source files available (%s)", len(passiveSources), strings.Join(sourceNames, ", "))
 	if err := utils.MergeAndDeduplicate(passiveSources, c.F.ConsolidatedSubs); err != nil {
 		c.markStepFailedSafe("dns_resolution", err)
 		logger.Error("Failed to consolidate: %v", err)
@@ -79,9 +86,23 @@ func stepDNSConsolidation(c *Ctx) bool {
 		}
 	}
 
+	// Purge out-of-scope / unconsolidated subdomains from the DB
+	if c.ScanID > 0 {
+		if purged, err := ingest.SyncSubdomainsWithConsolidated(c.ScanID, c.F.ConsolidatedSubs); err == nil && purged > 0 {
+			logger.FileDebug("purged %d out-of-scope subdomains from database", purged)
+		}
+	}
+
+	subCount, _ = utils.CountFileLines(c.F.ConsolidatedSubs)
+	if subCount == 0 {
+		logger.Warning("No valid in-scope subdomains found for target %s — skipping dependent steps", c.Domain)
+		c.markStepCompleteIfNoFailure("dns_resolution")
+		return c.cancelled()
+	}
+
 	// Sync consolidated subdomains to DB
 	if c.ScanID > 0 {
-		if count, err := utils.ParseSubdomainsFile(c.ScanID, c.F.ConsolidatedSubs, "consolidated"); err != nil {
+		if count, err := ingest.ParseSubdomainsFile(c.ScanID, c.F.ConsolidatedSubs, "consolidated"); err != nil {
 			c.markStepFailedSafe("dns_resolution", err)
 			logger.Warning("Failed to sync consolidated subdomains to database: %v", err)
 		} else {
@@ -91,7 +112,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 
 	logger.SubStep("Running DNSx for resolution...")
 	logger.FileDebug("dnsx input: %s (%d lines) out=%s", c.F.ConsolidatedSubs, subCount, c.F.DnsxOut)
-	
+
 	var dnsxSkipped bool
 	if err := runWithSkip(c, "dnsx", func(sCtx context.Context) error {
 		return c.Tb.RunDnsx(sCtx, c.F.ConsolidatedSubs, c.F.DnsxOut)
@@ -136,17 +157,24 @@ func stepDNSBruteforce(c *Ctx) bool {
 		return cancelled
 	}
 
-	if c.SkipShuffleDNS || c.DNSWordlistPath == "" {
-		if c.SkipShuffleDNS {
-			logger.StepHeader("Step 8: Skipping ShuffleDNS (--skip-shuffledns)")
-			logger.FileDebug("shuffledns skipped via --skip-shuffledns flag")
-		} else {
-			logger.StepHeader("Step 8: Skipping ShuffleDNS (no --dns-wordlist provided)")
-			logger.Info("Use --dns-wordlist to enable DNS brute-force")
-			logger.FileDebug("shuffledns skipped: no --dns-wordlist provided")
-		}
+	if c.SkipShuffleDNS {
+		logger.StepHeader("Step 8: Skipping ShuffleDNS (--skip-shuffledns)")
+		logger.FileDebug("shuffledns skipped via --skip-shuffledns flag")
 		c.markStepCompleteIfNoFailure("dns_bruteforce")
 		return c.cancelled()
+	}
+
+	if c.DNSWordlistPath == "" {
+		if autoWl := config.ResolveSecListFile("Discovery/DNS/subdomains-top1million-5000.txt"); autoWl != "" {
+			c.DNSWordlistPath = autoWl
+			logger.Info("Auto-detected SecLists DNS wordlist for ShuffleDNS: %s", autoWl)
+		} else {
+			logger.StepHeader("Step 8: Skipping ShuffleDNS (no --dns-wordlist provided and SecLists not found on device)")
+			logger.Info("Use --dns-wordlist or run 'chaathan setup' to install SecLists")
+			logger.FileDebug("shuffledns skipped: no --dns-wordlist provided and SecLists not found on device")
+			c.markStepCompleteIfNoFailure("dns_bruteforce")
+			return c.cancelled()
+		}
 	}
 
 	writeEmptyFile(c.F.ShufflednsOut)
@@ -174,6 +202,8 @@ func stepDNSBruteforce(c *Ctx) bool {
 		c.Domain, c.DNSWordlistPath, c.ResolversPath, c.F.ShufflednsOut)
 
 	var shufflednsSkipped bool
+	var beforeMerge int
+	var newCount int
 	if err := runWithSkip(c, "shuffledns", func(sCtx context.Context) error {
 		return c.Tb.RunShuffleDNS(sCtx, c.Domain, c.DNSWordlistPath, c.ResolversPath, c.F.ShufflednsOut)
 	}); err != nil {
@@ -184,6 +214,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			logger.Warning("ShuffleDNS failed: %v", err)
 		}
 	} else {
+		beforeMerge, _ = utils.CountFileLines(c.F.ConsolidatedSubs)
 		// Merge brute-forced subs back into the consolidated list
 		utils.MergeAndDeduplicate(
 			[]string{c.F.ConsolidatedSubs, c.F.ShufflednsOut},
@@ -197,19 +228,25 @@ func stepDNSBruteforce(c *Ctx) bool {
 			}
 			return line == c.Domain || strings.HasSuffix(line, "."+c.Domain)
 		})
-		if merged, _ := utils.CountFileLines(c.F.ConsolidatedSubs); merged > 0 {
-			logger.FileDebug("consolidated subs after shuffledns merge: %d", merged)
+		c.filterSubsToScope(c.F.ConsolidatedSubs)
+		afterMerge, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
+		newCount = afterMerge - beforeMerge
+		if newCount < 0 {
+			newCount = 0
+		}
+		if afterMerge > 0 {
+			logger.FileDebug("consolidated subs after shuffledns merge: %d", afterMerge)
 		}
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.ShufflednsOut) {
-		count, _ := utils.ParseSubdomainsFile(c.ScanID, c.F.ShufflednsOut, "shuffledns")
+		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.ShufflednsOut, "shuffledns")
 		if count > 0 {
 			label := ""
 			if shufflednsSkipped {
 				label = " (partial)"
 			}
-			logger.Info("  Found %d subdomains via DNS brute-force%s", count, label)
+			logger.Info("  Found %d subdomains via DNS brute-force (%d new)%s", count, newCount, label)
 			logger.FileDebug("shuffledns output: %d subdomains -> %s", count, c.F.ShufflednsOut)
 		} else if shufflednsSkipped {
 			logger.Info("  ShuffleDNS skipped — no subdomains found")
@@ -267,7 +304,7 @@ func stepHTTPProbing(c *Ctx) bool {
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.HttpxOut) {
-		count, _ := utils.ParseHttpxOutput(c.ScanID, c.F.HttpxOut)
+		count, _ := ingest.ParseHttpxOutput(c.ScanID, c.F.HttpxOut)
 		if count > 0 {
 			label := ""
 			if httpxSkipped {
@@ -319,7 +356,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 		}
 
 		if c.ScanID > 0 && utils.FileExists(c.F.TlsxOut) {
-			newSubs, certVulns, _ := utils.ParseTlsxOutput(c.ScanID, c.F.TlsxOut, c.Domain)
+			newSubs, certVulns, _ := ingest.ParseTlsxOutput(c.ScanID, c.F.TlsxOut, c.Domain)
 			label := ""
 			if tlsxSkipped {
 				label = " (partial)"
@@ -367,7 +404,9 @@ func stepTLSAnalysis(c *Ctx) bool {
 									seen[san] = true
 									if utils.ValidateDomain(san) == nil {
 										if (san == c.Domain || strings.HasSuffix(san, "."+c.Domain)) && !existingSubs[san] {
-											newSANs = append(newSANs, san)
+											if c.ScopeFilter == nil || (c.ScopeFilter.IsInScope(san) && !c.ScopeFilter.IsOutOfScope(san)) {
+												newSANs = append(newSANs, san)
+											}
 										}
 									}
 								}
@@ -399,7 +438,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 							// Process whatever output httpx produced — partial output may
 							// exist even when the run was skipped before completion.
 							if utils.FileExists(sanHttpxOutFile) {
-								if _, err := utils.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
+								if _, err := ingest.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
 									logger.Warning("Failed to parse SAN httpx output: %v", err)
 								}
 
@@ -461,8 +500,8 @@ func stepTLSAnalysis(c *Ctx) bool {
 			}
 
 			logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
-			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, 0)
-			if count, err := metadata.CollectHostMetadata(c.ScanID, hostTargets, c.Proxy); err != nil {
+			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, metadataHostCap)
+			if count, err := metadata.CollectHostMetadata(c.GoCtx, c.ScanID, hostTargets, c.Proxy); err != nil {
 				logger.Warning("Host metadata enrichment failed: %v", err)
 			} else if count > 0 {
 				logger.Info("  Stored metadata for %d live hosts", count)
@@ -506,7 +545,7 @@ func stepPortScanning(c *Ctx) bool {
 		}
 		// Parse and log results regardless of skip/success — partial output may exist
 		if c.ScanID > 0 && utils.FileExists(c.F.NaabuOut) {
-			count, _ := utils.ParseNaabuOutput(c.ScanID, c.F.NaabuOut)
+			count, _ := ingest.ParseNaabuOutput(c.ScanID, c.F.NaabuOut)
 			if count > 0 {
 				label := ""
 				if naabuSkipped {
@@ -523,4 +562,21 @@ func stepPortScanning(c *Ctx) bool {
 		c.markStepCompleteIfNoFailure("port_scanning")
 	}
 	return c.cancelled()
+}
+
+func (c *Ctx) filterSubsToScope(filePath string) {
+	if c.ScopeFilter == nil || !utils.FileExists(filePath) {
+		return
+	}
+	subCount, _ := utils.CountFileLines(filePath)
+	if err := utils.FilterFileLines(filePath, func(line string) bool {
+		line = strings.TrimSpace(line)
+		return c.ScopeFilter.IsInScope(line) && !c.ScopeFilter.IsOutOfScope(line)
+	}); err == nil {
+		afterCount, _ := utils.CountFileLines(filePath)
+		if filtered := subCount - afterCount; filtered > 0 {
+			logger.Info("  Filtered %d out-of-scope subdomains", filtered)
+			logger.FileDebug("scope filter (%s): %d -> %d subdomains", filePath, subCount, afterCount)
+		}
+	}
 }

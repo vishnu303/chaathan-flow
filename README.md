@@ -119,6 +119,18 @@ chaathan config show                        # Print compiled configuration schem
 chaathan config edit                        # Open config.yaml in the system default CLI text editor
 chaathan config set api_keys.github ghp_xx  # Programmatically write GitHub token for subdomains
 chaathan config set notifications.enabled true # Programmatically enable notification dispatchers
+# Passive search-engine providers for `uncover` (Step 5). FOFA / Quake /
+# ZoomEye use email-style two-factor auth — set both the key and the email
+# half, otherwise the engine is silently dropped from the search:
+chaathan config set api_keys.shodan <key>            # Shodan (key only)
+chaathan config set api_keys.censys_id <id>          # Censys — id + secret pair
+chaathan config set api_keys.censys_secret <secret>
+chaathan config set api_keys.fofa <key>              # FOFA — key + email pair
+chaathan config set api_keys.fofa_email <email>
+chaathan config set api_keys.quake <key>             # Quake (360) — key + email pair
+chaathan config set api_keys.quake_email <email>
+chaathan config set api_keys.zoomeye <key>           # ZoomEye — key + email pair
+chaathan config set api_keys.zoomeye_email <email>
 chaathan config reset                       # Overwrite config.yaml back to system defaults
 ```
 

@@ -1,5 +1,5 @@
 package update_test
- 
+
 import (
 	"encoding/json"
 	"net/http"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/update"
 )
- 
+
 func TestIsNewer(t *testing.T) {
 	tests := []struct {
 		current string

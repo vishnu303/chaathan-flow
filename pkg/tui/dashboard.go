@@ -476,7 +476,7 @@ func getTopTechnologies(scanID int64) []string {
 	for k, v := range techCounts {
 		list = append(list, techCount{k, v})
 	}
-	
+
 	// Sort descending using sort.Slice (L3)
 	sort.Slice(list, func(i, j int) bool {
 		return list[i].count > list[j].count

@@ -55,9 +55,8 @@ func init() {
 // ─────────────────────────────────────────────────────────────
 
 func runSetup(cmd *cobra.Command, args []string) error {
-	return s.Run(s.RunConfig{
+	return s.Run(cmd.Context(), s.RunConfig{
 		Verbose:     Verbose,
 		ForceUpdate: setupUpdate,
 	})
 }
-

@@ -1,0 +1,16 @@
+# Set default behavior to automatic text conversion with LF line endings.
+* text=auto eol=lf
+
+# Go source code and dependencies
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
+# Build and configuration files
+Makefile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Documentation and scripts
+*.md text eol=lf
+*.sh text eol=lf
