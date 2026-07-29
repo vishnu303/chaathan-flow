@@ -660,52 +660,9 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 			newSubs++
 		}
 
-		// Flag expired certificates
-		if result.Expired {
-			err := database.AddVulnerability(
-				scanID, result.Host, "", "expired-ssl",
-				"Expired SSL Certificate",
-				"medium",
-				"Certificate expired: "+result.NotAfter,
-				"", "Issuer: "+result.Issuer,
-			)
-			if err != nil {
-				logger.FileDebug("parser: AddVulnerability failed for %s: %v", result.Host, err)
-			} else {
-				vulns++
-			}
-		}
-
-		// Flag self-signed certificates
-		if result.SelfSigned {
-			err := database.AddVulnerability(
-				scanID, result.Host, "", "self-signed-ssl",
-				"Self-Signed SSL Certificate",
-				"low",
-				"Self-signed certificate detected",
-				"", "CN: "+result.SubjectCN,
-			)
-			if err != nil {
-				logger.FileDebug("parser: AddVulnerability failed for %s: %v", result.Host, err)
-			} else {
-				vulns++
-			}
-		}
-
-		// Flag mismatched certificates
-		if result.MisMatched {
-			err := database.AddVulnerability(
-				scanID, result.Host, "", "ssl-mismatch",
-				"SSL Certificate Hostname Mismatch",
-				"medium",
-				"Certificate CN/SAN does not match hostname",
-				"", "CN: "+result.SubjectCN,
-			)
-			if err != nil {
-				logger.FileDebug("parser: AddVulnerability failed for %s: %v", result.Host, err)
-			} else {
-				vulns++
-			}
+		// Track certificate issues for host metadata and step stats without creating vulnerability findings
+		if result.Expired || result.SelfSigned || result.MisMatched {
+			vulns++
 		}
 
 		host := utils.NormalizeHostValue(result.Host)
