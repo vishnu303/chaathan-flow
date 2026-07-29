@@ -139,7 +139,7 @@ func stepURLDiscovery(c *Ctx) bool {
 	waybackCount, _ := utils.CountFileLines(c.F.WaybackOut)
 	gauCount, _ := utils.CountFileLines(c.F.GauOut)
 	if urlDiscoverySkipped || waybackOK || gauOK || waybackCount > 0 || gauCount > 0 {
-		c.markStepCompleteSafe("url_discovery")
+		c.markStepCompleteIfNoFailure("url_discovery")
 	} else {
 		c.markStepFailedSafe("url_discovery", fmt.Errorf("both Waybackurls and GAU failed"))
 	}
@@ -256,7 +256,7 @@ func stepWebCrawling(c *Ctx) bool {
 	katanaCount, _ := utils.CountFileLines(c.F.KatanaOut)
 	gospiderCount, _ := utils.CountFileLines(c.F.GospiderOut)
 	if crawlSkipped || katanaOK || gospiderOK || katanaCount > 0 || gospiderCount > 0 {
-		c.markStepCompleteSafe("web_crawling")
+		c.markStepCompleteIfNoFailure("web_crawling")
 	} else {
 		c.markStepFailedSafe("web_crawling", fmt.Errorf("both Katana and GoSpider failed"))
 	}
@@ -368,13 +368,16 @@ func stepJSAnalysis(c *Ctx) bool {
 
 	var golinkfinderSkipped bool
 	if err := runWithSkip(c, "GoLinkFinder", func(sCtx context.Context) error {
-		liveHosts := loadLineSlice(c.F.HttpxLiveHosts, jsAnalysisHostCap)
-		if len(liveHosts) == 0 {
-			liveHosts = []string{"https://" + c.Domain}
+		allLiveHosts := loadLineSlice(c.F.HttpxLiveHosts, 0)
+		if len(allLiveHosts) == 0 {
+			allLiveHosts = []string{"https://" + c.Domain}
 		}
 
-		// Filter standard ports 80/443 and deduplicate by hostname
-		filteredHosts := filterAndDeduplicateHosts(liveHosts)
+		// Filter standard ports 80/443 and deduplicate by hostname before capping
+		filteredHosts := filterAndDeduplicateHosts(allLiveHosts)
+		if len(filteredHosts) > jsAnalysisHostCap {
+			filteredHosts = filteredHosts[:jsAnalysisHostCap]
+		}
 		if len(filteredHosts) == 0 {
 			logger.Info("  No live hosts match standard ports 80/443. Skipping GoLinkFinder.")
 			return nil
@@ -457,7 +460,7 @@ func stepJSAnalysis(c *Ctx) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 14 — HTTP Parameter Discovery (Arjun)
+// Step 16 — HTTP Parameter Discovery (x8)
 // ─────────────────────────────────────────────────────────────
 
 // stepParamDiscovery discovers HTTP parameters with x8 (Step 16).
@@ -508,8 +511,11 @@ func stepParamDiscovery(c *Ctx) bool {
 	highSignal := collectHighSignalEndpoints(crawlerFiles)
 	x8Targets = append(x8Targets, highSignal...)
 
-	// Deduplicate targets
+	// Deduplicate targets and cap at paramDiscoveryCap (150)
 	x8Targets = utils.DeduplicateSlice(x8Targets)
+	if len(x8Targets) > paramDiscoveryCap {
+		x8Targets = x8Targets[:paramDiscoveryCap]
+	}
 
 	if len(x8Targets) == 0 {
 		logger.Warning("No targets found for parameter discovery — skipping x8")
@@ -744,19 +750,19 @@ func stepURLConsolidation(c *Ctx) bool {
 			logger.Warning("Failed to persist live URLs to DB: %v", err)
 		} else {
 			label := ""
-			if urlCheckSkipped {
+			if urlCheckSkipped || !utils.FileExists(c.F.AllURLsLive) || !fileModifiedAfter(c.F.AllURLsLive, c.StartTime) {
 				label = " (from fallback)"
 			}
 			logger.Info("  Stored %d live URLs in database%s", dbCount, label)
 		}
 	}
 
-	// ROI metadata enrichment
+	// ROI metadata enrichment (capped at per-host 5 and total metadataHostCap=250)
 	if c.ScanID > 0 && utils.FileExists(c.F.AllURLsLive) {
-		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 0, 0)
+		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 5, metadataHostCap)
 		if metaTargetCount > 0 {
 			logger.SubStep("Collecting lightweight metadata for %d high-value URLs...", metaTargetCount)
-			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, 0)
+			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, metadataHostCap)
 			if count, err := metadata.CollectURLMetadata(c.GoCtx, c.ScanID, metaTargets, c.Proxy); err != nil {
 				logger.Warning("URL metadata enrichment failed: %v", err)
 			} else if count > 0 {
@@ -1255,8 +1261,8 @@ func stepJSSecretScan(c *Ctx) bool {
 	writeEmptyFile(c.F.GFSecretsMatches)
 	writeEmptyFile(c.F.GFSecretsFinal)
 
-	jsLimit := 0
-	if c.Cfg != nil {
+	jsLimit := 2000
+	if c.Cfg != nil && c.Cfg.General.JSLimit > 0 {
 		jsLimit = c.Cfg.General.JSLimit
 	}
 	jsCount := collectJSURLsFromFile(c.F.AllURLsLive, c.F.JSURLsFile, jsLimit)

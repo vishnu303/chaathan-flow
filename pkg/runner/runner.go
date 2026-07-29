@@ -360,7 +360,9 @@ func killProcessGroup(cmd *exec.Cmd) {
 	}
 
 	// Negative PID targets the entire process group created via Setpgid.
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		_ = cmd.Process.Kill()
+	}
 }
 
 // ── Docker image registry ────────────────────────────────────────────────────

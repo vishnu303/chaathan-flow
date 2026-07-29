@@ -196,9 +196,9 @@ func stepGitHubRecon(c *Ctx) bool {
 
 	if c.GitHubToken == "" {
 		logger.StepHeader("Step 4: Skipping GitHub Recon (no token provided)")
-		logger.Warning("Set GITHUB_TOKEN env var or use --github-token for GitHub recon")
+		logger.Warning("Set api_keys.github in config.yaml or pass --github-token flag for GitHub recon")
 		logger.FileDebug("github_recon skipped: no token provided")
-		c.markStepCompleteSafe("github_recon")
+		c.markStepCompleteIfNoFailure("github_recon")
 		return c.cancelled()
 	}
 

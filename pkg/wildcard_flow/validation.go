@@ -46,7 +46,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 		c.F.AmassOut,
 		c.F.GithubSubsOut,
 		c.F.HakrawlerOut,
-		c.F.UncoverHostsOut, // hostnames extracted from uncover.json in Step 4
+		c.F.UncoverHostsOut, // hostnames extracted from uncover.json in Step 5
 	)
 	logger.FileDebug("dns_consolidation: %d passive source files available (subfinder, assetfinder, sublist3r, amass, github, hakrawler, uncover_hosts)", len(passiveSources))
 	if err := utils.MergeAndDeduplicate(passiveSources, c.F.ConsolidatedSubs); err != nil {
@@ -86,6 +86,13 @@ func stepDNSConsolidation(c *Ctx) bool {
 		if purged, err := ingest.SyncSubdomainsWithConsolidated(c.ScanID, c.F.ConsolidatedSubs); err == nil && purged > 0 {
 			logger.FileDebug("purged %d out-of-scope subdomains from database", purged)
 		}
+	}
+
+	subCount, _ = utils.CountFileLines(c.F.ConsolidatedSubs)
+	if subCount == 0 {
+		logger.Warning("No valid in-scope subdomains found for target %s — skipping dependent steps", c.Domain)
+		c.markStepCompleteIfNoFailure("dns_resolution")
+		return c.cancelled()
 	}
 
 	// Sync consolidated subdomains to DB
@@ -480,7 +487,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 			}
 
 			logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
-			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, 0)
+			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, metadataHostCap)
 			if count, err := metadata.CollectHostMetadata(c.GoCtx, c.ScanID, hostTargets, c.Proxy); err != nil {
 				logger.Warning("Host metadata enrichment failed: %v", err)
 			} else if count > 0 {
