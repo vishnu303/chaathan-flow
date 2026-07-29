@@ -511,6 +511,9 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 		if t.APIKeys.Chaos != "" {
 			envVars = append(envVars, "PDCP_API_KEY="+t.APIKeys.Chaos)
 		}
+		if t.APIKeys.SecurityTrails != "" {
+			envVars = append(envVars, "SECURITYTRAILS_API_KEY="+t.APIKeys.SecurityTrails)
+		}
 		if len(envVars) > 0 {
 			opts = append(opts, runner.WithEnv(envVars...))
 		}
