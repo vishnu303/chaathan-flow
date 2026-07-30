@@ -31,7 +31,7 @@ func stepAmassIntel(c *Ctx) (bool, error) {
 			return c.cancelled(), err
 		} else {
 			count, _ := utils.CountFileLines(amassIntelOut)
-			logger.Success("Discovered %d root domains", count)
+			logger.Result(count, "root domains discovered")
 			c.Completed++
 		}
 	} else {

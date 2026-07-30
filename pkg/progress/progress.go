@@ -103,7 +103,7 @@ func Summary(installed, skipped, failed int32, duration time.Duration) {
 
 // Tip prints a dim tip line.
 func Tip(msg string) {
-	logger.Print("\n  %s💡 %s%s\n\n", Dim, msg, Reset)
+	logger.Print("\n  %s▸ %s%s\n\n", Dim, msg, Reset)
 }
 
 // ── Tracker ──────────────────────────────────────────────────────────────────
@@ -206,14 +206,11 @@ func (t *Tracker) render() {
 
 	// ── progress bar ──
 	barW := 20
-	filled := 0
+	pct := 0.0
 	if t.total > 0 {
-		filled = int(float64(done) / float64(t.total) * float64(barW))
-		if filled > barW {
-			filled = barW
-		}
+		pct = float64(done) / float64(t.total) * 100
 	}
-	bar := Green + strings.Repeat("━", filled) + Reset + Dim + strings.Repeat("╌", barW-filled) + Reset
+	bar := logger.Bar(pct, barW)
 
 	// ── active tool names (sorted for a stable, non-flickering display) ──
 	names := make([]string, 0, len(t.active))

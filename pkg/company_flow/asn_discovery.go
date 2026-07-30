@@ -30,7 +30,7 @@ func stepMetabigor(c *Ctx) (bool, error) {
 			return c.cancelled(), err
 		} else {
 			count, _ := utils.CountFileLines(asnOut)
-			logger.Success("Found %d ASN/network ranges", count)
+			logger.Result(count, "ASN/network ranges found")
 			c.Completed++
 		}
 	} else {

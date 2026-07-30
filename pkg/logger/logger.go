@@ -403,25 +403,14 @@ func PhaseBanner(num int, name string) {
 // No emojis are used here — emoji terminal widths vary across fonts and
 // caused right-edge misalignment in the previous design.
 func ScanHeader(scanType string, target string, scanID int64) {
-	const w = 48 // inner content width
-
-	boxLine := func(content string) {
-		pad := w - 3 - visibleLen(content)
-		if pad < 0 {
-			pad = 0
-		}
-		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s %s%s│%s\n",
-			Cyan+Bold, Reset, content, strings.Repeat(" ", pad), Cyan+Bold, Reset))
-	}
-
 	logWrite(os.Stdout, "\n")
-	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, strings.Repeat("─", w), Reset))
-	boxLine(fmt.Sprintf("%sCHAATHAN%s · %s%s SCAN%s", Dim, Reset, White+Bold, strings.ToUpper(scanType), Reset))
-	boxLine(fmt.Sprintf("%sTarget%s    %s%s%s", Dim, Reset, BrightCyan+Bold, target, Reset))
+	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, strings.Repeat("─", boxInnerWidth), Reset))
+	renderBoxLine(fmt.Sprintf("%sCHAATHAN%s · %s%s SCAN%s", Dim, Reset, White+Bold, strings.ToUpper(scanType), Reset))
+	renderBoxLine(fmt.Sprintf("%sTarget%s    %s%s%s", Dim, Reset, BrightCyan+Bold, target, Reset))
 	if scanID > 0 {
-		boxLine(fmt.Sprintf("%sScan ID%s   %s%d%s", Dim, Reset, White, scanID, Reset))
+		renderBoxLine(fmt.Sprintf("%sScan ID%s   %s%d%s", Dim, Reset, White, scanID, Reset))
 	}
-	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, strings.Repeat("─", w), Reset))
+	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, strings.Repeat("─", boxInnerWidth), Reset))
 	logWrite(os.Stdout, "\n")
 }
 
@@ -458,18 +447,7 @@ func ResultSev(severity string, count int, format string, args ...any) {
 
 // sevDotColor maps a severity name to an ANSI color for result dots.
 func sevDotColor(sev string) string {
-	switch strings.ToLower(sev) {
-	case "critical":
-		return BrightRed
-	case "high":
-		return Red
-	case "medium":
-		return BrightYellow
-	case "low":
-		return BrightGreen
-	default:
-		return BrightBlue
-	}
+	return SevColor(sev)
 }
 
 // ── Summary helpers ─────────────────────────────────────────────────────────
@@ -484,8 +462,6 @@ type Stat struct {
 // ScanSummary prints a scan completion summary in a fixed-width box.
 // Vulnerability stats (labels containing "Vuln") are severity-colored.
 func ScanSummary(status string, target string, scanID int64, duration time.Duration, stats []Stat) {
-	const w = 48 // inner content width
-
 	statusIcon := "✓"
 	statusColor := BrightGreen
 	switch status {
@@ -497,33 +473,24 @@ func ScanSummary(status string, target string, scanID int64, duration time.Durat
 		statusColor = BrightRed
 	}
 
-	boxLine := func(content string) {
-		pad := w - 3 - visibleLen(content)
-		if pad < 0 {
-			pad = 0
-		}
-		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s %s%s│%s\n",
-			Cyan+Bold, Reset, content, strings.Repeat(" ", pad), Cyan+Bold, Reset))
-	}
-
 	logWrite(os.Stdout, "\n")
-	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, strings.Repeat("─", w), Reset))
-	boxLine(fmt.Sprintf("%s%s %s SCAN%s", statusColor+Bold, statusIcon, strings.ToUpper(status), Reset))
-	boxLine(fmt.Sprintf("%s%s%s · Scan #%d · %s%s%s", White+Bold, target, Reset, scanID, BrightCyan, FmtDuration(duration), Reset))
+	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, strings.Repeat("─", boxInnerWidth), Reset))
+	renderBoxLine(fmt.Sprintf("%s%s %s SCAN%s", statusColor+Bold, statusIcon, strings.ToUpper(status), Reset))
+	renderBoxLine(fmt.Sprintf("%s%s%s · Scan #%d · %s%s%s", White+Bold, target, Reset, scanID, BrightCyan, FmtDuration(duration), Reset))
 
 	if len(stats) > 0 {
-		boxLine(fmt.Sprintf("%s%s%s", Dim, strings.Repeat("─", w-3), Reset))
+		renderBoxLine(fmt.Sprintf("%s%s%s", Dim, strings.Repeat("─", boxInnerWidth-3), Reset))
 		for _, stat := range stats {
 			valueColor := BrightCyan + Bold
 			if strings.HasPrefix(stat.Label, "Vuln (") {
 				sev := strings.TrimSuffix(strings.TrimPrefix(stat.Label, "Vuln ("), ")")
 				valueColor = sevDotColor(sev) + Bold
 			}
-			boxLine(fmt.Sprintf("%s%s%s %s%s%s", Dim, padRight(stat.Label, 14), Reset, valueColor, stat.Value, Reset))
+			renderBoxLine(fmt.Sprintf("%s%s%s %s%s%s", Dim, padRight(stat.Label, 14), Reset, valueColor, stat.Value, Reset))
 		}
 	}
 
-	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, strings.Repeat("─", w), Reset))
+	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, strings.Repeat("─", boxInnerWidth), Reset))
 }
 
 // NextSteps prints styled next step hints
@@ -536,6 +503,91 @@ func NextSteps(hints []string) {
 		logWrite(os.Stdout, fmt.Sprintf("     %s▸%s %s%s%s\n", Purple, Reset, Dim, h, Reset))
 	}
 	logWrite(os.Stdout, "\n")
+}
+
+// ── Shared UI primitives ────────────────────────────────────────────────────
+
+// boxInnerWidth is the inner content width shared by all box renderers
+// (ScanHeader, ScanSummary, Box). Matches the ─ run in box borders.
+const boxInnerWidth = 48
+
+// renderBoxLine writes one aligned box content line. Padding is computed
+// from the visible width only, so content may carry ANSI colors safely.
+func renderBoxLine(content string) {
+	pad := boxInnerWidth - 3 - visibleLen(content)
+	if pad < 0 {
+		pad = 0
+	}
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s %s%s│%s\n",
+		Cyan+Bold, Reset, content, strings.Repeat(" ", pad), Cyan+Bold, Reset))
+}
+
+// Box prints a generic fixed-width box with an optional bold title line
+// followed by content lines. Lines may contain ANSI colors.
+func Box(title string, lines []string) {
+	logWrite(os.Stdout, "\n")
+	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, strings.Repeat("─", boxInnerWidth), Reset))
+	if title != "" {
+		renderBoxLine(fmt.Sprintf("%s%s%s", White+Bold, title, Reset))
+	}
+	for _, l := range lines {
+		renderBoxLine(l)
+	}
+	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, strings.Repeat("─", boxInnerWidth), Reset))
+	logWrite(os.Stdout, "\n")
+}
+
+// Bar renders a progress bar of the given width using ▰▱ glyphs with the
+// filled portion in bright green. pct is clamped to [0, 100].
+func Bar(pct float64, width int) string {
+	if width <= 0 {
+		width = 10
+	}
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := int(pct / 100 * float64(width))
+	if filled > width {
+		filled = width
+	}
+	return BrightGreen + strings.Repeat("▰", filled) + Dim + strings.Repeat("▱", width-filled) + Reset
+}
+
+// TableHeader writes a dim uppercase column-header row plus a matching
+// dash-underline row to w (typically a *tabwriter.Writer).
+func TableHeader(w io.Writer, cols ...string) {
+	upper := make([]string, len(cols))
+	dashes := make([]string, len(cols))
+	for i, c := range cols {
+		upper[i] = strings.ToUpper(c)
+		n := utf8.RuneCountInString(c)
+		if n < 2 {
+			n = 2
+		}
+		dashes[i] = strings.Repeat("─", n)
+	}
+	fmt.Fprintf(w, "%s%s%s\n", Dim, strings.Join(upper, "\t"), Reset)
+	fmt.Fprintf(w, "%s%s%s\n", Dim, strings.Join(dashes, "\t"), Reset)
+}
+
+// TableRow writes a single tab-separated row to w.
+func TableRow(w io.Writer, cells ...string) {
+	fmt.Fprintln(w, strings.Join(cells, "\t"))
+}
+
+// Added prints a diff addition line with a green + marker.
+func Added(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	logWrite(os.Stdout, fmt.Sprintf("  %s+%s %s\n", BrightGreen, Reset, msg))
+}
+
+// Removed prints a diff removal line with a red − marker.
+func Removed(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	logWrite(os.Stdout, fmt.Sprintf("  %s−%s %s\n", BrightRed, Reset, msg))
 }
 
 // ── Utility ─────────────────────────────────────────────────────────────────

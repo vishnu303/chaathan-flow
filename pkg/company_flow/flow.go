@@ -339,7 +339,7 @@ func finalizeScan(c *Ctx, status string) {
 		for _, e := range entries {
 			if !e.IsDir() {
 				if info, _ := e.Info(); info != nil && info.Size() > 0 {
-					logger.Info("  📄 %s (%s)", e.Name(), utils.FormatSize(info.Size()))
+					logger.Print("  %s▸ %s (%s)%s\n", logger.Dim, e.Name(), utils.FormatSize(info.Size()), logger.Reset)
 				}
 			}
 		}

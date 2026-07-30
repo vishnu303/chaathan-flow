@@ -147,7 +147,7 @@ func logFingerprintSummary(c *Ctx) {
 		}
 		if len(wafHosts) > 0 {
 			for waf, hosts := range wafHosts {
-				logger.Info("  🛡️  %s → %s", waf, strings.Join(hosts, ", "))
+				logger.Info("  ▸ %s → %s", waf, strings.Join(hosts, ", "))
 			}
 		}
 	}
@@ -167,7 +167,7 @@ func logFingerprintSummary(c *Ctx) {
 				if end > len(parts) {
 					end = len(parts)
 				}
-				logger.Info("  🔧 %s", strings.Join(parts[i:end], ", "))
+				logger.Info("  ▸ %s", strings.Join(parts[i:end], ", "))
 			}
 		}
 	}

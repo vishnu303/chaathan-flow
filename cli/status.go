@@ -56,8 +56,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 		logger.Info("No scans found yet. Run: chaathan scan -d example.com")
 	} else {
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tTARGET\tTYPE\tSTATUS\tAGE")
-		fmt.Fprintln(w, "──\t──────\t────\t──────\t───")
+		logger.TableHeader(w, "ID", "TARGET", "TYPE", "STATUS", "AGE")
 		for _, s := range scans {
 			age := time.Since(s.StartedAt).Round(time.Minute)
 			var ageStr string
@@ -69,7 +68,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 				ageStr = fmt.Sprintf("%.0fm ago", age.Minutes())
 			}
 
-			fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", s.ID, s.Target, s.Type, logger.EmojiStatus(s.Status), ageStr)
+			logger.TableRow(w, fmt.Sprintf("%d", s.ID), s.Target, s.Type, logger.ColorStatus(s.Status), ageStr)
 		}
 		w.Flush()
 	}
@@ -89,20 +88,8 @@ func runStatus(cmd *cobra.Command, args []string) {
 			}
 			pct := float64(completed) / float64(total) * 100
 
-			// Build progress bar
-			barWidth := 30
-			filled := int(float64(barWidth) * pct / 100)
-			bar := ""
-			for i := range barWidth {
-				if i < filled {
-					bar += "█"
-				} else {
-					bar += "░"
-				}
-			}
-
 			logger.Info("Scan #%d — %s", state.ScanID, state.Target)
-			logger.Info("  Progress: [%s] %.0f%% (%d/%d steps)", bar, pct, completed, total)
+			logger.Info("  Progress: %s %.0f%% (%d/%d steps)", logger.Bar(pct, 30), pct, completed, total)
 
 			// Show current step index
 			if state.CurrentStep < len(scan.WildcardSteps) {

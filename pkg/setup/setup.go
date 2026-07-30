@@ -63,16 +63,16 @@ func (c *SetupContext) RunCommandInDir(dir string, displayName string, name stri
 func Run(ctx context.Context, cfg RunConfig) error {
 	start := time.Now()
 
-	title := "🔧 Chaathan Setup"
+	title := "Chaathan Setup"
 	if cfg.ForceUpdate {
-		title = "🔄 Chaathan Setup (update mode — reinstalling all tools)"
+		title = "Chaathan Setup (update mode — reinstalling all tools)"
 	}
 	progress.Header(title)
 
 	logger, err := NewSetupLogger()
 	if err == nil {
 		defer logger.Close()
-		progress.ItemInfo(fmt.Sprintf("📝 Log file: %s", logger.Path()))
+		progress.ItemInfo(fmt.Sprintf("Log file: %s", logger.Path()))
 	}
 
 	setupCtx := &SetupContext{

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"text/tabwriter"
 	"time"
 
@@ -87,9 +88,9 @@ func runScansList(cmd *cobra.Command, args []string) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTARGET\tTYPE\tSTATUS\tSTARTED\tDURATION")
-	fmt.Fprintln(w, "--\t------\t----\t------\t-------\t--------")
+	logger.TableHeader(w, "ID", "TARGET", "TYPE", "STATUS", "STARTED", "DURATION")
 
+	var mgr *scan.Manager
 	for _, s := range scans {
 		duration := "-"
 		if s.CompletedAt != nil {
@@ -98,11 +99,22 @@ func runScansList(cmd *cobra.Command, args []string) {
 			duration = time.Since(s.StartedAt).Round(time.Second).String() + " (running)"
 		}
 
-		fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
-			s.ID,
+		status := logger.ColorStatus(s.Status)
+		if s.Status == "running" {
+			if mgr == nil {
+				mgr = scan.NewManager(paths.StateDir())
+			}
+			if st, err := mgr.LoadState(s.ID); err == nil {
+				pct := st.Progress()
+				status += " " + logger.Bar(pct, 8) + fmt.Sprintf(" %d%%", int(pct))
+			}
+		}
+
+		logger.TableRow(w,
+			fmt.Sprintf("%d", s.ID),
 			utils.Truncate(s.Target, 30),
 			s.Type,
-			logger.ColorStatus(s.Status),
+			status,
 			s.StartedAt.Format("2006-01-02 15:04"),
 			duration,
 		)
@@ -128,43 +140,72 @@ func runScansShow(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	logger.Section("Scan #%d", s.ID)
-	logger.Print("Target:     %s\n", s.Target)
-	logger.Print("Type:       %s\n", s.Type)
-	logger.Print("Status:     %s\n", logger.ColorStatus(s.Status))
-	logger.Print("Started:    %s\n", s.StartedAt.Format("2006-01-02 15:04:05"))
-	if s.CompletedAt != nil {
-		logger.Print("Completed:  %s\n", s.CompletedAt.Format("2006-01-02 15:04:05"))
-		logger.Print("Duration:   %s\n", s.CompletedAt.Sub(s.StartedAt).Round(time.Second))
+	lines := []string{
+		fmt.Sprintf("%s%-10s%s %s", logger.Dim, "Target", logger.Reset, s.Target),
+		fmt.Sprintf("%s%-10s%s %s", logger.Dim, "Type", logger.Reset, s.Type),
+		fmt.Sprintf("%s%-10s%s %s", logger.Dim, "Status", logger.Reset, logger.ColorStatus(s.Status)),
+		fmt.Sprintf("%s%-10s%s %s", logger.Dim, "Started", logger.Reset, s.StartedAt.Format("2006-01-02 15:04:05")),
 	}
-	logger.Print("Results:    %s\n", s.ResultDir)
+	if s.CompletedAt != nil {
+		lines = append(lines,
+			fmt.Sprintf("%s%-10s%s %s", logger.Dim, "Completed", logger.Reset, s.CompletedAt.Format("2006-01-02 15:04:05")),
+			fmt.Sprintf("%s%-10s%s %s", logger.Dim, "Duration", logger.Reset, s.CompletedAt.Sub(s.StartedAt).Round(time.Second)),
+		)
+	}
+	lines = append(lines, fmt.Sprintf("%s%-10s%s %s", logger.Dim, "Results", logger.Reset, s.ResultDir))
+	logger.Box(fmt.Sprintf("SCAN #%d", s.ID), lines)
 
 	logger.Section("Statistics")
-	logger.Print("Subdomains: %d (Live: %d)\n", stats.TotalSubdomains, stats.LiveSubdomains)
-	logger.Print("Ports:      %d\n", stats.TotalPorts)
-	logger.Print("URLs:       %d\n", stats.TotalURLs)
-	logger.Print("Endpoints:  %d\n", stats.TotalEndpoints)
+	logger.Result(stats.LiveSubdomains, "live subdomains (%d total)", stats.TotalSubdomains)
+	logger.Result(stats.TotalPorts, "open ports")
+	logger.Result(stats.TotalURLs, "URLs discovered")
+	logger.Result(stats.TotalEndpoints, "endpoints discovered")
 
 	if len(stats.Vulnerabilities) > 0 {
 		logger.Section("Vulnerabilities")
-		for sev, count := range stats.Vulnerabilities {
-			logger.Print("  %s: %d\n", logger.ColorSeverity(sev), count)
+		sevRank := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+		sevs := make([]string, 0, len(stats.Vulnerabilities))
+		for sev := range stats.Vulnerabilities {
+			sevs = append(sevs, sev)
+		}
+		sort.Slice(sevs, func(i, j int) bool {
+			ri, oki := sevRank[sevs[i]]
+			rj, okj := sevRank[sevs[j]]
+			if !oki {
+				ri = 99
+			}
+			if !okj {
+				rj = 99
+			}
+			return ri < rj
+		})
+		for _, sev := range sevs {
+			logger.ResultSev(sev, stats.Vulnerabilities[sev], "%s findings", sev)
 		}
 	}
 
 	// Show top 5 critical/high vulns
 	vulns, _ := database.GetVulnerabilities(scanID)
-	criticalHigh := 0
+	var top []database.Vulnerability
 	for _, v := range vulns {
 		if v.Severity == "critical" || v.Severity == "high" {
-			criticalHigh++
-			if criticalHigh <= 5 {
-				logger.Print("\n[%s] %s\n  Host: %s\n", logger.ColorSeverity(v.Severity), v.Name, v.Host)
-			}
+			top = append(top, v)
 		}
 	}
-	if criticalHigh > 5 {
-		logger.Print("\n... and %d more critical/high vulnerabilities\n", criticalHigh-5)
+	if len(top) > 0 {
+		logger.Section("Top Critical/High Findings")
+		for i, v := range top {
+			if i >= 5 {
+				break
+			}
+			logger.Print("  %s●%s %s%s%s %s· %s%s\n",
+				logger.SevColor(v.Severity), logger.Reset,
+				logger.Bold, v.Name, logger.Reset,
+				logger.Dim, v.Host, logger.Reset)
+		}
+		if len(top) > 5 {
+			logger.Print("  %s… and %d more critical/high vulnerabilities%s\n", logger.Dim, len(top)-5, logger.Reset)
+		}
 	}
 }
 

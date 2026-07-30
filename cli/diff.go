@@ -98,7 +98,7 @@ func runDiff(cmd *cobra.Command, args []string) {
 	logger.Section("Scan Diff: #%d vs #%d", oldID, newID)
 	logger.Info("Old: #%d — %s (%s)", oldScan.ID, oldScan.Target, oldScan.StartedAt.Format("2006-01-02 15:04"))
 	logger.Info("New: #%d — %s (%s)", newScan.ID, newScan.Target, newScan.StartedAt.Format("2006-01-02 15:04"))
-	fmt.Println()
+	logger.Print("\n")
 
 	diffSubdomains(oldID, newID)
 	diffPorts(oldID, newID)
@@ -123,28 +123,26 @@ func diffSubdomains(oldID, newID int64) {
 	d := diffSets(oldSubs, newSubs, func(s database.Subdomain) string { return s.Domain })
 
 	logger.Section("Subdomains")
-	logger.Info("Old: %d | New: %d | Added: %d | Removed: %d", len(oldSubs), len(newSubs), len(d.Added), len(d.Removed))
+	logger.Info("Old: %d | New: %d", len(oldSubs), len(newSubs))
 
 	if len(d.Added) > 0 {
-		fmt.Println()
-		logger.Success("New subdomains:")
+		logger.Result(len(d.Added), "new subdomains")
 		for _, s := range d.Added {
-			fmt.Printf("  + %s\n", s.Domain)
+			logger.Added("%s", s.Domain)
 		}
 	}
 
 	if len(d.Removed) > 0 {
-		fmt.Println()
-		logger.Warning("Removed subdomains:")
+		logger.Result(len(d.Removed), "removed subdomains")
 		for _, s := range d.Removed {
-			fmt.Printf("  - %s\n", s.Domain)
+			logger.Removed("%s", s.Domain)
 		}
 	}
 
 	if len(d.Added) == 0 && len(d.Removed) == 0 {
-		logger.Info("  No changes")
+		logger.Info("No changes")
 	}
-	fmt.Println()
+	logger.Print("\n")
 }
 
 func diffPorts(oldID, newID int64) {
@@ -164,22 +162,22 @@ func diffPorts(oldID, newID int64) {
 	d := diffSets(oldPorts, newPorts, func(p database.Port) portKey { return portKey{p.Host, p.Port} })
 
 	logger.Section("Open Ports")
-	logger.Info("Old: %d | New: %d | New ports: %d", len(oldPorts), len(newPorts), len(d.Added))
+	logger.Info("Old: %d | New: %d", len(oldPorts), len(newPorts))
 
 	if len(d.Added) > 0 {
-		fmt.Println()
+		logger.Result(len(d.Added), "new open ports")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "  + HOST\tPORT\tPROTOCOL\tSERVICE")
+		logger.TableHeader(w, "HOST", "PORT", "PROTOCOL", "SERVICE")
 		for _, p := range d.Added {
-			fmt.Fprintf(w, "  + %s\t%d\t%s\t%s\n", p.Host, p.Port, p.Protocol, p.Service)
+			logger.TableRow(w, logger.BrightGreen+"+"+logger.Reset+" "+p.Host, fmt.Sprintf("%d", p.Port), p.Protocol, p.Service)
 		}
 		w.Flush()
 	}
 
 	if len(d.Added) == 0 {
-		logger.Info("  No new ports")
+		logger.Info("No new ports")
 	}
-	fmt.Println()
+	logger.Print("\n")
 }
 
 func diffVulns(oldID, newID int64) {
@@ -199,22 +197,23 @@ func diffVulns(oldID, newID int64) {
 	d := diffSets(oldVulns, newVulns, func(v database.Vulnerability) vulnKey { return vulnKey{v.Host, v.TemplateID} })
 
 	logger.Section("Vulnerabilities")
-	logger.Info("Old: %d | New: %d | New findings: %d", len(oldVulns), len(newVulns), len(d.Added))
+	logger.Info("Old: %d | New: %d", len(oldVulns), len(newVulns))
 
 	if len(d.Added) > 0 {
-		fmt.Println()
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "  + SEVERITY\tHOST\tNAME\tTEMPLATE")
+		logger.Result(len(d.Added), "new findings")
 		for _, v := range d.Added {
-			fmt.Fprintf(w, "  + %s\t%s\t%s\t%s\n", logger.EmojiSeverity(v.Severity), v.Host, v.Name, v.TemplateID)
+			logger.Print("  %s+%s %s●%s %s%s%s %s%s%s\n",
+				logger.BrightGreen, logger.Reset,
+				logger.SevColor(v.Severity), logger.Reset,
+				logger.Bold, v.Name, logger.Reset,
+				logger.Dim, v.Host, logger.Reset)
 		}
-		w.Flush()
 	}
 
 	if len(d.Added) == 0 {
-		logger.Info("  No new vulnerabilities")
+		logger.Info("No new vulnerabilities")
 	}
-	fmt.Println()
+	logger.Print("\n")
 }
 
 func diffURLs(oldID, newID int64) {
@@ -230,8 +229,10 @@ func diffURLs(oldID, newID int64) {
 	d := diffSets(oldURLs, newURLs, func(u database.URL) string { return u.URL })
 
 	logger.Section("URLs")
-	logger.Info("Old: %d | New: %d | New URLs: %d", len(oldURLs), len(newURLs), len(d.Added))
-	if len(d.Added) == 0 {
-		logger.Info("  No new URLs")
+	logger.Info("Old: %d | New: %d", len(oldURLs), len(newURLs))
+	if len(d.Added) > 0 {
+		logger.Result(len(d.Added), "new URLs")
+	} else {
+		logger.Info("No new URLs")
 	}
 }
