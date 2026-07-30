@@ -184,6 +184,7 @@ func Run(cfg RunConfig) error {
 	// Wire notification logging (FileDebug no-ops if --log is inactive)
 	if c.Notifier != nil {
 		c.Notifier.LogFunc = logger.FileDebug
+		c.Notifier.Done = goCtx.Done()
 	}
 
 	// ── Execute steps ────────────────────────────────────────

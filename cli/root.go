@@ -117,7 +117,7 @@ func initializeApp(cmd *cobra.Command, args []string) error {
 	if !Verbose && Cfg.General.Verbose {
 		Verbose = true
 	}
-	if Mode == "native" && Cfg.General.Mode != "" {
+	if !cmd.Flags().Changed("mode") && Cfg.General.Mode != "" {
 		Mode = Cfg.General.Mode
 	}
 

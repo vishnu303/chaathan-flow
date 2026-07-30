@@ -566,7 +566,7 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 }
 
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
-	args := []string{"--providers", "wayback", "--subs", domain}
+	args := []string{"--providers", "wayback,commoncrawl,otx,urlscan", "--subs", domain}
 	args = t.appendProxy(args, "--proxy")
 	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(gauMaxTimeout))
 	if strings.TrimSpace(output) != "" {
@@ -666,7 +666,7 @@ func (t *ToolBox) RunKatana(ctx context.Context, inputFile string, outputFile st
 		"-list", inputFile,
 		"-o", outputFile,
 		"-jc",
-		"-timeout", "10", // seconds per request
+		"-timeout", "15", // seconds per request; extra headroom for proxy pools
 	}
 	args = t.appendCommon(args, appendOptions{
 		uaHeader:    true,

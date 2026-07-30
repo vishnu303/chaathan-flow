@@ -703,6 +703,8 @@ type UncoverResult struct {
 // ParseUncoverOutput parses uncover JSON output and extracts subdomains/ports.
 func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (subs int, ports int, err error) {
 	seenHosts := make(map[string]bool)
+	// Batch subdomains by source to reduce per-host DB transactions.
+	batchBySource := make(map[string][]string)
 
 	err = scanJSONLines(filePath, func(line string) {
 		var result UncoverResult
@@ -719,11 +721,9 @@ func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (sub
 		if host != "" && !seenHosts[host] {
 			seenHosts[host] = true
 			if utils.ValidateDomain(host) == nil && isDomainInScope(host, targetDomain) {
-				if err := database.AddSubdomains(scanID, []string{host}, "uncover-"+result.Source); err != nil {
-					logger.FileDebug("parser: AddSubdomains failed for %s: %v", host, err)
-				} else {
-					subs++
-				}
+				src := "uncover-" + result.Source
+				batchBySource[src] = append(batchBySource[src], host)
+				subs++
 			}
 		}
 
@@ -740,6 +740,13 @@ func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (sub
 			}
 		}
 	})
+
+	// Flush batched subdomains in one transaction per source.
+	for src, hosts := range batchBySource {
+		if err := database.AddSubdomains(scanID, hosts, src); err != nil {
+			logger.FileDebug("parser: AddSubdomains batch failed for source %s (%d hosts): %v", src, len(hosts), err)
+		}
+	}
 
 	return subs, ports, err
 }
