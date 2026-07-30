@@ -107,6 +107,9 @@ type Notifier struct {
 	// wires this to logger.FileDebug so entries appear in --log files
 	// without pkg/notify depending on pkg/logger.
 	LogFunc func(format string, args ...any)
+	// Done, when non-nil, is checked between retry attempts so that
+	// notifications abort promptly when the parent scan is cancelled.
+	Done <-chan struct{}
 }
 
 // New creates a new Notifier
@@ -651,7 +654,16 @@ func (n *Notifier) postJSON(url string, payload any) error {
 		if attempt > 0 {
 			backoff := time.Duration(attempt) * time.Second
 			n.logf("[WARN] notification retry %d/%d after %v", attempt, maxRetries, backoff)
-			time.Sleep(backoff)
+			// Abort retry wait early if the parent scan is cancelled.
+			if n.Done != nil {
+				select {
+				case <-n.Done:
+					return fmt.Errorf("notification cancelled: %w", lastErr)
+				case <-time.After(backoff):
+				}
+			} else {
+				time.Sleep(backoff)
+			}
 		}
 
 		req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))

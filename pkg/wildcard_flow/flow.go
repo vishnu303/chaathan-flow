@@ -291,37 +291,39 @@ func Run(cfg RunConfig) error {
 
 	orchestrate.HandleSignals(goCtx, cancel)
 
-	// Listen for 's'/'S' on stdin — skip the currently running tool
+	// Listen for 's'/'S' on stdin — skip the currently running tool.
+	// A dedicated reader goroutine feeds bytes into a channel so the outer
+	// goroutine can exit promptly on context cancellation (os.Stdin.Read
+	// is blocking and cannot be interrupted directly).
+	stdinCh := make(chan byte, 1)
 	go func() {
 		buf := make([]byte, 1)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil || n == 0 {
+				close(stdinCh)
+				return
+			}
+			stdinCh <- buf[0]
+		}
+	}()
+	go func() {
 		for {
 			select {
 			case <-goCtx.Done():
 				return
-			default:
-			}
-
-			n, err := os.Stdin.Read(buf)
-			if err != nil {
-				return
-			}
-			if n == 0 {
-				continue
-			}
-
-			select {
-			case <-goCtx.Done():
-				return
-			default:
-			}
-
-			if buf[0] == 's' || buf[0] == 'S' {
-				select {
-				case skipChan <- struct{}{}:
-					// "Skip requested" is logged by runWithSkip when it receives
-					// the signal, ensuring correct message ordering.
-				default:
-					// already a skip pending; ignore
+			case b, ok := <-stdinCh:
+				if !ok {
+					return
+				}
+				if b == 's' || b == 'S' {
+					select {
+					case skipChan <- struct{}{}:
+						// "Skip requested" is logged by runWithSkip when it receives
+						// the signal, ensuring correct message ordering.
+					default:
+						// already a skip pending; ignore
+					}
 				}
 			}
 		}
@@ -499,6 +501,7 @@ func Run(cfg RunConfig) error {
 	// Wire notification logging (FileDebug no-ops if --log is inactive)
 	if c.Notifier != nil {
 		c.Notifier.LogFunc = logger.FileDebug
+		c.Notifier.Done = goCtx.Done()
 	}
 
 	logger.Info("💡 Press 's' at any time to skip the current tool")
@@ -687,6 +690,15 @@ func countFindingsForStep(c *Ctx, stepName string) int {
 	}
 }
 
+// totalVulnCount sums all severity counts in the vulnerability map.
+func totalVulnCount(vulns map[string]int) int {
+	total := 0
+	for _, count := range vulns {
+		total += count
+	}
+	return total
+}
+
 // ─────────────────────────────────────────────────────────────
 // finalizeScan — persist summary, export, notify, report
 // ─────────────────────────────────────────────────────────────
@@ -745,7 +757,7 @@ func finalizeScan(c *Ctx, status string) {
 					Stats: map[string]int{
 						"subdomains": dbStats.TotalSubdomains,
 						"ports":      dbStats.TotalPorts,
-						"vulns":      len(dbStats.Vulnerabilities),
+						"vulns":      totalVulnCount(dbStats.Vulnerabilities),
 					},
 				}); err != nil {
 					logger.Warning("Failed to send scan complete notification: %v", err)
