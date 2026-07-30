@@ -1,4 +1,4 @@
-// Phase 2 — Validation & Fingerprint (Steps 7–11)
+// Phase 2 — Validation & Probing (Steps 6–10)
 //
 // Validates discovered assets through DNS resolution, HTTP probing,
 // TLS analysis, and port scanning.
@@ -35,7 +35,7 @@ import (
 // stepDNSConsolidation merges all passive sources and resolves them with DNSx.
 // Returns true if the scan should be cancelled.
 func stepDNSConsolidation(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("dns_resolution", "Step 7: Consolidation & DNS Resolution"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("dns_resolution", "Step 6: Consolidation & DNS Resolution"); skipped {
 		return cancelled
 	}
 	writeEmptyFile(c.F.DnsxOut)
@@ -146,12 +146,12 @@ func stepDNSConsolidation(c *Ctx) bool {
 // stepDNSBruteforce runs ShuffleDNS when a dns-wordlist is provided.
 // Returns true if the scan should be cancelled.
 func stepDNSBruteforce(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("dns_bruteforce", "Step 8: DNS Brute-force (ShuffleDNS)"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("dns_bruteforce", "Step 7: DNS Brute-force (ShuffleDNS)"); skipped {
 		return cancelled
 	}
 
 	if c.SkipShuffleDNS {
-		logger.StepHeader("Step 8: Skipping ShuffleDNS (--skip-shuffledns)")
+		logger.StepHeader("Step 7: Skipping ShuffleDNS (--skip-shuffledns)")
 		logger.FileDebug("shuffledns skipped via --skip-shuffledns flag")
 		c.markStepCompleteIfNoFailure("dns_bruteforce")
 		return c.cancelled()
@@ -162,7 +162,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			c.DNSWordlistPath = autoWl
 			logger.Info("Auto-detected SecLists DNS wordlist for ShuffleDNS: %s", autoWl)
 		} else {
-			logger.StepHeader("Step 8: Skipping ShuffleDNS (no --dns-wordlist provided and SecLists not found on device)")
+			logger.StepHeader("Step 7: Skipping ShuffleDNS (no --dns-wordlist provided and SecLists not found on device)")
 			logger.Info("Use --dns-wordlist or run 'chaathan setup' to install SecLists")
 			logger.FileDebug("shuffledns skipped: no --dns-wordlist provided and SecLists not found on device")
 			c.markStepCompleteIfNoFailure("dns_bruteforce")
@@ -253,7 +253,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 // stepHTTPProbing probes all consolidated subdomains with Httpx.
 // Returns true if the scan should be cancelled.
 func stepHTTPProbing(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("http_probing", "Step 10: Live Web Server Probing"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("http_probing", "Step 9: Live Web Server Probing"); skipped {
 		return cancelled
 	}
 	writeEmptyFile(c.F.HttpxOut)
@@ -311,12 +311,12 @@ func stepHTTPProbing(c *Ctx) bool {
 // stepTLSAnalysis examines TLS certificates and enriches host metadata.
 // Returns true if the scan should be cancelled.
 func stepTLSAnalysis(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("tls_analysis", "Step 11: TLS Certificate Analysis (tlsx)"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("tls_analysis", "Step 10: TLS Certificate Analysis (tlsx)"); skipped {
 		return cancelled
 	}
 
 	if c.SkipTlsx {
-		logger.StepHeader("Step 11: Skipping tlsx (--skip-tlsx)")
+		logger.StepHeader("Step 10: Skipping tlsx (--skip-tlsx)")
 		c.markStepCompleteIfNoFailure("tls_analysis")
 	} else {
 		writeEmptyFile(c.F.TlsxOut)
@@ -491,12 +491,12 @@ func stepTLSAnalysis(c *Ctx) bool {
 // stepPortScanning runs Naabu against all discovered subdomains.
 // Returns true if the scan should be cancelled.
 func stepPortScanning(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("port_scanning", "Step 9: Port Scanning"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("port_scanning", "Step 8: Port Scanning"); skipped {
 		return cancelled
 	}
 
 	if c.SkipNaabu {
-		logger.StepHeader("Step 9: Skipping Naabu (--skip-naabu)")
+		logger.StepHeader("Step 8: Skipping Naabu (--skip-naabu)")
 		c.markStepCompleteIfNoFailure("port_scanning")
 	} else {
 		writeEmptyFile(c.F.NaabuOut)

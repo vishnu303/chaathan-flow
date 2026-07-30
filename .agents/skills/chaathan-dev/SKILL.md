@@ -14,7 +14,7 @@ Activate this skill for any normal development, feature addition, bug fixing, or
 ```
 main.go              → paths.Init(), defer database.Close(), cli.Execute()
 cli/                 → Cobra commands, flag parsing, maps flags to RunConfig
-pkg/wildcard_flow/   → 23-step domain recon workflow (6 phases)
+pkg/wildcard_flow/   → 21-step domain recon workflow (6 phases)
 pkg/company_flow/    → 3-step company recon workflow
 pkg/orchestrate/     → Signal traps, tool-runner bootstrap, notifications wiring
 pkg/database/        → SQLite models, ROI priorities, metadata schema, database actions

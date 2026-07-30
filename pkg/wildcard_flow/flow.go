@@ -342,6 +342,7 @@ func Run(cfg RunConfig) error {
 		"skip_x8":          cfg.SkipX8,
 		"skip_shuffledns":  cfg.SkipShuffleDNS,
 		"skip_fingerprint": cfg.SkipFingerprint,
+		"skip_js":          cfg.SkipJS,
 		"wordlist":         cfg.WordlistPath,
 		"dns_wordlist":     cfg.DNSWordlistPath,
 		"resolvers":        cfg.ResolversPath,
@@ -396,6 +397,7 @@ func Run(cfg RunConfig) error {
 			checkBoolDiff("skip_x8", cfg.SkipX8)
 			checkBoolDiff("skip_shuffledns", cfg.SkipShuffleDNS)
 			checkBoolDiff("skip_fingerprint", cfg.SkipFingerprint)
+			checkBoolDiff("skip_js", cfg.SkipJS)
 			checkBoolDiff("auto_proxy", cfg.AutoProxy)
 			checkBoolDiff("save_log", cfg.SaveLog)
 
@@ -527,23 +529,23 @@ func Run(cfg RunConfig) error {
 		phase string
 		fn    func(*Ctx) bool
 	}{
-		// Phase 1 — Proxy Setup
-		{"proxy_scraping", "Proxy Setup", stepProxyScraping},
+		// Phase 0 — Proxy Scraping (Step 1)
+		{"proxy_scraping", "Proxy Scraping", stepProxyScraping},
 
-		// Phase 2 — Asset Discovery (Steps 2–5)
+		// Phase 1 — Asset Discovery (Steps 2–5)
 		{"passive_enum", "Asset Discovery", stepPassiveEnum},
 		{"active_enum", "Asset Discovery", stepActiveEnum},
 		{"github_recon", "Asset Discovery", stepGitHubRecon},
 		{"search_engine_recon", "Asset Discovery", stepSearchEngineRecon},
 
-		// Phase 3 — Validation & Probing (Steps 7–11)
+		// Phase 2 — Validation & Probing (Steps 6–10)
 		{"dns_resolution", "Validation & Probing", stepDNSConsolidation},
 		{"dns_bruteforce", "Validation & Probing", stepDNSBruteforce},
 		{"port_scanning", "Validation & Probing", stepPortScanning},
 		{"http_probing", "Validation & Probing", stepHTTPProbing},
 		{"tls_analysis", "Validation & Probing", stepTLSAnalysis},
 
-		// Phase 4 — Content Discovery (Steps 12–18)
+		// Phase 3 — Content Discovery (Steps 11–16)
 		{"url_discovery", "Content Discovery", stepURLDiscovery},
 		{"web_crawling", "Content Discovery", stepWebCrawling},
 		{"js_deep_analysis", "Content Discovery", stepJSDeepAnalysis},
@@ -551,17 +553,17 @@ func Run(cfg RunConfig) error {
 		{"param_discovery", "Content Discovery", stepParamDiscovery},
 		{"url_consolidation", "Content Discovery", stepURLConsolidation},
 
-		// Phase 5 — Vulnerability Scanning (Steps 19–22)
+		// Phase 4 — Vulnerability Scanning (Steps 17–20)
 		{"takeover_detection", "Vulnerability Scanning", stepTakeoverDetection},
 		{"vuln_scanning", "Vulnerability Scanning", stepVulnScanningInfra},
 		{"vuln_scanning_urls", "Vulnerability Scanning", stepVulnScanningURLs},
 		{"xss_scanning", "Vulnerability Scanning", stepXSSScanning},
 
-		// Phase 6 — Fingerprinting (Step 23)
+		// Phase 5 — Fingerprinting (Step 21)
 		{"tech_waf_fingerprinting", "Fingerprinting", stepFingerprinting},
 	}
 
-	phaseNum := 0
+	phaseNum := -1
 	lastPhase := ""
 	for _, step := range steps {
 		if step.phase != lastPhase {

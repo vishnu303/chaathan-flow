@@ -1,4 +1,4 @@
-// Phase 3 — JavaScript Deep Analysis (unified Step 14)
+// Phase 3 — JavaScript Deep Analysis (unified Step 13)
 //
 // Replaces the old Step 14 (GoLinkFinder) and Step 18 (gf Secret Scan) with a
 // single pass that fetches each JS file once and runs multiple analyzers:
@@ -127,12 +127,12 @@ func scoreJSURL(raw string) int {
 // map harvesting, and subdomain extraction in a single pass.
 // Returns true if the scan should be cancelled.
 func stepJSDeepAnalysis(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("js_deep_analysis", "Step 14: JavaScript Deep Analysis"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("js_deep_analysis", "Step 13: JavaScript Deep Analysis"); skipped {
 		return cancelled
 	}
 
 	if c.SkipJS {
-		logger.StepHeader("Step 14: Skipping JavaScript Deep Analysis (--skip-js)")
+		logger.StepHeader("Step 13: Skipping JavaScript Deep Analysis (--skip-js)")
 		c.markStepCompleteIfNoFailure("js_deep_analysis")
 		return c.cancelled()
 	}

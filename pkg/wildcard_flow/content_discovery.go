@@ -1,4 +1,4 @@
-// Phase 3 — Content Discovery (Steps 12–17)
+// Phase 3 — Content Discovery (Steps 11–16)
 //
 // Discovers URLs, endpoints, and directories from live hosts.
 // Wayback/GAU run here (not in Phase 1) so URLs are collected
@@ -39,7 +39,7 @@ import (
 // stepURLDiscovery runs Waybackurls and GAU in parallel on the target domain.
 // Returns true if the scan should be cancelled.
 func stepURLDiscovery(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("url_discovery", "Step 12: Historical URL Discovery"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("url_discovery", "Step 11: Historical URL Discovery"); skipped {
 		return cancelled
 	}
 	writeEmptyFile(c.F.WaybackOut)
@@ -144,12 +144,12 @@ func stepURLDiscovery(c *Ctx) bool {
 // stepWebCrawling runs Katana and GoSpider in parallel.
 // Returns true if the scan should be cancelled.
 func stepWebCrawling(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("web_crawling", "Step 13: Web Crawling"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("web_crawling", "Step 12: Web Crawling"); skipped {
 		return cancelled
 	}
 
 	if c.SkipCrawl {
-		logger.StepHeader("Step 13: Skipping Web Crawling (--skip-crawl)")
+		logger.StepHeader("Step 12: Skipping Web Crawling (--skip-crawl)")
 		c.markStepCompleteIfNoFailure("web_crawling")
 		return c.cancelled()
 	}
@@ -264,12 +264,12 @@ func stepWebCrawling(c *Ctx) bool {
 // downstream scanners (Nuclei/Dalfox).
 // Returns true if the scan should be cancelled.
 func stepParamDiscovery(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("param_discovery", "Step 16: HTTP Parameter Discovery (x8)"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("param_discovery", "Step 15: HTTP Parameter Discovery (x8)"); skipped {
 		return cancelled
 	}
 
 	if c.SkipX8 {
-		logger.StepHeader("Step 16: Skipping x8 (--skip-x8)")
+		logger.StepHeader("Step 15: Skipping x8 (--skip-x8)")
 		c.markStepCompleteIfNoFailure("param_discovery")
 		return c.cancelled()
 	}
@@ -476,7 +476,7 @@ func collectHighSignalEndpoints(files []string) []string {
 // and enriches ROI metadata for high-value targets.
 // Returns true if the scan should be cancelled.
 func stepURLConsolidation(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("url_consolidation", "Step 17: URL Consolidation & Live Check"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("url_consolidation", "Step 16: URL Consolidation & Live Check"); skipped {
 		return cancelled
 	}
 	writeEmptyFile(c.F.AllURLsRaw)
@@ -577,7 +577,7 @@ func stepURLConsolidation(c *Ctx) bool {
 // stepDirFuzzing runs ffuf when a wordlist is provided via --wordlist.
 // Returns true if the scan should be cancelled.
 func stepDirFuzzing(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("dir_fuzzing", "Step 15: Directory Fuzzing (ffuf)"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("dir_fuzzing", "Step 14: Directory Fuzzing (ffuf)"); skipped {
 		return cancelled
 	}
 
@@ -586,7 +586,7 @@ func stepDirFuzzing(c *Ctx) bool {
 			c.WordlistPath = autoWl
 			logger.Info("Auto-detected SecLists wordlist for ffuf: %s", autoWl)
 		} else {
-			logger.StepHeader("Step 15: Skipping ffuf (no wordlist provided and SecLists not found on device)")
+			logger.StepHeader("Step 14: Skipping ffuf (no wordlist provided and SecLists not found on device)")
 			logger.Info("Provide --wordlist or run 'chaathan setup' to install SecLists")
 			c.markStepCompleteIfNoFailure("dir_fuzzing")
 			return c.cancelled()

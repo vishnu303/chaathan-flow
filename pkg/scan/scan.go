@@ -61,7 +61,7 @@ var WildcardSteps = []Step{
 	{Name: "github_recon", Description: "GitHub Subdomain Discovery", Required: false, Tool: "github-subdomains"},
 	{Name: "search_engine_recon", Description: "Search Engine Dorking", Required: false, Tool: "uncover"},
 
-	// Phase 2 — Validation & Fingerprint
+	// Phase 2 — Validation & Probing
 	{Name: "dns_resolution", Description: "Consolidation & DNS Resolution", Required: true, Tool: "dnsx"},
 	{Name: "dns_bruteforce", Description: "DNS Brute-force (ShuffleDNS)", Required: false, Tool: "shuffledns,massdns"},
 	{Name: "port_scanning", Description: "Port Scanning", Required: false, Tool: "naabu"},
