@@ -296,6 +296,14 @@ func Warning(format string, args ...any) {
 	logWrite(os.Stdout, fmt.Sprintf("  %s│%s %s⚠%s %s\n", Dim, Reset, BrightYellow, Reset, msg))
 }
 
+// Skip prints a user-initiated tool skip notice. Rendered calmer than
+// Warning (dim text, single ⊘ marker) because skipping is an intentional
+// user action, not a problem.
+func Skip(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s %s⊘%s %s%s%s\n", Dim, Reset, BrightYellow, Reset, Dim, msg, Reset))
+}
+
 // Error prints a styled error message
 func Error(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)

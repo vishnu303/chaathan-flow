@@ -117,8 +117,7 @@ func runWithSkip(c *Ctx, toolName string, fn func(ctx context.Context) error) er
 		return err
 	case <-c.SkipChan:
 		toolCancel()
-		logger.Warning("⏭ Skip requested — skipping current tool...")
-		logger.Warning("⏭ Skipped: %s", toolName)
+		logger.Skip("Skipped %s — continuing with next tool", toolName)
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):

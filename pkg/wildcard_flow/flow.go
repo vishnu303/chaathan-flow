@@ -504,7 +504,7 @@ func Run(cfg RunConfig) error {
 		c.Notifier.Done = goCtx.Done()
 	}
 
-	logger.Info("💡 Press 's' at any time to skip the current tool")
+	logger.Info("Press 's' at any time to skip the current tool")
 	logger.Info("Mode: %s", cfg.Mode)
 
 	// Wire scope from config
