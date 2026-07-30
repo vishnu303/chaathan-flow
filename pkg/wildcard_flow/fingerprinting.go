@@ -75,7 +75,7 @@ func stepFingerprinting(c *Ctx) bool {
 				if wafSkipped {
 					label = " (partial)"
 				}
-				logger.Success("  🛡️ Found %d WAF detections!%s", count, label)
+				logger.Result(count, "WAF detections%s", label)
 
 				if c.Notifier != nil {
 					sendWafNotifications(c, notify.Finding{

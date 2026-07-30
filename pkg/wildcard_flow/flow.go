@@ -525,46 +525,54 @@ func Run(cfg RunConfig) error {
 	// Order must match scan.WildcardSteps (the source of truth for
 	// step names, descriptions, and resume/progress tracking).
 	steps := []struct {
-		name string
-		fn   func(*Ctx) bool
+		name  string
+		phase string
+		fn    func(*Ctx) bool
 	}{
-		// Phase 0 — Proxy Scraping
-		{"proxy_scraping", stepProxyScraping},
+		// Phase 1 — Proxy Setup
+		{"proxy_scraping", "Proxy Setup", stepProxyScraping},
 
-		// Phase 1 — Asset Discovery (Steps 2–6)
-		{"passive_enum", stepPassiveEnum},
-		{"active_enum", stepActiveEnum},
-		{"github_recon", stepGitHubRecon},
-		{"search_engine_recon", stepSearchEngineRecon},
-		{"js_subdomain_discovery", stepJSSubdomains},
+		// Phase 2 — Asset Discovery (Steps 2–6)
+		{"passive_enum", "Asset Discovery", stepPassiveEnum},
+		{"active_enum", "Asset Discovery", stepActiveEnum},
+		{"github_recon", "Asset Discovery", stepGitHubRecon},
+		{"search_engine_recon", "Asset Discovery", stepSearchEngineRecon},
+		{"js_subdomain_discovery", "Asset Discovery", stepJSSubdomains},
 
-		// Phase 2 — Validation & Probing (Steps 7–11)
-		{"dns_resolution", stepDNSConsolidation},
-		{"dns_bruteforce", stepDNSBruteforce},
-		{"port_scanning", stepPortScanning},
-		{"http_probing", stepHTTPProbing},
-		{"tls_analysis", stepTLSAnalysis},
+		// Phase 3 — Validation & Probing (Steps 7–11)
+		{"dns_resolution", "Validation & Probing", stepDNSConsolidation},
+		{"dns_bruteforce", "Validation & Probing", stepDNSBruteforce},
+		{"port_scanning", "Validation & Probing", stepPortScanning},
+		{"http_probing", "Validation & Probing", stepHTTPProbing},
+		{"tls_analysis", "Validation & Probing", stepTLSAnalysis},
 
-		// Phase 3 — Content Discovery (Steps 12–18)
-		{"url_discovery", stepURLDiscovery},
-		{"web_crawling", stepWebCrawling},
-		{"js_analysis", stepJSAnalysis},
-		{"dir_fuzzing", stepDirFuzzing},
-		{"param_discovery", stepParamDiscovery},
-		{"url_consolidation", stepURLConsolidation},
-		{"js_secret_scan", stepJSSecretScan},
+		// Phase 4 — Content Discovery (Steps 12–18)
+		{"url_discovery", "Content Discovery", stepURLDiscovery},
+		{"web_crawling", "Content Discovery", stepWebCrawling},
+		{"js_analysis", "Content Discovery", stepJSAnalysis},
+		{"dir_fuzzing", "Content Discovery", stepDirFuzzing},
+		{"param_discovery", "Content Discovery", stepParamDiscovery},
+		{"url_consolidation", "Content Discovery", stepURLConsolidation},
+		{"js_secret_scan", "Content Discovery", stepJSSecretScan},
 
-		// Phase 4 — Vulnerability Scanning (Steps 19–22)
-		{"takeover_detection", stepTakeoverDetection},
-		{"vuln_scanning", stepVulnScanningInfra},
-		{"vuln_scanning_urls", stepVulnScanningURLs},
-		{"xss_scanning", stepXSSScanning},
+		// Phase 5 — Vulnerability Scanning (Steps 19–22)
+		{"takeover_detection", "Vulnerability Scanning", stepTakeoverDetection},
+		{"vuln_scanning", "Vulnerability Scanning", stepVulnScanningInfra},
+		{"vuln_scanning_urls", "Vulnerability Scanning", stepVulnScanningURLs},
+		{"xss_scanning", "Vulnerability Scanning", stepXSSScanning},
 
-		// Phase 5 — Fingerprinting (Step 23)
-		{"tech_waf_fingerprinting", stepFingerprinting},
+		// Phase 6 — Fingerprinting (Step 23)
+		{"tech_waf_fingerprinting", "Fingerprinting", stepFingerprinting},
 	}
 
+	phaseNum := 0
+	lastPhase := ""
 	for _, step := range steps {
+		if step.phase != lastPhase {
+			lastPhase = step.phase
+			phaseNum++
+			logger.PhaseBanner(phaseNum, step.phase)
+		}
 		if executeStep(c, step.name, step.fn) {
 			finalizeScan(c, "cancelled")
 			return nil
@@ -771,7 +779,8 @@ func finalizeScan(c *Ctx, status string) {
 		// Export results into final_files/
 		if status == "completed" || status == "cancelled" {
 			finalDir := filepath.Join(c.ResultDir, "final_files")
-			logger.Info("\nExporting results to final_files/...")
+			logger.Print("\n")
+			logger.Info("Exporting results to final_files/...")
 			if err := ingest.ExportResults(c.ScanID, finalDir); err != nil {
 				logger.Warning("Failed to export some results: %v", err)
 			} else {
@@ -784,7 +793,8 @@ func finalizeScan(c *Ctx, status string) {
 
 		// Generate report
 		if c.GenerateReport && status == "completed" {
-			logger.Info("\nGenerating report...")
+			logger.Print("\n")
+			logger.Info("Generating report...")
 			rpt, err := report.Generate(c.ScanID)
 			if err == nil {
 				reportPath := filepath.Join(paths.ReportsDir(), fmt.Sprintf("scan_%d.md", c.ScanID))

@@ -105,17 +105,11 @@ func stepPassiveEnum(c *Ctx) bool {
 		assetfinderCount, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.AssetfinderOut, "assetfinder")
 		sublist3rCount, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.Sublist3rOut, "sublist3r")
 		totalPassive := subfinderCount + assetfinderCount + sublist3rCount
-		if totalPassive > 0 {
-			label := ""
-			if passiveSkipped {
-				label = " (partial)"
-			}
-			logger.Info("  Found %d subdomains%s", totalPassive, label)
-		} else if passiveSkipped {
-			logger.Info("  Passive enumeration skipped — no subdomains found")
-		} else {
-			logger.Info("  Found 0 subdomains")
+		label := ""
+		if passiveSkipped {
+			label = " (partial)"
 		}
+		logger.Result(totalPassive, "subdomains found%s", label)
 	}
 
 	subfinderCount, _ := utils.CountFileLines(c.F.SubfinderOut)
@@ -166,17 +160,11 @@ func stepActiveEnum(c *Ctx) bool {
 
 	if c.ScanID > 0 {
 		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.AmassOut, "amass")
-		if count > 0 {
-			label := ""
-			if amassSkipped {
-				label = " (partial)"
-			}
-			logger.Info("  Found %d subdomains%s", count, label)
-		} else if amassSkipped {
-			logger.Info("  Amass skipped — no subdomains found")
-		} else {
-			logger.Info("  Found 0 subdomains")
+		label := ""
+		if amassSkipped {
+			label = " (partial)"
 		}
+		logger.Result(count, "subdomains via Amass%s", label)
 	}
 
 	c.markStepCompleteIfNoFailure("active_enum")
@@ -222,17 +210,11 @@ func stepGitHubRecon(c *Ctx) bool {
 
 	if c.ScanID > 0 {
 		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.GithubSubsOut, "github")
-		if count > 0 {
-			label := ""
-			if githubSkipped {
-				label = " (partial)"
-			}
-			logger.Info("  Found %d subdomains%s", count, label)
-		} else if githubSkipped {
-			logger.Info("  GitHub subdomains skipped — no subdomains found")
-		} else {
-			logger.Info("  Found 0 subdomains")
+		label := ""
+		if githubSkipped {
+			label = " (partial)"
 		}
+		logger.Result(count, "subdomains via GitHub%s", label)
 	}
 
 	c.markStepCompleteIfNoFailure("github_recon")
@@ -274,17 +256,11 @@ func stepSearchEngineRecon(c *Ctx) bool {
 
 	if c.ScanID > 0 {
 		subs, ports, _ := ingest.ParseUncoverOutput(c.ScanID, c.F.UncoverOut, c.Domain)
-		if subs > 0 || ports > 0 {
-			label := ""
-			if uncoverSkipped {
-				label = " (partial)"
-			}
-			logger.Info("  Found %d hosts and %d open ports from search engines%s", subs, ports, label)
-		} else if uncoverSkipped {
-			logger.Info("  Uncover skipped — no hosts or open ports found")
-		} else {
-			logger.Info("  Found 0 hosts and 0 open ports from search engines")
+		label := ""
+		if uncoverSkipped {
+			label = " (partial)"
 		}
+		logger.Result(subs, "hosts from search engines (%d open ports)%s", ports, label)
 	}
 
 	// Extract hostnames into a plain-text file so Step 6 can merge them
@@ -330,17 +306,11 @@ func stepJSSubdomains(c *Ctx) bool {
 
 	if c.ScanID > 0 {
 		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.HakrawlerOut, "hakrawler")
-		if count > 0 {
-			label := ""
-			if hakrawlerSkipped {
-				label = " (partial)"
-			}
-			logger.Info("  Found %d links/subdomains from Hakrawler%s", count, label)
-		} else if hakrawlerSkipped {
-			logger.Info("  Hakrawler skipped — no links/subdomains found")
-		} else {
-			logger.Info("  Found 0 links/subdomains from Hakrawler")
+		label := ""
+		if hakrawlerSkipped {
+			label = " (partial)"
 		}
+		logger.Result(count, "links/subdomains from Hakrawler%s", label)
 	}
 
 	c.markStepCompleteIfNoFailure("js_subdomain_discovery")

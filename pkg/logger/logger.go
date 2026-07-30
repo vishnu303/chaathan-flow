@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -256,6 +255,7 @@ var (
 	totalSteps     int
 	scanStartTime  time.Time
 	lastStepPrefix string
+	stepStartTime  time.Time // when the current step header was printed
 )
 
 // InitScanUI initializes the scan UI with the total number of steps.
@@ -266,6 +266,7 @@ func InitScanUI(total int) {
 	totalSteps = total
 	scanStartTime = time.Now()
 	lastStepPrefix = ""
+	stepStartTime = time.Time{}
 }
 
 // ── Primary output functions ────────────────────────────────────────────────
@@ -315,8 +316,9 @@ func Section(format string, args ...any) {
 	logWrite(os.Stdout, fmt.Sprintf("\n  %s┌─%s %s%s%s\n", Cyan, Reset, BrightCyan+Bold, msg, Reset))
 }
 
-// StepHeader prints a scan-step heading that increments the step counter
-// and shows elapsed time. Use this only in scan workflow phases.
+// StepHeader prints a scan-step heading that increments the step counter,
+// shows a mini progress bar, and displays the previous step's duration.
+// Use this only in scan workflow phases.
 func StepHeader(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 
@@ -332,7 +334,8 @@ func StepHeader(format string, args ...any) {
 	}
 
 	scanUIMu.Lock()
-	if prefix == "" || prefix != lastStepPrefix {
+	isNewStep := prefix == "" || prefix != lastStepPrefix
+	if isNewStep {
 		currentStep++
 		if prefix != "" {
 			lastStepPrefix = prefix
@@ -341,57 +344,76 @@ func StepHeader(format string, args ...any) {
 
 	current := currentStep
 	total := totalSteps
-	start := scanStartTime
+
+	// Per-step duration: show how long the previous step took.
+	var prevDur string
+	if isNewStep && !stepStartTime.IsZero() {
+		prevDur = fmtElapsed(time.Since(stepStartTime))
+	}
+	if isNewStep {
+		stepStartTime = time.Now()
+	}
 	scanUIMu.Unlock()
 
-	elapsed := ""
-	if !start.IsZero() {
-		elapsed = fmt.Sprintf(" %s%s%s", Dim, fmtElapsed(time.Since(start)), Reset)
-	}
-
-	stepIndicator := ""
+	// Mini progress bar (10 segments)
+	var bar string
 	if total > 0 {
-		stepIndicator = fmt.Sprintf("%s[%d/%d]%s ", Dim, current, total, Reset)
+		pct := stepPct(current, total)
+		filled := pct / 10
+		bar = BrightGreen + strings.Repeat("▰", filled) + Dim + strings.Repeat("▱", 10-filled) + Reset
+		bar = fmt.Sprintf(" %s %s%d%%%s", bar, Dim, pct, Reset)
 	}
 
-	logWrite(os.Stdout, fmt.Sprintf("\n  %s┌─%s %s%s%s%s%s\n", Cyan, Reset, stepIndicator, BrightCyan+Bold, msg, Reset, elapsed))
+	// Counter
+	counter := ""
+	if total > 0 {
+		counter = fmt.Sprintf(" %s%d%s/%d", Bold, current, Reset, total)
+	}
+
+	// Previous step duration
+	durStr := ""
+	if prevDur != "" {
+		durStr = fmt.Sprintf("  %s%s%s", Dim, prevDur, Reset)
+	}
+
+	logWrite(os.Stdout, fmt.Sprintf("\n  %s┌─%s%s%s ─ %s%s%s%s\n", Cyan, Reset, bar, counter, BrightCyan+Bold, msg, Reset, durStr))
 }
 
-// ScanHeader prints the main scan workflow header
+// PhaseBanner prints a phase separator during scan workflows. Call this
+// when transitioning between scan phases.
+func PhaseBanner(num int, name string) {
+	label := fmt.Sprintf(" PHASE %d · %s ", num, strings.ToUpper(name))
+	fill := 56 - utf8.RuneCountInString(label) - 3
+	if fill < 4 {
+		fill = 4
+	}
+	logWrite(os.Stdout, fmt.Sprintf("\n  %s━━━%s%s%s\n\n",
+		BrightPurple+Bold, label, strings.Repeat("━", fill), Reset))
+}
+
+// ScanHeader prints the main scan workflow header with a fixed-width box.
+// No emojis are used here — emoji terminal widths vary across fonts and
+// caused right-edge misalignment in the previous design.
 func ScanHeader(scanType string, target string, scanID int64) {
-	w := 52
-	line := strings.Repeat("─", w)
+	const w = 48 // inner content width
+
+	boxLine := func(content string) {
+		pad := w - 3 - visibleLen(content)
+		if pad < 0 {
+			pad = 0
+		}
+		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s %s%s│%s\n",
+			Cyan+Bold, Reset, content, strings.Repeat(" ", pad), Cyan+Bold, Reset))
+	}
 
 	logWrite(os.Stdout, "\n")
-	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, line, Reset))
-
-	scanTypeRunes := utf8.RuneCountInString(scanType + " Scan")
-	padScanType := 46 - scanTypeRunes
-	if padScanType < 0 {
-		padScanType = 0
-	}
-	scanTypeStr := scanType + " Scan" + strings.Repeat(" ", padScanType)
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  🔍 %s%s%s %s│%s\n", Cyan+Bold, Reset, White+Bold, scanTypeStr, Reset, Cyan+Bold, Reset))
-
-	targetRunes := utf8.RuneCountInString(target)
-	padTarget := 38 - targetRunes
-	if padTarget < 0 {
-		padTarget = 0
-	}
-	targetStr := target + strings.Repeat(" ", padTarget)
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s🎯 Target:%s %s %s│%s\n", Cyan+Bold, Reset, Dim, Reset, targetStr, Cyan+Bold, Reset))
-
+	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, strings.Repeat("─", w), Reset))
+	boxLine(fmt.Sprintf("%sCHAATHAN%s · %s%s SCAN%s", Dim, Reset, White+Bold, strings.ToUpper(scanType), Reset))
+	boxLine(fmt.Sprintf("%sTarget%s    %s%s%s", Dim, Reset, BrightCyan+Bold, target, Reset))
 	if scanID > 0 {
-		scanIDStr := fmt.Sprintf("%d", scanID)
-		scanIDRunes := utf8.RuneCountInString(scanIDStr)
-		padScanID := 37 - scanIDRunes
-		if padScanID < 0 {
-			padScanID = 0
-		}
-		scanIDText := scanIDStr + strings.Repeat(" ", padScanID)
-		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s🆔 Scan ID:%s %s %s│%s\n", Cyan+Bold, Reset, Dim, Reset, scanIDText, Cyan+Bold, Reset))
+		boxLine(fmt.Sprintf("%sScan ID%s   %s%d%s", Dim, Reset, White, scanID, Reset))
 	}
-	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, line, Reset))
+	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, strings.Repeat("─", w), Reset))
 	logWrite(os.Stdout, "\n")
 }
 
@@ -406,6 +428,42 @@ func Command(cmd string) {
 	logWrite(os.Stdout, fmt.Sprintf("  %s│     $ %s%s\n", Dim, cmd, Reset))
 }
 
+// Result prints a step finding with a highlighted count. Use this for the
+// key result line of each scan step so findings stand out from plain info.
+// Zero counts render dim; positive counts render bright green.
+func Result(count int, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if count > 0 {
+		logWrite(os.Stdout, fmt.Sprintf("  %s│%s %s●%s %s%d%s %s\n", Dim, Reset, BrightGreen, Reset, BrightGreen+Bold, count, Reset, msg))
+	} else {
+		logWrite(os.Stdout, fmt.Sprintf("  %s│ ● 0 %s%s\n", Dim, msg, Reset))
+	}
+}
+
+// ResultSev prints a vulnerability finding line with severity-colored dot
+// and count. Expected severities: critical, high, medium, low, info.
+func ResultSev(severity string, count int, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	color := sevDotColor(severity)
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s %s●%s %s%d%s %s\n", Dim, Reset, color, Reset, color+Bold, count, Reset, msg))
+}
+
+// sevDotColor maps a severity name to an ANSI color for result dots.
+func sevDotColor(sev string) string {
+	switch strings.ToLower(sev) {
+	case "critical":
+		return BrightRed
+	case "high":
+		return Red
+	case "medium":
+		return BrightYellow
+	case "low":
+		return BrightGreen
+	default:
+		return BrightBlue
+	}
+}
+
 // ── Summary helpers ─────────────────────────────────────────────────────────
 
 // Stat is a single label/value line in a scan summary. Stats are rendered in
@@ -415,10 +473,10 @@ type Stat struct {
 	Value string
 }
 
-// ScanSummary prints a modern scan completion summary
+// ScanSummary prints a scan completion summary in a fixed-width box.
+// Vulnerability stats (labels containing "Vuln") are severity-colored.
 func ScanSummary(status string, target string, scanID int64, duration time.Duration, stats []Stat) {
-	w := 52
-	line := strings.Repeat("─", w)
+	const w = 48 // inner content width
 
 	statusIcon := "✓"
 	statusColor := BrightGreen
@@ -431,50 +489,33 @@ func ScanSummary(status string, target string, scanID int64, duration time.Durat
 		statusColor = BrightRed
 	}
 
+	boxLine := func(content string) {
+		pad := w - 3 - visibleLen(content)
+		if pad < 0 {
+			pad = 0
+		}
+		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s %s%s│%s\n",
+			Cyan+Bold, Reset, content, strings.Repeat(" ", pad), Cyan+Bold, Reset))
+	}
+
 	logWrite(os.Stdout, "\n")
-	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, line, Reset))
-
-	statusStr := capitalize(status)
-	pad1 := w - 2 - 1 - 6 - utf8.RuneCountInString(statusStr) // '  ' (2), statusIcon (1), ' Scan ' (6)
-	if pad1 < 0 {
-		pad1 = 0
-	}
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s%s%s %sScan %s%s%s%s│%s\n",
-		Cyan+Bold, Reset, statusColor+Bold, statusIcon, Reset,
-		White+Bold, statusStr, Reset,
-		strings.Repeat(" ", pad1), Cyan+Bold, Reset))
-
-	pad2 := w - 5 - utf8.RuneCountInString(target)
-	if pad2 < 0 {
-		pad2 = 0
-	}
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s🎯 %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, target, Reset, strings.Repeat(" ", pad2), Cyan+Bold, Reset))
-
-	durStr := FmtDuration(duration)
-	pad3 := w - 6 - utf8.RuneCountInString(durStr) // '  ' (2) + '⏱  ' (4)
-	if pad3 < 0 {
-		pad3 = 0
-	}
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s⏱️  %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, durStr, Reset, strings.Repeat(" ", pad3), Cyan+Bold, Reset))
+	logWrite(os.Stdout, fmt.Sprintf("  %s╭%s╮%s\n", Cyan+Bold, strings.Repeat("─", w), Reset))
+	boxLine(fmt.Sprintf("%s%s %s SCAN%s", statusColor+Bold, statusIcon, strings.ToUpper(status), Reset))
+	boxLine(fmt.Sprintf("%s%s%s · Scan #%d · %s%s%s", White+Bold, target, Reset, scanID, BrightCyan, FmtDuration(duration), Reset))
 
 	if len(stats) > 0 {
-		logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s%s%s%s│%s\n", Cyan+Bold, Reset, Dim, strings.Repeat("╌", w-2), Reset, Cyan+Bold, Reset))
+		boxLine(fmt.Sprintf("%s%s%s", Dim, strings.Repeat("─", w-3), Reset))
 		for _, stat := range stats {
-			used := 2 + utf8.RuneCountInString(stat.Label) + 1 + utf8.RuneCountInString(stat.Value)
-			padding := w - used
-			if padding < 1 {
-				padding = 1
+			valueColor := BrightCyan + Bold
+			if strings.HasPrefix(stat.Label, "Vuln (") {
+				sev := strings.TrimSuffix(strings.TrimPrefix(stat.Label, "Vuln ("), ")")
+				valueColor = sevDotColor(sev) + Bold
 			}
-			logWrite(os.Stdout, fmt.Sprintf("  %s│%s  %s%s%s %s%s%s%s %s│%s\n",
-				Cyan+Bold, Reset,
-				Dim, stat.Label+":", Reset,
-				BrightCyan+Bold, stat.Value, Reset,
-				strings.Repeat(" ", padding-1),
-				Cyan+Bold, Reset))
+			boxLine(fmt.Sprintf("%s%s%s %s%s%s", Dim, padRight(stat.Label, 14), Reset, valueColor, stat.Value, Reset))
 		}
 	}
 
-	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, line, Reset))
+	logWrite(os.Stdout, fmt.Sprintf("  %s╰%s╯%s\n", Cyan+Bold, strings.Repeat("─", w), Reset))
 }
 
 // NextSteps prints styled next step hints
@@ -482,7 +523,7 @@ func NextSteps(hints []string) {
 	if len(hints) == 0 {
 		return
 	}
-	logWrite(os.Stdout, fmt.Sprintf("\n  %s💡 Next steps:%s\n", Dim, Reset))
+	logWrite(os.Stdout, fmt.Sprintf("\n  %sNext steps:%s\n", Dim, Reset))
 	for _, h := range hints {
 		logWrite(os.Stdout, fmt.Sprintf("     %s▸%s %s%s%s\n", Purple, Reset, Dim, h, Reset))
 	}
@@ -491,14 +532,35 @@ func NextSteps(hints []string) {
 
 // ── Utility ─────────────────────────────────────────────────────────────────
 
-// capitalize returns the string with the first letter uppercased.
-func capitalize(s string) string {
-	if s == "" {
-		return s
+// padRight pads s with spaces to width n (rune-aware).
+func padRight(s string, n int) string {
+	if r := utf8.RuneCountInString(s); r < n {
+		return s + strings.Repeat(" ", n-r)
 	}
-	r := []rune(s)
-	r[0] = unicode.ToUpper(r[0])
-	return string(r)
+	return s
+}
+
+// visibleLen returns the terminal-visible width of s, ignoring ANSI escape
+// sequences. Used for box padding calculations where content carries colors.
+func visibleLen(s string) int {
+	return utf8.RuneCountInString(ansiRE.ReplaceAllString(s, ""))
+}
+
+// stepPct returns the completion percentage for step current of total.
+// It reports the progress *before* the current step finishes: step 1 of 23
+// shows 0%, step 23 of 23 shows 96% (100% is reserved for the summary).
+func stepPct(current, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	p := (current - 1) * 100 / total
+	if p < 0 {
+		p = 0
+	}
+	if p > 100 {
+		p = 100
+	}
+	return p
 }
 
 func fmtElapsed(d time.Duration) string {

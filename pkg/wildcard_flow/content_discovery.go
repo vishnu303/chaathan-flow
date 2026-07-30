@@ -113,11 +113,11 @@ func stepURLDiscovery(c *Ctx) bool {
 				if urlDiscoverySkipped {
 					label = " (partial)"
 				}
-				logger.Info("  Waybackurls found %d URLs%s", count, label)
+				logger.Result(count, "historical URLs (Waybackurls)%s", label)
 			} else if urlDiscoverySkipped {
 				logger.Info("  Waybackurls skipped — no URLs found")
 			} else {
-				logger.Info("  Waybackurls found 0 URLs")
+				logger.Result(0, "historical URLs (Waybackurls)")
 			}
 		}
 		if utils.FileExists(c.F.GauOut) {
@@ -127,11 +127,11 @@ func stepURLDiscovery(c *Ctx) bool {
 				if urlDiscoverySkipped {
 					label = " (partial)"
 				}
-				logger.Info("  GAU found %d URLs%s", count, label)
+				logger.Result(count, "historical URLs (GAU)%s", label)
 			} else if urlDiscoverySkipped {
 				logger.Info("  GAU skipped — no URLs found")
 			} else {
-				logger.Info("  GAU found 0 URLs")
+				logger.Result(0, "historical URLs (GAU)")
 			}
 		}
 	}
@@ -228,11 +228,11 @@ func stepWebCrawling(c *Ctx) bool {
 				if crawlSkipped {
 					label = " (partial)"
 				}
-				logger.Info("  Katana found %d URLs%s", count, label)
+				logger.Result(count, "crawled URLs (Katana)%s", label)
 			} else if crawlSkipped {
 				logger.Info("  Katana skipped — no URLs found")
 			} else {
-				logger.Info("  Katana found 0 URLs")
+				logger.Result(0, "crawled URLs (Katana)")
 			}
 		}
 		if utils.FileExists(c.F.GospiderOut) {
@@ -242,11 +242,11 @@ func stepWebCrawling(c *Ctx) bool {
 				if crawlSkipped {
 					label = " (partial)"
 				}
-				logger.Info("  GoSpider found %d URLs%s", count, label)
+				logger.Result(count, "crawled URLs (GoSpider)%s", label)
 			} else if crawlSkipped {
 				logger.Info("  GoSpider skipped — no URLs found")
 			} else {
-				logger.Info("  GoSpider found 0 URLs")
+				logger.Result(0, "crawled URLs (GoSpider)")
 			}
 		}
 	}
@@ -442,17 +442,11 @@ func stepJSAnalysis(c *Ctx) bool {
 
 	if c.ScanID > 0 && utils.FileExists(c.F.GoLinkFinderOut) {
 		count, _ := ingest.ParseEndpointsFile(c.ScanID, c.F.GoLinkFinderOut, "golinkfinder")
-		if count > 0 {
-			label := ""
-			if golinkfinderSkipped {
-				label = " (partial)"
-			}
-			logger.Info("  Found %d endpoints%s", count, label)
-		} else if golinkfinderSkipped {
-			logger.Info("  GoLinkFinder skipped — endpoints unknown")
-		} else {
-			logger.Info("  Found 0 endpoints")
+		label := ""
+		if golinkfinderSkipped {
+			label = " (partial)"
 		}
+		logger.Result(count, "endpoints from JS analysis%s", label)
 	}
 
 	c.markStepCompleteIfNoFailure("js_analysis")
@@ -566,17 +560,13 @@ func stepParamDiscovery(c *Ctx) bool {
 	if c.ScanID > 0 && utils.FileExists(c.F.X8Out) {
 		count := convertX8ToURLs(c.F.X8Out, c.F.X8URLsOut)
 		stored := storeX8ParamCounts(c.ScanID, c.F.X8Out)
-		if count > 0 || stored > 0 {
-			label := ""
-			if x8Skipped {
-				label = " (partial)"
-			}
-			logger.Info("  Generated %d parameterized URLs from x8 output%s", count, label)
+		label := ""
+		if x8Skipped {
+			label = " (partial)"
+		}
+		logger.Result(count, "parameterized URLs from x8%s", label)
+		if stored > 0 {
 			logger.Info("  Stored x8 param counts for %d URLs%s", stored, label)
-		} else if x8Skipped {
-			logger.Info("  x8 skipped — no parameters found")
-		} else {
-			logger.Info("  Generated 0 parameterized URLs from x8 output")
 		}
 	}
 
@@ -757,7 +747,7 @@ func stepURLConsolidation(c *Ctx) bool {
 			} else if urlCheckSkipped {
 				label = " (partial)"
 			}
-			logger.Info("  Stored %d live URLs in database%s", dbCount, label)
+			logger.Result(dbCount, "live URLs consolidated%s", label)
 		}
 	}
 
@@ -770,7 +760,7 @@ func stepURLConsolidation(c *Ctx) bool {
 			if count, err := metadata.CollectURLMetadata(c.GoCtx, c.ScanID, metaTargets, c.Proxy); err != nil {
 				logger.Warning("URL metadata enrichment failed: %v", err)
 			} else if count > 0 {
-				logger.Info("  Stored path metadata for %d ROI candidate URLs", count)
+				logger.Result(count, "ROI candidate URLs enriched with metadata")
 			}
 		}
 	}
@@ -1322,7 +1312,7 @@ func stepJSSecretScan(c *Ctx) bool {
 		if scanSkipped {
 			label = " (partial)"
 		}
-		logger.Info("  Found %d JS/secret findings (%d JS matches, %d secret matches)%s", totalFindings, jsMatchCount, secretMatchCount, label)
+		logger.Result(totalFindings, "JS/secret findings (%d JS, %d secrets)%s", jsMatchCount, secretMatchCount, label)
 
 		if c.ScanID > 0 && len(secretHosts) > 0 {
 			if err := database.MarkHostsJSSecrets(c.ScanID, secretHosts); err != nil {
@@ -1483,11 +1473,11 @@ func stepDirFuzzing(c *Ctx) bool {
 				if ffufSkipped {
 					label = " (partial)"
 				}
-				logger.Info("  Stored %d ffuf discoveries for ROI ranking%s", count, label)
+				logger.Result(count, "directory discoveries (ffuf)%s", label)
 			} else if ffufSkipped {
 				logger.Info("  ffuf skipped — no discoveries found")
 			} else {
-				logger.Info("  Stored 0 ffuf discoveries for ROI ranking")
+				logger.Result(0, "directory discoveries (ffuf)")
 			}
 		}
 	}
