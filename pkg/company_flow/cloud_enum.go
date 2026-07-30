@@ -22,14 +22,14 @@ func stepCloudEnum(c *Ctx) (bool, error) {
 	if !c.SkipCloudEnum {
 		logger.StepHeader("Step 3: Cloud Enumeration (Cloud Enum)")
 		cloudOut := filepath.Join(c.ResultDir, "cloud_enum")
-		logger.SubStep("Running Cloud Enum for keyword: %s", c.Company)
+		logger.ToolStart("Cloud Enum")
 
 		if err := c.Tb.RunCloudEnum(c.GoCtx, c.Company, cloudOut); err != nil {
-			logger.Warning("Cloud Enum failed: %v", err)
+			logger.ToolFail("Cloud Enum", err.Error())
 			c.Failed++
 			return c.cancelled(), err
 		} else {
-			logger.Success("Cloud enumeration complete — results: %s", cloudOut+".json")
+			logger.ToolDone("Cloud Enum")
 			c.Completed++
 		}
 	} else {

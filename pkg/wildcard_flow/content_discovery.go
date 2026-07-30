@@ -1,4 +1,4 @@
-﻿// Phase 3 — Content Discovery (Steps 12–17)
+// Phase 3 — Content Discovery (Steps 12–17)
 //
 // Discovers URLs, endpoints, and directories from live hosts.
 // Wayback/GAU run here (not in Phase 1) so URLs are collected
@@ -56,35 +56,35 @@ func stepURLDiscovery(c *Ctx) bool {
 
 		go func() {
 			defer wg.Done()
-			logger.SubStep("[Start] Waybackurls")
+			logger.ToolStart("Waybackurls")
 			logger.FileDebug("waybackurls input: domain=%s out=%s", c.Domain, c.F.WaybackOut)
 			if err := c.Tb.RunWaybackurls(sCtx, c.Domain, c.F.WaybackOut); err != nil {
 				if c.Verbose && sCtx.Err() == nil {
-					logger.Warning("Waybackurls failed: %v", err)
+					logger.ToolFail("Waybackurls", err.Error())
 				}
 				logger.FileDebug("waybackurls failed: %v", err)
 			} else {
 				resultMu.Lock()
 				waybackOK = true
 				resultMu.Unlock()
-				logger.SubStep("[Done] Waybackurls")
+				logger.ToolDone("Waybackurls")
 			}
 		}()
 
 		go func() {
 			defer wg.Done()
-			logger.SubStep("[Start] GAU")
+			logger.ToolStart("GAU")
 			logger.FileDebug("gau input: domain=%s out=%s", c.Domain, c.F.GauOut)
 			if err := c.Tb.RunGau(sCtx, c.Domain, c.F.GauOut); err != nil {
 				if c.Verbose && sCtx.Err() == nil {
-					logger.Warning("GAU failed: %v", err)
+					logger.ToolFail("GAU", err.Error())
 				}
 				logger.FileDebug("gau failed: %v", err)
 			} else {
 				resultMu.Lock()
 				gauOK = true
 				resultMu.Unlock()
-				logger.SubStep("[Done] GAU")
+				logger.ToolDone("GAU")
 			}
 		}()
 
@@ -106,7 +106,7 @@ func stepURLDiscovery(c *Ctx) bool {
 				}
 				logger.Result(count, "historical URLs (Waybackurls)%s", label)
 			} else if urlDiscoverySkipped {
-				logger.Info("  Waybackurls skipped — no URLs found")
+				logger.ToolSkip("Waybackurls", "no URLs found")
 			} else {
 				logger.Result(0, "historical URLs (Waybackurls)")
 			}
@@ -120,7 +120,7 @@ func stepURLDiscovery(c *Ctx) bool {
 				}
 				logger.Result(count, "historical URLs (GAU)%s", label)
 			} else if urlDiscoverySkipped {
-				logger.Info("  GAU skipped — no URLs found")
+				logger.ToolSkip("GAU", "no URLs found")
 			} else {
 				logger.Result(0, "historical URLs (GAU)")
 			}
@@ -173,33 +173,33 @@ func stepWebCrawling(c *Ctx) bool {
 
 		go func() {
 			defer wg.Done()
-			logger.SubStep("[Start] Katana")
+			logger.ToolStart("Katana")
 			logger.FileDebug("katana input: %s out=%s", c.F.HttpxLiveHosts, c.F.KatanaOut)
 			if err := c.Tb.RunKatana(sCtx, c.F.HttpxLiveHosts, c.F.KatanaOut); err != nil {
 				if sCtx.Err() == nil {
-					logger.Warning("Katana failed: %v", err)
+					logger.ToolFail("Katana", err.Error())
 				}
 			} else {
 				crawlMu.Lock()
 				katanaOK = true
 				crawlMu.Unlock()
-				logger.SubStep("[Done] Katana")
+				logger.ToolDone("Katana")
 			}
 		}()
 
 		go func() {
 			defer wg.Done()
-			logger.SubStep("[Start] GoSpider")
+			logger.ToolStart("GoSpider")
 			logger.FileDebug("gospider input: %s out=%s", c.F.HttpxLiveHosts, c.F.GospiderOut)
 			if err := c.Tb.RunGoSpider(sCtx, c.F.HttpxLiveHosts, c.F.GospiderOut); err != nil {
 				if sCtx.Err() == nil {
-					logger.Warning("GoSpider failed: %v", err)
+					logger.ToolFail("GoSpider", err.Error())
 				}
 			} else {
 				crawlMu.Lock()
 				gospiderOK = true
 				crawlMu.Unlock()
-				logger.SubStep("[Done] GoSpider")
+				logger.ToolDone("GoSpider")
 			}
 		}()
 
@@ -330,7 +330,7 @@ func stepParamDiscovery(c *Ctx) bool {
 		return c.cancelled()
 	}
 
-	logger.SubStep("Running x8 on %d targets...", len(x8Targets))
+	logger.ToolStart("x8")
 
 	// Validate parameters wordlist if configured or available via SecLists.
 	paramWordlist := ""
@@ -509,7 +509,7 @@ func stepURLConsolidation(c *Ctx) bool {
 	logger.FileDebug("url_consolidation merged %d raw URLs -> %s", rawCount, c.F.AllURLsRaw)
 
 	// Live-check all URLs with httpx
-	logger.SubStep("Running httpx to live-check all URLs...")
+	logger.ToolStart("httpx")
 	rawCount2, _ := utils.CountFileLines(c.F.AllURLsRaw)
 	logger.FileDebug("httpx_url_check input: %s (%d URLs) out=%s", c.F.AllURLsRaw, rawCount2, c.F.AllURLsLive)
 	var urlCheckSkipped bool
@@ -620,7 +620,7 @@ func stepDirFuzzing(c *Ctx) bool {
 	var allResults []localFfufResult
 	var resultsMu sync.Mutex
 
-	logger.SubStep("Running ffuf with wordlist on %d live hosts...", len(liveHosts))
+	logger.ToolStart("ffuf")
 
 	var ffufSkipped bool
 	if err := runWithSkip(c, "ffuf", func(sCtx context.Context) error {
@@ -670,7 +670,7 @@ func stepDirFuzzing(c *Ctx) bool {
 			logger.Warning("ffuf failed: %v", err)
 		}
 	} else {
-		logger.SubStep("[Done] ffuf - Merged results size: %d", len(allResults))
+		logger.ToolDone("ffuf")
 	}
 
 	// Write consolidated results to c.F.FfufOut

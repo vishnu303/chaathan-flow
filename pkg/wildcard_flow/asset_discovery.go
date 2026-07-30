@@ -45,50 +45,50 @@ func stepPassiveEnum(c *Ctx) bool {
 
 		go func() {
 			defer wg.Done()
-			logger.SubStep("[Start] Subfinder")
+			logger.ToolStart("Subfinder")
 			logger.FileDebug("subfinder input: domain=%s out=%s", c.Domain, c.F.SubfinderOut)
 			if err := c.Tb.RunSubfinder(sCtx, c.Domain, c.F.SubfinderOut); err != nil {
 				if sCtx.Err() == nil {
-					logger.Error("Subfinder failed: %v", err)
+					logger.ToolFail("Subfinder", err.Error())
 				}
 			} else {
 				resultMu.Lock()
 				subfinderOK = true
 				resultMu.Unlock()
-				logger.SubStep("[Done] Subfinder")
+				logger.ToolDone("Subfinder")
 			}
 		}()
 
 		go func() {
 			defer wg.Done()
-			logger.SubStep("[Start] Assetfinder")
+			logger.ToolStart("Assetfinder")
 			logger.FileDebug("assetfinder input: domain=%s out=%s", c.Domain, c.F.AssetfinderOut)
 			if err := c.Tb.RunAssetfinder(sCtx, c.Domain, c.F.AssetfinderOut); err != nil {
 				if sCtx.Err() == nil {
-					logger.Error("Assetfinder failed: %v", err)
+					logger.ToolFail("Assetfinder", err.Error())
 				}
 			} else {
 				resultMu.Lock()
 				assetfinderOK = true
 				resultMu.Unlock()
-				logger.SubStep("[Done] Assetfinder")
+				logger.ToolDone("Assetfinder")
 			}
 		}()
 
 		go func() {
 			defer wg.Done()
-			logger.SubStep("[Start] Sublist3r")
+			logger.ToolStart("Sublist3r")
 			logger.FileDebug("sublist3r input: domain=%s out=%s", c.Domain, c.F.Sublist3rOut)
 			if err := c.Tb.RunSublist3r(sCtx, c.Domain, c.F.Sublist3rOut); err != nil {
 				if c.Verbose && sCtx.Err() == nil {
-					logger.Warning("Sublist3r failed: %v", err)
+					logger.ToolFail("Sublist3r", err.Error())
 				}
 				logger.FileDebug("sublist3r failed: %v", err)
 			} else {
 				resultMu.Lock()
 				sublist3rOK = true
 				resultMu.Unlock()
-				logger.SubStep("[Done] Sublist3r")
+				logger.ToolDone("Sublist3r")
 			}
 		}()
 
@@ -143,7 +143,7 @@ func stepActiveEnum(c *Ctx) bool {
 	}
 
 	writeEmptyFile(c.F.AmassOut)
-	logger.SubStep("Running Amass (this may take a while)...")
+	logger.ToolStart("Amass")
 	logger.FileDebug("amass input: domain=%s out=%s", c.Domain, c.F.AmassOut)
 
 	var amassSkipped bool
@@ -153,7 +153,7 @@ func stepActiveEnum(c *Ctx) bool {
 		if err == ErrToolSkipped {
 			amassSkipped = true
 		} else {
-			logger.Error("Amass failed: %v", err)
+			logger.ToolFail("Amass", err.Error())
 			c.markStepFailedSafe("active_enum", err)
 		}
 	}
@@ -191,7 +191,7 @@ func stepGitHubRecon(c *Ctx) bool {
 	}
 
 	writeEmptyFile(c.F.GithubSubsOut)
-	logger.SubStep("Running github-subdomains...")
+	logger.ToolStart("github-subdomains")
 	logger.FileDebug("github-subdomains input: domain=%s token_len=%d out=%s", c.Domain, len(c.GitHubToken), c.F.GithubSubsOut)
 
 	var githubSkipped bool
@@ -202,10 +202,10 @@ func stepGitHubRecon(c *Ctx) bool {
 			githubSkipped = true
 		} else {
 			c.markStepFailedSafe("github_recon", err)
-			logger.Warning("GitHub subdomains failed: %v", err)
+			logger.ToolFail("github-subdomains", err.Error())
 		}
 	} else {
-		logger.SubStep("[Done] GitHub Subdomains")
+		logger.ToolDone("github-subdomains")
 	}
 
 	if c.ScanID > 0 {
@@ -240,7 +240,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 
 	writeEmptyFile(c.F.UncoverOut)
 	writeEmptyFile(c.F.UncoverHostsOut)
-	logger.SubStep("Running Uncover (Shodan/Censys/Fofa)...")
+	logger.ToolStart("Uncover")
 
 	var uncoverSkipped bool
 	if err := runWithSkip(c, "uncover", func(sCtx context.Context) error {
@@ -250,7 +250,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 			uncoverSkipped = true
 		} else {
 			c.markStepFailedSafe("search_engine_recon", err)
-			logger.Warning("Uncover failed: %v (check API keys in config)", err)
+			logger.ToolFail("Uncover", err.Error())
 		}
 	}
 
@@ -265,7 +265,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 
 	// Extract hostnames into a plain-text file so Step 6 can merge them
 	if n := extractUncoverHosts(c.F.UncoverOut, c.F.UncoverHostsOut, c.Domain); n > 0 {
-		logger.SubStep("[Done] Extracted %d unique hosts from Uncover output", n)
+		logger.ToolDone("Uncover")
 	}
 
 	c.markStepCompleteIfNoFailure("search_engine_recon")
@@ -290,7 +290,7 @@ func stepJSSubdomains(c *Ctx) bool {
 	}
 
 	writeEmptyFile(c.F.HakrawlerOut)
-	logger.SubStep("Running Hakrawler on https://%s...", c.Domain)
+	logger.ToolStart("Hakrawler")
 
 	var hakrawlerSkipped bool
 	if err := runWithSkip(c, "hakrawler", func(sCtx context.Context) error {
@@ -300,7 +300,7 @@ func stepJSSubdomains(c *Ctx) bool {
 			hakrawlerSkipped = true
 		} else {
 			c.markStepFailedSafe("js_subdomain_discovery", err)
-			logger.Warning("Hakrawler failed: %v", err)
+			logger.ToolFail("Hakrawler", err.Error())
 		}
 	}
 

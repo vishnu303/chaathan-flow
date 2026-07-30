@@ -110,7 +110,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 		}
 	}
 
-	logger.SubStep("Running DNSx for resolution...")
+	logger.ToolStart("DNSx")
 	logger.FileDebug("dnsx input: %s (%d lines) out=%s", c.F.ConsolidatedSubs, subCount, c.F.DnsxOut)
 
 	var dnsxSkipped bool
@@ -121,7 +121,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 			dnsxSkipped = true
 		} else {
 			c.markStepFailedSafe("dns_resolution", err)
-			logger.Error("DNSx failed: %v", err)
+			logger.ToolFail("DNSx", err.Error())
 		}
 	}
 
@@ -191,7 +191,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 		return c.cancelled()
 	}
 
-	logger.SubStep("Running ShuffleDNS with wordlist: %s", c.DNSWordlistPath)
+	logger.ToolStart("ShuffleDNS")
 	logger.FileDebug("shuffledns input: domain=%s wordlist=%s resolvers=%s out=%s",
 		c.Domain, c.DNSWordlistPath, c.ResolversPath, c.F.ShufflednsOut)
 
@@ -205,7 +205,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			shufflednsSkipped = true
 		} else {
 			c.markStepFailedSafe("dns_bruteforce", err)
-			logger.Warning("ShuffleDNS failed: %v", err)
+			logger.ToolFail("ShuffleDNS", err.Error())
 		}
 	} else {
 		beforeMerge, _ = utils.CountFileLines(c.F.ConsolidatedSubs)
@@ -271,7 +271,7 @@ func stepHTTPProbing(c *Ctx) bool {
 		return c.cancelled()
 	}
 
-	logger.SubStep("Running Httpx...")
+	logger.ToolStart("Httpx")
 	hostInputCount, _ := utils.CountFileLines(c.F.HttpxInput)
 	logger.FileDebug("httpx input: %s (%d hosts) out=%s", c.F.HttpxInput, hostInputCount, c.F.HttpxOut)
 
@@ -283,7 +283,7 @@ func stepHTTPProbing(c *Ctx) bool {
 			httpxSkipped = true
 		} else {
 			c.markStepFailedSafe("http_probing", err)
-			logger.Error("Httpx failed: %v", err)
+			logger.ToolFail("Httpx", err.Error())
 		}
 	}
 
@@ -321,7 +321,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 		c.markStepCompleteIfNoFailure("tls_analysis")
 	} else {
 		writeEmptyFile(c.F.TlsxOut)
-		logger.SubStep("Running tlsx — extracting SANs and checking cert issues...")
+		logger.ToolStart("tlsx")
 		inputCount, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
 		logger.FileDebug("tlsx input: %s (%d hosts) out=%s", c.F.ConsolidatedSubs, inputCount, c.F.TlsxOut)
 
@@ -333,7 +333,7 @@ func stepTLSAnalysis(c *Ctx) bool {
 				tlsxSkipped = true
 			} else {
 				c.markStepFailedSafe("tls_analysis", err)
-				logger.Warning("tlsx failed: %v", err)
+				logger.ToolFail("tlsx", err.Error())
 			}
 		}
 
@@ -501,7 +501,7 @@ func stepPortScanning(c *Ctx) bool {
 		c.markStepCompleteIfNoFailure("port_scanning")
 	} else {
 		writeEmptyFile(c.F.NaabuOut)
-		logger.SubStep("Running Naabu on all discovered subdomains...")
+		logger.ToolStart("Naabu")
 		inputCount, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
 		logger.FileDebug("naabu input: %s (%d hosts) out=%s", c.F.ConsolidatedSubs, inputCount, c.F.NaabuOut)
 

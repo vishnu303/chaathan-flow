@@ -311,7 +311,7 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 		if validateLimit > len(secretFindings) {
 			validateLimit = len(secretFindings)
 		}
-		logger.SubStep("Validating top %d secret findings...", validateLimit)
+		logger.ToolStart("Secret Validation")
 		validateSecrets(c.GoCtx, client, secretFindings[:validateLimit])
 	}
 

@@ -36,23 +36,23 @@ func stepFingerprinting(c *Ctx) bool {
 	// 1. HTTPX Tech Detection
 	if utils.FileExists(c.F.HttpxLiveHosts) {
 		writeEmptyFile(c.F.HttpxTechOut)
-		logger.SubStep("Running HTTPX Tech Detection on live hosts...")
+		logger.ToolStart("HTTPX Tech Detection")
 		if err := runWithSkip(c, "httpx-tech", func(sCtx context.Context) error {
 			return c.Tb.RunHttpxFingerprint(sCtx, c.F.HttpxLiveHosts, c.F.HttpxTechOut)
 		}); err != nil {
 			if err != ErrToolSkipped {
-				logger.Warning("HTTPX Tech Detection failed: %v", err)
+				logger.ToolFail("HTTPX Tech Detection", err.Error())
 			}
 		}
 	} else {
-		logger.Info("  Skipping HTTPX Tech Detection (no live hosts)")
+		logger.ToolSkip("HTTPX Tech Detection", "no live hosts")
 	}
 
 	// 2. Nuclei WAF Detection
 	if utils.FileExists(c.F.HttpxLiveHosts) {
 		writeEmptyFile(c.F.NucleiWafOut)
 
-		logger.SubStep("Running Nuclei WAF Detection on live hosts...")
+		logger.ToolStart("Nuclei WAF Detection")
 
 		// Snapshot known vulnerabilities to avoid duplicate notifications on resume
 		knownVulnIDs := snapshotVulnIDs(c.ScanID)
@@ -64,7 +64,7 @@ func stepFingerprinting(c *Ctx) bool {
 			if err == ErrToolSkipped {
 				wafSkipped = true
 			} else {
-				logger.Warning("Nuclei WAF Detection failed: %v", err)
+				logger.ToolFail("Nuclei WAF Detection", err.Error())
 			}
 		}
 
@@ -85,9 +85,9 @@ func stepFingerprinting(c *Ctx) bool {
 					}, knownVulnIDs)
 				}
 			} else if wafSkipped {
-				logger.Info("  Nuclei WAF Detection scan skipped")
+				logger.ToolSkip("Nuclei WAF Detection", "skipped")
 			} else {
-				logger.Info("  No WAFs detected")
+				logger.ToolDone("Nuclei WAF Detection")
 			}
 		}
 	}

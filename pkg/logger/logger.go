@@ -420,6 +420,26 @@ func SubStep(format string, args ...any) {
 	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s▸%s %s\n", Dim, Reset, Purple, Reset, msg))
 }
 
+// ToolStart prints a "running" indicator for a tool.
+func ToolStart(name string) {
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s●%s %s\n", Dim, Reset, BrightCyan, Reset, name))
+}
+
+// ToolDone prints a "completed" indicator for a tool.
+func ToolDone(name string) {
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s✓%s %s\n", Dim, Reset, BrightGreen, Reset, name))
+}
+
+// ToolFail prints a "failed" indicator for a tool with the error reason.
+func ToolFail(name string, reason string) {
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s✗%s %s %s(%s)%s\n", Dim, Reset, BrightRed, Reset, name, Dim, reason, Reset))
+}
+
+// ToolSkip prints a "skipped" indicator for a tool with the reason.
+func ToolSkip(name string, reason string) {
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s⊘%s %s %s— %s%s\n", Dim, Reset, BrightYellow, Reset, name, Dim, reason, Reset))
+}
+
 // Command prints the command being executed
 func Command(cmd string) {
 	logWrite(os.Stdout, fmt.Sprintf("  %s│     $ %s%s\n", Dim, cmd, Reset))
