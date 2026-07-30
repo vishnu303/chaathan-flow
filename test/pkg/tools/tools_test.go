@@ -2,7 +2,6 @@ package tools_test
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -310,32 +309,6 @@ func TestRunKatanaProxy(t *testing.T) {
 	argsJoined := strings.Join(dr.LastArgs, " ")
 	if !strings.Contains(argsJoined, "-proxy http://katana-proxy:8080") {
 		t.Errorf("expected arguments to contain proxy, got %q", argsJoined)
-	}
-}
-
-func TestRunHakrawlerStdin(t *testing.T) {
-	dr := &runnerfaketest.DummyRunner{}
-	tb := tools.New(dr)
-
-	ctx := context.Background()
-	err := tb.RunHakrawler(ctx, "http://target.com", "out.txt")
-	if err != nil {
-		t.Fatalf("unexpected error running RunHakrawler: %v", err)
-	}
-
-	opts := dr.GetOptions()
-	if opts.Stdin == nil {
-		t.Fatal("expected Stdin to be configured in runner options")
-	}
-
-	reader := opts.Stdin()
-	buf, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("failed to read stdin from factory: %v", err)
-	}
-
-	if string(buf) != "http://target.com\n" {
-		t.Errorf("expected stdin to contain http://target.com\\n, got %q", string(buf))
 	}
 }
 

@@ -54,8 +54,8 @@ type RunConfig struct {
 	SkipTlsx        bool
 	SkipX8          bool
 	SkipShuffleDNS  bool
-	SkipHakrawler   bool
 	SkipFingerprint bool
+	SkipJS          bool
 
 	// Paths / tokens
 	WordlistPath    string
@@ -114,7 +114,7 @@ type Files struct {
 	JSSecretsOut        string
 	JSSubdomainsOut     string
 	JSMetadataOut       string
-	HakrawlerOut        string
+	HakrawlerOut        string // deprecated: kept for resume compat
 	X8Out               string
 	X8URLsOut           string
 	AllURLsRaw          string
@@ -341,7 +341,6 @@ func Run(cfg RunConfig) error {
 		"skip_tlsx":        cfg.SkipTlsx,
 		"skip_x8":          cfg.SkipX8,
 		"skip_shuffledns":  cfg.SkipShuffleDNS,
-		"skip_hakrawler":   cfg.SkipHakrawler,
 		"skip_fingerprint": cfg.SkipFingerprint,
 		"wordlist":         cfg.WordlistPath,
 		"dns_wordlist":     cfg.DNSWordlistPath,
@@ -396,7 +395,6 @@ func Run(cfg RunConfig) error {
 			checkBoolDiff("skip_tlsx", cfg.SkipTlsx)
 			checkBoolDiff("skip_x8", cfg.SkipX8)
 			checkBoolDiff("skip_shuffledns", cfg.SkipShuffleDNS)
-			checkBoolDiff("skip_hakrawler", cfg.SkipHakrawler)
 			checkBoolDiff("skip_fingerprint", cfg.SkipFingerprint)
 			checkBoolDiff("auto_proxy", cfg.AutoProxy)
 			checkBoolDiff("save_log", cfg.SaveLog)
@@ -532,12 +530,11 @@ func Run(cfg RunConfig) error {
 		// Phase 1 — Proxy Setup
 		{"proxy_scraping", "Proxy Setup", stepProxyScraping},
 
-		// Phase 2 — Asset Discovery (Steps 2–6)
+		// Phase 2 — Asset Discovery (Steps 2–5)
 		{"passive_enum", "Asset Discovery", stepPassiveEnum},
 		{"active_enum", "Asset Discovery", stepActiveEnum},
 		{"github_recon", "Asset Discovery", stepGitHubRecon},
 		{"search_engine_recon", "Asset Discovery", stepSearchEngineRecon},
-		{"js_subdomain_discovery", "Asset Discovery", stepJSSubdomains},
 
 		// Phase 3 — Validation & Probing (Steps 7–11)
 		{"dns_resolution", "Validation & Probing", stepDNSConsolidation},
@@ -673,7 +670,7 @@ func countFindingsForStep(c *Ctx, stepName string) int {
 	case "js_deep_analysis":
 		return countLines(c.F.JSEndpointsOut, c.F.JSSecretsOut)
 	case "js_subdomain_discovery":
-		return countLines(c.F.HakrawlerOut)
+		return 0 // deprecated step — kept for resume compat
 	case "param_discovery":
 		return countLines(c.F.X8URLsOut)
 	case "url_consolidation":

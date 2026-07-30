@@ -46,7 +46,7 @@ type Step struct {
 // Order matches the 6-phase execution sequence in pkg/wildcard_flow/flow.go:
 //
 //	Phase 0 (Proxy Setup):       proxy_scraping
-//	Phase 1 (Asset Discovery):   passive_enum, active_enum, github_recon, search_engine_recon, js_subdomain_discovery
+//	Phase 1 (Asset Discovery):   passive_enum, active_enum, github_recon, search_engine_recon
 //	Phase 2 (Validation):        dns_resolution, dns_bruteforce, port_scanning, http_probing, tls_analysis
 //	Phase 3 (Content Discovery): url_discovery, web_crawling, js_deep_analysis,
 //	                             dir_fuzzing, param_discovery, url_consolidation
@@ -60,7 +60,6 @@ var WildcardSteps = []Step{
 	{Name: "active_enum", Description: "Active Subdomain Enumeration", Required: false, Tool: "amass"},
 	{Name: "github_recon", Description: "GitHub Subdomain Discovery", Required: false, Tool: "github-subdomains"},
 	{Name: "search_engine_recon", Description: "Search Engine Dorking", Required: false, Tool: "uncover"},
-	{Name: "js_subdomain_discovery", Description: "JavaScript Crawling (Hakrawler)", Required: false, Tool: "hakrawler"},
 
 	// Phase 2 — Validation & Fingerprint
 	{Name: "dns_resolution", Description: "Consolidation & DNS Resolution", Required: true, Tool: "dnsx"},
@@ -163,22 +162,24 @@ func (m *Manager) LoadState(scanID int64) (*State, error) {
 // current equivalents so resume works across upgrades.
 func migrateStepNames(state *State) {
 	renames := map[string]string{
-		"js_analysis":    "js_deep_analysis",
-		"js_secret_scan": "js_deep_analysis",
+		"js_analysis":            "js_deep_analysis",
+		"js_secret_scan":         "js_deep_analysis",
+		"js_subdomain_discovery": "", // removed step — mark as completed to skip
 	}
 	for i, s := range state.CompletedSteps {
 		if newName, ok := renames[s]; ok {
 			state.CompletedSteps[i] = newName
 		}
 	}
-	// Deduplicate (both old steps may map to the same new step)
+	// Remove empty entries (from deleted steps) and deduplicate
 	seen := make(map[string]bool)
 	var deduped []string
 	for _, s := range state.CompletedSteps {
-		if !seen[s] {
-			seen[s] = true
-			deduped = append(deduped, s)
+		if s == "" || seen[s] {
+			continue
 		}
+		seen[s] = true
+		deduped = append(deduped, s)
 	}
 	state.CompletedSteps = deduped
 }

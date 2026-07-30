@@ -1,4 +1,4 @@
-// Phase 1 — Asset Discovery (Steps 2–6)
+// Phase 1 — Asset Discovery (Steps 2–5)
 //
 // Collects all possible subdomains/assets before any validation.
 // Wayback/GAU are intentionally excluded — they run in Phase 3
@@ -8,7 +8,6 @@
 //  3. Active Subdomain Enumeration (Amass) [Optional]
 //  4. GitHub Subdomain Discovery [Requires token]
 //  5. Search-Engine Dorking (Uncover) [Optional]
-//  6. JavaScript Crawling (Hakrawler) [Optional]
 package wildcard_flow
 
 import (
@@ -263,56 +262,11 @@ func stepSearchEngineRecon(c *Ctx) bool {
 		logger.Result(subs, "hosts from search engines (%d open ports)%s", ports, label)
 	}
 
-	// Extract hostnames into a plain-text file so Step 6 can merge them
+	// Extract hostnames into a plain-text file so DNS consolidation can merge them
 	if n := extractUncoverHosts(c.F.UncoverOut, c.F.UncoverHostsOut, c.Domain); n > 0 {
 		logger.ToolDone("Uncover")
 	}
 
 	c.markStepCompleteIfNoFailure("search_engine_recon")
-	return c.cancelled()
-}
-
-// ─────────────────────────────────────────────────────────────
-// Step 6 — JS Crawling (Hakrawler)
-// ─────────────────────────────────────────────────────────────
-
-// stepJSSubdomains crawls the root domain with Hakrawler to surface additional links and subdomains.
-// Returns true if the scan should be cancelled.
-func stepJSSubdomains(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("js_subdomain_discovery", "Step 6: JS Crawling (Hakrawler)"); skipped {
-		return cancelled
-	}
-
-	if c.SkipHakrawler {
-		logger.StepHeader("Step 6: Skipping Hakrawler (--skip-hakrawler)")
-		c.markStepCompleteSafe("js_subdomain_discovery")
-		return c.cancelled()
-	}
-
-	writeEmptyFile(c.F.HakrawlerOut)
-	logger.ToolStart("Hakrawler")
-
-	var hakrawlerSkipped bool
-	if err := runWithSkip(c, "hakrawler", func(sCtx context.Context) error {
-		return c.Tb.RunHakrawler(sCtx, "https://"+c.Domain, c.F.HakrawlerOut)
-	}); err != nil {
-		if err == ErrToolSkipped {
-			hakrawlerSkipped = true
-		} else {
-			c.markStepFailedSafe("js_subdomain_discovery", err)
-			logger.ToolFail("Hakrawler", err.Error())
-		}
-	}
-
-	if c.ScanID > 0 {
-		count, _ := ingest.ParseSubdomainsFile(c.ScanID, c.F.HakrawlerOut, "hakrawler")
-		label := ""
-		if hakrawlerSkipped {
-			label = " (partial)"
-		}
-		logger.Result(count, "links/subdomains from Hakrawler%s", label)
-	}
-
-	c.markStepCompleteIfNoFailure("js_subdomain_discovery")
 	return c.cancelled()
 }

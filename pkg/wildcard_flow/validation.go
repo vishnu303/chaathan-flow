@@ -46,7 +46,6 @@ func stepDNSConsolidation(c *Ctx) bool {
 		c.F.Sublist3rOut,
 		c.F.AmassOut,
 		c.F.GithubSubsOut,
-		c.F.HakrawlerOut,
 		c.F.UncoverHostsOut, // hostnames extracted from uncover.json in Step 5
 	)
 	var sourceNames []string

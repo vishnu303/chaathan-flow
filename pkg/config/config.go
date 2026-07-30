@@ -136,6 +136,9 @@ type ToolsConfig struct {
 	// Subfinder specific settings
 	Subfinder SubfinderConfig `yaml:"subfinder"`
 
+	// Assetfinder specific settings
+	Assetfinder AssetfinderConfig `yaml:"assetfinder"`
+
 	// Amass specific settings
 	Amass AmassConfig `yaml:"amass"`
 
@@ -159,11 +162,18 @@ type ToolsConfig struct {
 
 	// GoSpider specific settings
 	GoSpider GoSpiderConfig `yaml:"gospider"`
+
+	// Uncover specific settings
+	Uncover UncoverConfig `yaml:"uncover"`
 }
 
 type SubfinderConfig struct {
 	Threads int `yaml:"threads"` // concurrent threads for passive enumeration (default: 30)
 	Timeout int `yaml:"timeout"` // timeout in seconds per source (default: 30)
+}
+
+type AssetfinderConfig struct {
+	Timeout int `yaml:"timeout"` // max runtime in seconds (default: 60)
 }
 
 type AmassConfig struct {
@@ -219,6 +229,10 @@ type GoSpiderConfig struct {
 	// Timeout represents the maximum runtime in minutes for GoSpider.
 	// For backwards compatibility, it is kept as "Timeout" rather than "MaxTimeout".
 	Timeout int `yaml:"timeout"` // max runtime in minutes for GoSpider (default: 300)
+}
+
+type UncoverConfig struct {
+	Timeout int `yaml:"timeout"` // max runtime in seconds (default: 120)
 }
 
 type NotificationConfig struct {
@@ -483,6 +497,9 @@ func DefaultConfig() *Config {
 				Threads: 30,
 				Timeout: 30,
 			},
+			Assetfinder: AssetfinderConfig{
+				Timeout: 60,
+			},
 			Amass: AmassConfig{
 				Timeout: 60,
 			},
@@ -522,6 +539,9 @@ func DefaultConfig() *Config {
 			},
 			GoSpider: GoSpiderConfig{
 				Timeout: 300,
+			},
+			Uncover: UncoverConfig{
+				Timeout: 120,
 			},
 		},
 		Notifications: NotificationConfig{

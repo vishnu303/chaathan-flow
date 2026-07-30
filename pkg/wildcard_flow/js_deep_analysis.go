@@ -28,11 +28,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
+	"github.com/vishnu303/chaathan/pkg/notify"
 	"github.com/vishnu303/chaathan/utils"
 )
 
@@ -127,6 +129,12 @@ func scoreJSURL(raw string) int {
 func stepJSDeepAnalysis(c *Ctx) bool {
 	if skipped, cancelled := c.resumeOrSkip("js_deep_analysis", "Step 14: JavaScript Deep Analysis"); skipped {
 		return cancelled
+	}
+
+	if c.SkipJS {
+		logger.StepHeader("Step 14: Skipping JavaScript Deep Analysis (--skip-js)")
+		c.markStepCompleteIfNoFailure("js_deep_analysis")
+		return c.cancelled()
 	}
 
 	writeEmptyFile(c.F.JSEndpointsOut)
@@ -229,6 +237,22 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 	}
 	close(jobs)
 
+	// Interactive skip: create a cancellable context that responds to both
+	// parent cancellation and the 's' key skip signal.
+	drainSkipSignal(c)
+	fetchCtx, fetchCancel := context.WithCancel(c.GoCtx)
+	defer fetchCancel()
+
+	userSkipped := false
+	go func() {
+		select {
+		case <-c.SkipChan:
+			userSkipped = true
+			fetchCancel()
+		case <-fetchCtx.Done():
+		}
+	}()
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
@@ -237,6 +261,8 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 	var subdomains []string
 	var totalBytes int64
 	var filesFetched, mapsFetched int
+	var processed int64 // atomic progress counter
+	totalJobs := int64(len(allJSURLs))
 
 	for range threads {
 		wg.Add(1)
@@ -244,20 +270,27 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 			defer wg.Done()
 			for jsURL := range jobs {
 				select {
-				case <-c.GoCtx.Done():
+				case <-fetchCtx.Done():
 					return
 				default:
 				}
 
 				if rateLimiter != nil {
 					select {
-					case <-c.GoCtx.Done():
+					case <-fetchCtx.Done():
 						return
 					case <-rateLimiter.C:
 					}
 				}
 
 				body := fetchJSFile(c, client, jsURL, maxFileBytes)
+
+				// Progress log every 200 files
+				cur := atomic.AddInt64(&processed, 1)
+				if cur%200 == 0 || cur == totalJobs {
+					logger.Info("  JS fetch progress: %d/%d files processed", cur, totalJobs)
+				}
+
 				if body == nil {
 					continue
 				}
@@ -301,7 +334,15 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 
 	wg.Wait()
 
+	// On user skip or cancellation, save partial output and exit gracefully
+	if userSkipped {
+		logger.Skip("Skipped JS Deep Analysis — saving %d endpoints, %d secrets collected so far", len(endpoints), len(secretFindings))
+		writeJSPartialOutput(c, endpoints, secretFindings, subdomains, filesFetched, mapsFetched, totalBytes)
+		c.markStepCompleteIfNoFailure("js_deep_analysis")
+		return c.cancelled()
+	}
 	if c.cancelled() {
+		writeJSPartialOutput(c, endpoints, secretFindings, subdomains, filesFetched, mapsFetched, totalBytes)
 		return true
 	}
 
@@ -337,14 +378,32 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 		}
 	}
 
-	// Write subdomains
+	// Write subdomains (scope-filtered)
 	subdomains = utils.DeduplicateSlice(subdomains)
+	if c.ScopeFilter != nil {
+		filtered := make([]string, 0, len(subdomains))
+		for _, s := range subdomains {
+			if c.ScopeFilter.IsInScope(s) && !c.ScopeFilter.IsOutOfScope(s) {
+				filtered = append(filtered, s)
+			}
+		}
+		subdomains = filtered
+	}
 	if len(subdomains) > 0 {
 		if f, err := os.Create(c.F.JSSubdomainsOut); err == nil {
 			for _, s := range subdomains {
 				fmt.Fprintln(f, s)
 			}
 			f.Close()
+		}
+		// Append to consolidated subdomains so they appear in the report
+		if utils.FileExists(c.F.ConsolidatedSubs) {
+			if f, err := os.OpenFile(c.F.ConsolidatedSubs, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+				for _, s := range subdomains {
+					fmt.Fprintln(f, s)
+				}
+				f.Close()
+			}
 		}
 	}
 
@@ -406,6 +465,24 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 		logger.Result(len(subdomains), "new subdomains from JS content")
 	}
 
+	// Notify confirmed secrets as high-severity findings
+	if c.Notifier != nil && confirmedCount > 0 {
+		for _, sf := range secretFindings {
+			if sf.Status != "confirmed" {
+				continue
+			}
+			_ = c.Notifier.SendFinding(notify.Finding{
+				Target:      c.Domain,
+				Type:        "js-secret",
+				Name:        fmt.Sprintf("Confirmed %s secret in JS", sf.Pattern),
+				Severity:    "high",
+				Description: sf.Context,
+				URL:         sf.URL,
+				Timestamp:   time.Now(),
+			})
+		}
+	}
+
 	// Metadata
 	meta := fmt.Sprintf("// JS Deep Analysis | Files: %d | Maps: %d | Size: %.4f GB | Endpoints: %d | Secrets: %d | Subdomains: %d\n",
 		filesFetched, mapsFetched, float64(totalBytes)/(1024*1024*1024), len(endpoints), len(secretFindings), len(subdomains))
@@ -415,6 +492,40 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 
 	c.markStepCompleteIfNoFailure("js_deep_analysis")
 	return c.cancelled()
+}
+
+// writeJSPartialOutput saves whatever was collected so far when the step is
+// skipped or cancelled mid-execution. This ensures no findings are lost.
+func writeJSPartialOutput(c *Ctx, endpoints []string, secrets []secretFinding, subdomains []string, filesFetched, mapsFetched int, totalBytes int64) {
+	endpoints = utils.DeduplicateSlice(endpoints)
+	if len(endpoints) > 0 {
+		if f, err := os.Create(c.F.JSEndpointsOut); err == nil {
+			for _, ep := range endpoints {
+				fmt.Fprintln(f, ep)
+			}
+			f.Close()
+		}
+	}
+	if len(secrets) > 0 {
+		if f, err := os.Create(c.F.JSSecretsOut); err == nil {
+			for _, sf := range secrets {
+				fmt.Fprintf(f, "[%s] [%s] [%s] %s\n", sf.URL, sf.Pattern, sf.Status, sf.Context)
+			}
+			f.Close()
+		}
+	}
+	subdomains = utils.DeduplicateSlice(subdomains)
+	if len(subdomains) > 0 {
+		if f, err := os.Create(c.F.JSSubdomainsOut); err == nil {
+			for _, s := range subdomains {
+				fmt.Fprintln(f, s)
+			}
+			f.Close()
+		}
+	}
+	meta := fmt.Sprintf("// JS Deep Analysis (PARTIAL) | Files: %d | Maps: %d | Size: %.2f MB | Endpoints: %d | Secrets: %d | Subdomains: %d\n",
+		filesFetched, mapsFetched, float64(totalBytes)/(1024*1024), len(endpoints), len(secrets), len(subdomains))
+	_ = os.WriteFile(c.F.JSMetadataOut, []byte(meta), 0644)
 }
 
 // ─────────────────────────────────────────────────────────────

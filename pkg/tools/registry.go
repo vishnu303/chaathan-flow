@@ -47,7 +47,6 @@ var allTools = []ToolInfo{
 
 	// Analysis
 	{Name: "jsluice", Category: "Analysis", Description: "AST-based JavaScript URL & secret extraction", Required: false, InstallURL: "github.com/BishopFox/jsluice/cmd/jsluice@latest"},
-	{Name: "hakrawler", Category: "Crawl", Description: "Fast web crawler for endpoint & asset discovery", Required: false, InstallURL: "github.com/hakluke/hakrawler@latest"},
 
 	// Fuzzing & Scanning
 	{Name: "ffuf", Category: "Fuzz", Description: "Web fuzzer & directory brute-force", Required: false, InstallURL: "github.com/ffuf/ffuf/v2@latest"},

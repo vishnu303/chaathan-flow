@@ -298,9 +298,7 @@ const (
 	gauMaxTimeout              = 30 * time.Minute
 	waybackurlsMaxTimeout      = 20 * time.Minute
 	x8MaxTimeout               = 120 * time.Minute
-	uncoverMaxTimeout          = 10 * time.Minute
 	githubSubdomainsMaxTimeout = 15 * time.Minute
-	hakrawlerMaxTimeout        = 30 * time.Minute
 )
 
 func (t *ToolBox) subfinderThreads() int {
@@ -315,6 +313,20 @@ func (t *ToolBox) subfinderTimeout() int {
 		return val
 	}
 	return getDefaultToolsConfig().Subfinder.Timeout
+}
+
+func (t *ToolBox) assetfinderTimeout() time.Duration {
+	if val := t.config().Assetfinder.Timeout; val > 0 {
+		return time.Duration(val) * time.Second
+	}
+	return time.Duration(getDefaultToolsConfig().Assetfinder.Timeout) * time.Second
+}
+
+func (t *ToolBox) uncoverTimeout() time.Duration {
+	if val := t.config().Uncover.Timeout; val > 0 {
+		return time.Duration(val) * time.Second
+	}
+	return time.Duration(getDefaultToolsConfig().Uncover.Timeout) * time.Second
 }
 
 func (t *ToolBox) httpxThreads() int {
@@ -514,6 +526,9 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 		if t.APIKeys.SecurityTrails != "" {
 			envVars = append(envVars, "SECURITYTRAILS_API_KEY="+t.APIKeys.SecurityTrails)
 		}
+		if t.APIKeys.Shodan != "" {
+			envVars = append(envVars, "SHODAN_API_KEY="+t.APIKeys.Shodan)
+		}
 		if len(envVars) > 0 {
 			opts = append(opts, runner.WithEnv(envVars...))
 		}
@@ -526,7 +541,7 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 
 func (t *ToolBox) RunAssetfinder(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"--subs-only", domain}
-	output, err := t.Runner.Run(ctx, "assetfinder", args)
+	output, err := t.Runner.Run(ctx, "assetfinder", args, runner.WithTimeout(t.assetfinderTimeout()))
 	if strings.TrimSpace(output) != "" {
 		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
@@ -810,22 +825,6 @@ func (t *ToolBox) RunCloudEnum(ctx context.Context, keyword string, outputFile s
 	return err
 }
 
-func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile string) error {
-	args := []string{"-subs", "-u", "-d", "3"}
-	if t.uaEnabled() {
-		args = append(args, "-h", "User-Agent: "+t.getUA())
-	}
-	args = t.appendProxy(args, "-proxy")
-
-	output, err := t.Runner.Run(ctx, "hakrawler", args, runner.WithStdin(strings.NewReader(url+"\n")), runner.WithTimeout(hakrawlerMaxTimeout))
-	if strings.TrimSpace(output) != "" {
-		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
-			return writeErr
-		}
-	}
-	return err
-}
-
 // --- URL Discovery ---
 
 // RunWaybackurls fetches historical URLs from Wayback Machine
@@ -1064,7 +1063,7 @@ func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile stri
 		}
 	}
 
-	opts = append(opts, runner.WithTimeout(uncoverMaxTimeout))
+	opts = append(opts, runner.WithTimeout(t.uncoverTimeout()))
 	_, err := t.Runner.Run(ctx, "uncover", args, opts...)
 	return err
 }
