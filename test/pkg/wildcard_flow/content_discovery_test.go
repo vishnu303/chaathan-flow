@@ -1,102 +1,98 @@
 package wildcard_flow_test
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/wildcard_flow"
 )
 
-func TestFilterAndDeduplicateHosts(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    []string
-		expected []string
-	}{
-		{
-			name: "Standard port filtering and scheme prefix",
-			input: []string{
-				"http://0-edge-chat.facebook.com:8000",
-				"http://01.eze1.facebook.com:8888",
-				"https://facebook.com:443",
-				"http://facebook.com:80",
-			},
-			expected: []string{
-				"https://facebook.com:443",
-			},
-		},
-		{
-			name: "Bare hostname and port scheme mapping",
-			input: []string{
-				"facebook.com:8443", // mapped to https:// but filtered out since port is not 80/443
-				"facebook.com:443",  // mapped to https://facebook.com:443 and kept
-				"example.com:80",    // mapped to http://example.com:80 and kept
-				"barehost.com",      // mapped to https://barehost.com and kept (port 443 implicit)
-			},
-			expected: []string{
-				"http://example.com:80",
-				"https://barehost.com",
-				"https://facebook.com:443",
-			},
-		},
-		{
-			name: "Hostname deduplication preferring HTTPS",
-			input: []string{
-				"http://example.com",
-				"https://example.com",
-			},
-			expected: []string{
-				"https://example.com",
-			},
-		},
-		{
-			name: "Standard ports implicit and explicit mapping",
-			input: []string{
-				"http://example.com:80",
-				"http://example.com",
-				"https://example.com:443",
-				"https://example.com",
-			},
-			expected: []string{
-				"https://example.com:443", // parsed.Port() would output "443" for explicit, keeping whichever was processed last or highest priority
-			},
-		},
+func TestRankJSURLs(t *testing.T) {
+	urls := []string{
+		"https://example.com/random/page.js",
+		"https://example.com/app.js",
+		"https://example.com/_next/static/chunks/main.js",
+		"https://example.com/assets/js/vendor.js",
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := wildcard_flow.FilterAndDeduplicateHosts(tc.input)
-			// Deduplication order is sorted, so we compare got vs expected.
-			// The expected slice should also be sorted.
-			if len(got) != len(tc.expected) {
-				t.Fatalf("expected length %d, got %d. Got: %v", len(tc.expected), len(got), got)
-			}
-			if !reflect.DeepEqual(got, tc.expected) {
-				t.Errorf("got %v; want %v", got, tc.expected)
-			}
-		})
+	ranked := wildcard_flow.RankJSURLs(urls)
+	if len(ranked) != len(urls) {
+		t.Fatalf("RankJSURLs returned %d urls, want %d", len(ranked), len(urls))
+	}
+
+	// app.js should be ranked first (Priority 1: +100)
+	if ranked[0] != "https://example.com/app.js" {
+		t.Errorf("expected app.js first, got %q", ranked[0])
+	}
+
+	// _next/static should be second (Priority 1: +100 via /_next/static/)
+	if ranked[1] != "https://example.com/_next/static/chunks/main.js" {
+		t.Errorf("expected _next/static second, got %q", ranked[1])
+	}
+
+	// assets/js should be third (Priority 2: +50)
+	if ranked[2] != "https://example.com/assets/js/vendor.js" {
+		t.Errorf("expected assets/js third, got %q", ranked[2])
+	}
+
+	// random/page.js should be last (Priority 4: +0)
+	if ranked[3] != "https://example.com/random/page.js" {
+		t.Errorf("expected random/page.js last, got %q", ranked[3])
 	}
 }
 
-func TestJSLimitClamping(t *testing.T) {
-	// jsLimit <= 0 in Cfg should default to 2000 in Step 18
-	cfg := &config.GeneralConfig{
-		JSLimit: 0,
-	}
-	jsLimit := 2000
-	if cfg.JSLimit > 0 {
-		jsLimit = cfg.JSLimit
-	}
-	if jsLimit != 2000 {
-		t.Errorf("expected jsLimit to clamp to default 2000, got %d", jsLimit)
+func TestExtractSubdomainsFromJS(t *testing.T) {
+	content := `
+		var api = "https://api.example.com/v1";
+		var cdn = "https://cdn.example.com/assets";
+		var staging = "https://staging.example.com";
+		var external = "https://other.domain.com";
+	`
+
+	subs := wildcard_flow.ExtractSubdomainsFromJS(content, "example.com")
+
+	found := make(map[string]bool)
+	for _, s := range subs {
+		found[s] = true
 	}
 
-	cfg.JSLimit = 500
-	if cfg.JSLimit > 0 {
-		jsLimit = cfg.JSLimit
+	if !found["api.example.com"] {
+		t.Error("expected api.example.com to be extracted")
 	}
-	if jsLimit != 500 {
-		t.Errorf("expected jsLimit to accept 500, got %d", jsLimit)
+	if !found["cdn.example.com"] {
+		t.Error("expected cdn.example.com to be extracted")
+	}
+	if !found["staging.example.com"] {
+		t.Error("expected staging.example.com to be extracted")
+	}
+	if found["other.domain.com"] {
+		t.Error("other.domain.com should not be extracted (different domain)")
+	}
+}
+
+func TestJSAnalysisConfigDefaults(t *testing.T) {
+	cfg := config.DefaultConfig()
+	js := cfg.General.JSAnalysis
+
+	if js.JSLimit != 5000 {
+		t.Errorf("expected default JSLimit 5000, got %d", js.JSLimit)
+	}
+	if js.Threads != 15 {
+		t.Errorf("expected default Threads 15, got %d", js.Threads)
+	}
+	if js.MaxFileMB != 15 {
+		t.Errorf("expected default MaxFileMB 15, got %d", js.MaxFileMB)
+	}
+	if js.MapMaxMB != 20 {
+		t.Errorf("expected default MapMaxMB 20, got %d", js.MapMaxMB)
+	}
+	if js.ValidateLimit != 50 {
+		t.Errorf("expected default ValidateLimit 50, got %d", js.ValidateLimit)
+	}
+	if js.JsluiceTimeout != 30 {
+		t.Errorf("expected default JsluiceTimeout 30, got %d", js.JsluiceTimeout)
+	}
+	if js.SkipValidation != false {
+		t.Error("expected default SkipValidation false")
 	}
 }

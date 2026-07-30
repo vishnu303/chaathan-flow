@@ -48,8 +48,8 @@ type Step struct {
 //	Phase 0 (Proxy Setup):       proxy_scraping
 //	Phase 1 (Asset Discovery):   passive_enum, active_enum, github_recon, search_engine_recon, js_subdomain_discovery
 //	Phase 2 (Validation):        dns_resolution, dns_bruteforce, port_scanning, http_probing, tls_analysis
-//	Phase 3 (Content Discovery): url_discovery, web_crawling, js_analysis,
-//	                             dir_fuzzing, param_discovery, url_consolidation, js_secret_scan
+//	Phase 3 (Content Discovery): url_discovery, web_crawling, js_deep_analysis,
+//	                             dir_fuzzing, param_discovery, url_consolidation
 //	Phase 4 (Vuln Scanning):     takeover_detection, vuln_scanning, vuln_scanning_urls, xss_scanning
 //	Phase 5 (Fingerprinting):    tech_waf_fingerprinting
 var WildcardSteps = []Step{
@@ -71,11 +71,10 @@ var WildcardSteps = []Step{
 	// Phase 3 — Content Discovery
 	{Name: "url_discovery", Description: "Historical URL Discovery", Required: false, Tool: "waybackurls,gau"},
 	{Name: "web_crawling", Description: "Web Crawling", Required: false, Tool: "katana,gospider"},
-	{Name: "js_analysis", Description: "JavaScript Analysis (GoLinkFinder)", Required: false, Tool: "GoLinkFinder"},
+	{Name: "js_deep_analysis", Description: "JavaScript Deep Analysis (jsluice + secrets)", Required: false, Tool: "jsluice"},
 	{Name: "dir_fuzzing", Description: "Directory Fuzzing", Required: false, Tool: "ffuf"},
 	{Name: "param_discovery", Description: "HTTP Parameter Discovery", Required: false, Tool: "x8"},
 	{Name: "url_consolidation", Description: "URL Consolidation & Live Check", Required: false, Tool: "httpx"},
-	{Name: "js_secret_scan", Description: "JS File Secret Scan (gf)", Required: false, Tool: "httpx,gf"},
 	// Phase 4 — Vulnerability Scanning
 	{Name: "takeover_detection", Description: "Subdomain Takeover Detection", Required: false, Tool: "nuclei"},
 	{Name: "vuln_scanning", Description: "Vulnerability Scanning (Infra)", Required: false, Tool: "nuclei"},
@@ -154,7 +153,34 @@ func (m *Manager) LoadState(scanID int64) (*State, error) {
 		return nil, fmt.Errorf("failed to parse state: %w", err)
 	}
 
+	// Resume compatibility: map old step names to new unified step.
+	migrateStepNames(&state)
+
 	return &state, nil
+}
+
+// migrateStepNames maps deprecated step names from older scans to their
+// current equivalents so resume works across upgrades.
+func migrateStepNames(state *State) {
+	renames := map[string]string{
+		"js_analysis":    "js_deep_analysis",
+		"js_secret_scan": "js_deep_analysis",
+	}
+	for i, s := range state.CompletedSteps {
+		if newName, ok := renames[s]; ok {
+			state.CompletedSteps[i] = newName
+		}
+	}
+	// Deduplicate (both old steps may map to the same new step)
+	seen := make(map[string]bool)
+	var deduped []string
+	for _, s := range state.CompletedSteps {
+		if !seen[s] {
+			seen[s] = true
+			deduped = append(deduped, s)
+		}
+	}
+	state.CompletedSteps = deduped
 }
 
 // UpdateState updates the scan state

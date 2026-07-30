@@ -11,7 +11,7 @@ Activate this skill when modifying or debugging the domain recon workflow steps,
 
 ---
 
-## 6-Phase Wildcard Workflow Topology (23 Steps)
+## 6-Phase Wildcard Workflow Topology (22 Steps)
 
 The wildcard workflow runs in 6 logical phases. Steps communicate through files stored in `intermediate_files/` and save finalized data to SQLite and `final_files/`.
 
@@ -25,13 +25,13 @@ Phase 1: Asset Discovery (Steps 2-6)   ──► Output: all_subdomains.txt
 Phase 2: Validation (Steps 7-11)       ──► Output: live_hosts.txt
    │
    ▼
-Phase 3: Content Discovery (Steps 12-18) ──► Output: all_urls_live.txt
+Phase 3: Content Discovery (Steps 12-17) ──► Output: all_urls_live.txt
    │
    ▼
-Phase 4: Vulnerability Scan (Steps 19-22) ──► Persisted Findings
+Phase 4: Vulnerability Scan (Steps 18-21) ──► Persisted Findings
    │
    ▼
-Phase 5: Fingerprinting (Step 23)      ──► Output: WAF/Tech JSON
+Phase 5: Fingerprinting (Step 22)      ──► Output: WAF/Tech JSON
 ```
 
 ---
@@ -62,23 +62,22 @@ Phase 5: Fingerprinting (Step 23)      ──► Output: WAF/Tech JSON
 - **Step 10: `http_probing`** (httpx probing for live web servers on both standard ports and naabu-discovered ports).
 - **Step 11: `tls_analysis`** (tlsx certificate extraction; skip with `--skip-tlsx`). Extracts newly discovered subdomains from SANs, probes them, and merges them back.
 
-### Phase 3 — Content Discovery (`content_discovery.go`)
+### Phase 3 — Content Discovery (`content_discovery.go`, `js_deep_analysis.go`)
 - **Step 12: `url_discovery`** (waybackurls + gau passive crawl).
 - **Step 13: `web_crawling`** (katana + gospider crawling; skip with `--skip-crawl`).
-- **Step 14: `js_analysis`** (GoLinkFinder parsing of JS links on all live hosts, capped at top 1000).
+- **Step 14: `js_deep_analysis`** (jsluice AST-based JS URL/object extraction + strict-format secret scanning with live validation + source map harvesting + subdomain extraction; priority-ranked top-5000 JS URLs; configurable via `general.js_analysis` in config.yaml).
 - **Step 15: `dir_fuzzing`** (ffuf directory fuzzing on up to 1000 live hosts; auto-detects SecLists on device if `--wordlist` is omitted). Fuzzing results write to `ffuf_discovered_urls.txt`.
 - **Step 16: `param_discovery`** (x8 parameter discovery; skip with `--skip-x8`; auto-detects SecLists parameter list on device). Natively routes through the rotating proxy using direct proxy arguments `-x`. Targets ONLY curated dynamic endpoints (extracted from crawls) and fuzzed directory URLs, completely bypassing flat live hostlists.
 - **Step 17: `url_consolidation`** (httpx live URL validation and ROI metadata collection).
-- **Step 18: `js_secret_scan`** (downloads JS files, runs gf secret search pattern).
 
 ### Phase 4 — Vulnerability Scanning (`vulnerability_scanning.go`)
-- **Step 19: `takeover_detection`** (Nuclei takeover checking on CNAME-filtered subdomains; runs first in Phase 4 for early alerts).
-- **Step 20: `vuln_scanning`** (Nuclei infra scan: CVE check + misconfigs).
-- **Step 21: `vuln_scanning_urls`** (Nuclei DAST fuzzing mode on consolidated URL lists).
-- **Step 22: `xss_scanning`** (dalfox parameter fuzzing; skip with `--skip-dalfox`).
+- **Step 18: `takeover_detection`** (Nuclei takeover checking on CNAME-filtered subdomains; runs first in Phase 4 for early alerts).
+- **Step 19: `vuln_scanning`** (Nuclei infra scan: CVE check + misconfigs).
+- **Step 20: `vuln_scanning_urls`** (Nuclei DAST fuzzing mode on consolidated URL lists).
+- **Step 21: `xss_scanning`** (dalfox parameter fuzzing; skip with `--skip-dalfox`).
 
 ### Phase 5 — Fingerprinting (`fingerprinting.go`)
-- **Step 23: `tech_waf_fingerprinting`** (httpx + nuclei WAF fingerprint check; runs last to prevent WAF lockouts).
+- **Step 22: `tech_waf_fingerprinting`** (httpx + nuclei WAF fingerprint check; runs last to prevent WAF lockouts).
 
 ---
 

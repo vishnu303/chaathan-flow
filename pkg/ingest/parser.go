@@ -487,7 +487,7 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 		}
 		seen[key] = struct{}{}
 
-		// Relative/path-only endpoints (e.g. golinkfinder output like
+		// Relative/path-only endpoints (e.g. jsluice output like
 		// "/api/v1/users") carry no host, so scope cannot apply — keep
 		// them. Absolute URLs with a host are filtered against the target.
 		if targetDomain != "" {

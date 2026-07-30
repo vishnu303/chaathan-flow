@@ -96,7 +96,6 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		fn   func(*SetupContext) (int, int, int)
 	}{
 		{"go_tools", installGoToolsSection},
-		{"gf_patterns", installGFPatternsSection},
 		{"python_tools", installPythonToolsSection},
 		{"x8", installX8Section},
 		{"massdns", installMassDNSSection},

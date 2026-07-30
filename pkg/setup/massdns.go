@@ -14,7 +14,7 @@ import (
 // installMassDNSSection clones, compiles, and installs MassDNS from source.
 // This is done as a multi-step compilation process (Clone -> Compile -> Install).
 func installMassDNSSection(ctx *SetupContext) (installed, skipped, failed int) {
-	progress.Section("[6/7] DNS Engines (MassDNS)", "")
+	progress.Section("[5/6] DNS Engines (MassDNS)", "")
 
 	if !ctx.IsForceUpdate() {
 		if _, err := exec.LookPath("massdns"); err == nil {

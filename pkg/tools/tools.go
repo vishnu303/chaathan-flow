@@ -841,12 +841,29 @@ func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile 
 	return err
 }
 
-// RunGoLinkFinder extracts endpoints from JavaScript files found at the given URL.
-func (t *ToolBox) RunGoLinkFinder(ctx context.Context, url string, outputFile string) error {
-	args := []string{"-d", url, "-o", outputFile, "--silent", "--timeout", "10"}
-	// GoLinkFinder does not have a built-in proxy flag, but if it runs in docker we could pass HTTP_PROXY.
-	// We'll pass it as a runner env var later if needed, but for now it's skipped as there's no native flag.
-	_, err := t.Runner.Run(ctx, "GoLinkFinder", args, runner.WithNoRetry())
+// RunJsluiceURLs extracts URLs and API routes from a local JavaScript file
+// using jsluice's AST-based analysis. Output is JSON lines written to outputFile.
+func (t *ToolBox) RunJsluiceURLs(ctx context.Context, jsFile string, outputFile string) error {
+	args := []string{"urls", jsFile}
+	output, err := t.Runner.Run(ctx, "jsluice", args, runner.WithNoRetry())
+	if strings.TrimSpace(output) != "" {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
+	}
+	return err
+}
+
+// RunJsluiceObjects extracts custom objects and interesting method calls from a
+// local JavaScript file using jsluice. Output is JSON lines written to outputFile.
+func (t *ToolBox) RunJsluiceObjects(ctx context.Context, jsFile string, outputFile string) error {
+	args := []string{"objects", jsFile}
+	output, err := t.Runner.Run(ctx, "jsluice", args, runner.WithNoRetry())
+	if strings.TrimSpace(output) != "" {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
+	}
 	return err
 }
 

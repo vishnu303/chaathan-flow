@@ -109,16 +109,17 @@ type Files struct {
 	NaabuOut            string
 	KatanaOut           string
 	GospiderOut         string
-	GoLinkFinderOut     string
+	GoLinkFinderOut     string // deprecated: kept for resume compat
+	JSEndpointsOut      string
+	JSSecretsOut        string
+	JSSubdomainsOut     string
+	JSMetadataOut       string
 	HakrawlerOut        string
 	X8Out               string
 	X8URLsOut           string
 	AllURLsRaw          string
 	AllURLsLive         string
 	JSURLsFile          string
-	GFJSMatches         string
-	GFSecretsMatches    string
-	GFSecretsFinal      string
 	ROIMetadataTargets  string
 	FfufOut             string
 	FfufDiscoveredURLs  string
@@ -138,7 +139,6 @@ type Files struct {
 	TlsSanHttpxOut      string
 	TlsSanHttpxLive     string
 	X8Input             string
-	GfSecretsMetadata   string
 }
 
 // newFiles builds all output paths from the result directory.
@@ -171,16 +171,17 @@ func newFiles(dir string) Files {
 		NaabuOut:           j("naabu_ports.txt"),
 		KatanaOut:          j("katana_urls.txt"),
 		GospiderOut:        j("gospider_urls.txt"),
-		GoLinkFinderOut:    j("golinkfinder_endpoints.txt"),
+		GoLinkFinderOut:    j("golinkfinder_endpoints.txt"), // deprecated
+		JSEndpointsOut:     j("js_endpoints.txt"),
+		JSSecretsOut:       jf(utils.FileGFSecrets),
+		JSSubdomainsOut:    j("js_new_subdomains.txt"),
+		JSMetadataOut:      j("js_analysis_metadata.txt"),
 		HakrawlerOut:       j("hakrawler_crawl.txt"),
 		X8Out:              j("x8_params.json"),
 		X8URLsOut:          j("x8_urls.txt"),
 		AllURLsRaw:         j("all_urls_raw.txt"),
 		AllURLsLive:        j("all_urls_live.txt"),
 		JSURLsFile:         j("js_urls.txt"),
-		GFJSMatches:        j("gf_js_matches.txt"),
-		GFSecretsMatches:   j("gf_secrets_matches.txt"),
-		GFSecretsFinal:     jf(utils.FileGFSecrets),
 		ROIMetadataTargets: j("roi_metadata_targets.txt"),
 		FfufOut:            j("ffuf_results.json"),
 		FfufDiscoveredURLs: j("ffuf_discovered_urls.txt"),
@@ -202,7 +203,6 @@ func newFiles(dir string) Files {
 		TlsSanHttpxOut:      j("tls_san_httpx_out.json"),
 		TlsSanHttpxLive:     j("tls_san_httpx_live.txt"),
 		X8Input:             j("x8_input.txt"),
-		GfSecretsMetadata:   j("gf_secrets_metadata.txt"),
 	}
 }
 
@@ -267,7 +267,7 @@ func (c *Ctx) urlSources() []string {
 		c.F.GauOut,
 		c.F.KatanaOut,
 		c.F.GospiderOut,
-		c.F.GoLinkFinderOut,
+		c.F.JSEndpointsOut,
 		c.F.X8URLsOut,
 		c.F.FfufDiscoveredURLs,
 	}
@@ -549,11 +549,10 @@ func Run(cfg RunConfig) error {
 		// Phase 4 — Content Discovery (Steps 12–18)
 		{"url_discovery", "Content Discovery", stepURLDiscovery},
 		{"web_crawling", "Content Discovery", stepWebCrawling},
-		{"js_analysis", "Content Discovery", stepJSAnalysis},
+		{"js_deep_analysis", "Content Discovery", stepJSDeepAnalysis},
 		{"dir_fuzzing", "Content Discovery", stepDirFuzzing},
 		{"param_discovery", "Content Discovery", stepParamDiscovery},
 		{"url_consolidation", "Content Discovery", stepURLConsolidation},
-		{"js_secret_scan", "Content Discovery", stepJSSecretScan},
 
 		// Phase 5 — Vulnerability Scanning (Steps 19–22)
 		{"takeover_detection", "Vulnerability Scanning", stepTakeoverDetection},
@@ -671,16 +670,14 @@ func countFindingsForStep(c *Ctx, stepName string) int {
 		return countLines(c.F.WaybackOut, c.F.GauOut)
 	case "web_crawling":
 		return countLines(c.F.KatanaOut, c.F.GospiderOut)
-	case "js_analysis":
-		return countLines(c.F.GoLinkFinderOut)
+	case "js_deep_analysis":
+		return countLines(c.F.JSEndpointsOut, c.F.JSSecretsOut)
 	case "js_subdomain_discovery":
 		return countLines(c.F.HakrawlerOut)
 	case "param_discovery":
 		return countLines(c.F.X8URLsOut)
 	case "url_consolidation":
 		return countLines(c.F.AllURLsLive)
-	case "js_secret_scan":
-		return countLines(c.F.GFSecretsFinal)
 	case "dir_fuzzing":
 		return c.FfufTotalFindings // Uses properly parsed JSON array count, not lines
 	case "vuln_scanning":

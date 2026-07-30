@@ -30,7 +30,7 @@ func installGoToolsSection(ctx *SetupContext) (int, int, int) {
 	if skippedCount == 0 {
 		detail = fmt.Sprintf("%d to install", len(toInstall))
 	}
-	progress.Section("[2/7] Go Tools", detail)
+	progress.Section("[2/6] Go Tools", detail)
 
 	if len(toInstall) == 0 {
 		progress.ItemInfo("Nothing to do")

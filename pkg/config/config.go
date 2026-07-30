@@ -34,6 +34,17 @@ type Config struct {
 	RateLimits RateLimitConfig `yaml:"rate_limits"`
 }
 
+// JSAnalysisConfig controls the unified JavaScript Deep Analysis step.
+type JSAnalysisConfig struct {
+	JSLimit        int  `yaml:"js_limit"`            // max JS URLs to fetch & analyze (default: 5000)
+	Threads        int  `yaml:"js_threads"`          // concurrent fetch workers (default: 15)
+	MaxFileMB      int  `yaml:"js_max_file_mb"`      // max size per JS file in MB (default: 15)
+	MapMaxMB       int  `yaml:"js_map_max_mb"`       // max size per source map in MB (default: 20)
+	ValidateLimit  int  `yaml:"js_validate_limit"`   // max secrets to live-validate per scan (default: 50)
+	JsluiceTimeout int  `yaml:"jsluice_timeout_sec"` // per-file AST parse timeout in seconds (default: 30)
+	SkipValidation bool `yaml:"skip_validation"`     // disable live secret validation checks
+}
+
 type GeneralConfig struct {
 	// Default execution mode: native or docker
 	Mode string `yaml:"mode"`
@@ -64,8 +75,12 @@ type GeneralConfig struct {
 	// Wordlist paths
 	Wordlists WordlistsConfig `yaml:"wordlists"`
 
-	// JS Download Limit for Secret Scanning
+	// Deprecated: use js_analysis.js_limit instead. Kept for backward compat;
+	// if js_analysis block is absent and this is non-zero, it overrides js_analysis.js_limit.
 	JSLimit int `yaml:"js_limit"`
+
+	// JavaScript Deep Analysis configuration
+	JSAnalysis JSAnalysisConfig `yaml:"js_analysis"`
 
 	// Automated proxy scraping and rotation
 	ProxyScraping ProxyScrapingConfig `yaml:"proxy_scraping"`
@@ -375,6 +390,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	resolveWordlists(cfg)
+	migrateJSLimit(cfg)
 
 	Cfg = cfg
 	return cfg, nil
@@ -440,7 +456,16 @@ func DefaultConfig() *Config {
 				Directories: ResolveSecListFile("Discovery/Web-Content/common.txt"),
 				Parameters:  ResolveSecListFile("Discovery/Web-Content/burp-parameter-names.txt"),
 			},
-			JSLimit: 2000,
+			JSLimit: 0, // deprecated; kept for backward compat
+			JSAnalysis: JSAnalysisConfig{
+				JSLimit:        5000,
+				Threads:        15,
+				MaxFileMB:      15,
+				MapMaxMB:       20,
+				ValidateLimit:  50,
+				JsluiceTimeout: 30,
+				SkipValidation: false,
+			},
 			ProxyScraping: ProxyScrapingConfig{
 				TimeoutMin:    10,
 				MaxConcurrent: 256,
@@ -512,6 +537,15 @@ func DefaultConfig() *Config {
 		RateLimits: RateLimitConfig{
 			GlobalRPS: 0, // disabled by default; set to cap all tools
 		},
+	}
+}
+
+// migrateJSLimit applies backward compatibility: if the deprecated top-level
+// js_limit is set and the new js_analysis.js_limit is still at its default,
+// the old value takes precedence so existing user configs keep working.
+func migrateJSLimit(cfg *Config) {
+	if cfg.General.JSLimit > 0 && cfg.General.JSAnalysis.JSLimit == 5000 {
+		cfg.General.JSAnalysis.JSLimit = cfg.General.JSLimit
 	}
 }
 

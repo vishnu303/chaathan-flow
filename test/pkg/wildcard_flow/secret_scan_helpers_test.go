@@ -1,7 +1,6 @@
 package wildcard_flow_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/wildcard_flow"
@@ -38,14 +37,14 @@ func TestIsLikelySecret(t *testing.T) {
 		val      string
 		expected bool
 	}{
-		{"api-keys", "placeholder", false},
-		{"api-keys", "your_token", false},
-		{"api-keys", "undefined", false},
-		{"api-keys", "aaaaaaaaaa", false},
-		{"api-keys", "ababababab", false},
-		{"api-keys", "aBcD1eFgH2iJkLmN", true},  // high entropy token
-		{"slack-webhook", "placeholder", false}, // placeholder check is universal
-		{"slack-webhook", "ababababab", true},   // entropy check is only for generic "api-keys"
+		{"generic-secret", "placeholder", false},
+		{"generic-secret", "your_token", false},
+		{"generic-secret", "undefined", false},
+		{"generic-secret", "aaaaaaaaaa", false},
+		{"generic-secret", "ababababab", false},
+		{"generic-secret", "aBcD1eFgH2iJkLmN", true}, // high entropy token
+		{"slack-webhook", "placeholder", false},        // placeholder check is universal
+		{"slack-webhook", "ababababab", true},          // entropy check is only for generic patterns
 	}
 
 	for _, tc := range tests {
@@ -53,25 +52,5 @@ func TestIsLikelySecret(t *testing.T) {
 		if got != tc.expected {
 			t.Errorf("IsLikelySecret(%q, %q) = %t; want %t", tc.pattern, tc.val, got, tc.expected)
 		}
-	}
-}
-
-func TestExtractContext(t *testing.T) {
-	line := "some prefix text here and then the secret token to match followed by suffix text here"
-	match := "secret token to match"
-	start := strings.Index(line, match)
-	end := start + len(match)
-
-	// Test extraction with context size 10
-	got := wildcard_flow.ExtractContext(line, start, end, 10)
-	expected := "...then the secret token to match followed..."
-	if got != expected {
-		t.Errorf("ExtractContext(...) = %q; want %q", got, expected)
-	}
-
-	// Test boundary at start
-	gotStart := wildcard_flow.ExtractContext(line, 0, 4, 10) // "some"
-	if !strings.HasPrefix(gotStart, "some") || strings.HasPrefix(gotStart, "...") {
-		t.Errorf("ExtractContext(...) for start boundary = %q; did not expect leading ellipsis", gotStart)
 	}
 }

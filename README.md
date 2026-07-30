@@ -173,7 +173,7 @@ Chaathan is packaged as a single static binary. It acts as an orchestration engi
 
 Chaathan orchestrates complex multi-stage recon chains, consolidating raw outputs into optimized files and structured SQLite database schemas.
 
-### A. Wildcard Workflow (23 Steps)
+### A. Wildcard Workflow (22 Steps)
 ```
 [Proxy Scraping] ──> [Asset Discovery] ──> [DNS & Port Validation] ──> [Content crawling] ──> [Vulnerability Audits] ──> [WAF Fingerprints]
 ```
@@ -183,12 +183,12 @@ Chaathan orchestrates complex multi-stage recon chains, consolidating raw output
 | **Phase 0: Proxy Scraping** | 1 | `mubeng`, `proxy-scraper-checker` | `proxy_pool.txt` + rotating proxy server |
 | **Phase 1: Asset Discovery** | 2–6 | `subfinder`, `assetfinder`, `sublist3r`, `amass`, `uncover`, `github-subdomains`, `hakrawler` | `final_subdomains.txt` |
 | **Phase 2: Validation** | 7–11 | `dnsx`, `shuffledns`, `naabu`, `httpx`, `tlsx` | `live_subdomains.txt`, `open_ports.txt` |
-| **Phase 3: Content Discovery** | 12–18 | `waybackurls`, `gau`, `katana`, `gospider`, `GoLinkFinder`, `ffuf`, `x8`, `httpx`, `gf` | `all_urls.txt`, `urls_200.txt`, `gf_secrets_findings.txt` |
-| **Phase 4: Vulnerability Scan** | 19–22 | `nuclei` (takeovers, infra CVE, DAST), `dalfox` | `vulnerabilities.txt`, `vulnerabilities_critical_high.txt`, `dalfox_xss.jsonl` |
-| **Phase 5: Fingerprinting** | 23 | `httpx`, `nuclei` | `httpx_tech.json`, `nuclei_waf.json` |
+| **Phase 3: Content Discovery** | 12–17 | `waybackurls`, `gau`, `katana`, `gospider`, `jsluice`, `ffuf`, `x8`, `httpx` | `all_urls.txt`, `urls_200.txt`, `gf_secrets_findings.txt` |
+| **Phase 4: Vulnerability Scan** | 18–21 | `nuclei` (takeovers, infra CVE, DAST), `dalfox` | `vulnerabilities.txt`, `vulnerabilities_critical_high.txt`, `dalfox_xss.jsonl` |
+| **Phase 5: Fingerprinting** | 22 | `httpx`, `nuclei` | `httpx_tech.json`, `nuclei_waf.json` |
 
 <details>
-<summary>🔍 Expand Detailed 23-Step Pipeline Spec</summary>
+<summary>🔍 Expand Detailed 22-Step Pipeline Spec</summary>
 
 | Step | Engine | Purpose / Action | Skip Trigger Flag |
 | :--- | :--- | :--- | :--- |
@@ -205,16 +205,15 @@ Chaathan orchestrates complex multi-stage recon chains, consolidating raw output
 | 11 | `tlsx` | SSL/TLS certificate analysis & SAN mining | `--skip-tlsx` |
 | 12 | `waybackurls`, `gau` | Querying historical web archives for endpoints | - |
 | 13 | `katana`, `gospider` | Dynamic web spiders crawling client assets | `--skip-crawl` |
-| 14 | `GoLinkFinder` | Analyzing static and dynamic JS scripts for URLs | - |
+| 14 | `jsluice` | JavaScript Deep Analysis (AST URL extraction + secrets + source maps) | - |
 | 15 | `ffuf` | Focused path discovery using wordlists | Needs `--wordlist` |
 | 16 | `x8` | Query parameter and hidden field discovery (targets curated dynamic endpoints + fuzzing results) | `--skip-x8` |
 | 17 | `httpx` | Live verification of extracted discovery links | - |
-| 18 | `httpx`, `gf` | Scanning JS packages for high-risk hardcoded secrets | - |
-| 19 | `nuclei` | Proactive subdomain takeover analysis | `--skip-takeovers` |
-| 20 | `nuclei` | General infra misconfiguration & public CVE auditing | `--skip-nuclei` |
-| 21 | `nuclei` | Dynamic application testing (DAST) payload fuzzing | `--skip-nuclei` |
-| 22 | `dalfox` | High-efficiency parameterized cross-site scripting (XSS) audit | `--skip-dalfox` |
-| 23 | `httpx`, `nuclei` | Direct technology classification & WAF identification | `--skip-fingerprint` |
+| 18 | `nuclei` | Proactive subdomain takeover analysis | `--skip-takeovers` |
+| 19 | `nuclei` | General infra misconfiguration & public CVE auditing | `--skip-nuclei` |
+| 20 | `nuclei` | Dynamic application testing (DAST) payload fuzzing | `--skip-nuclei` |
+| 21 | `dalfox` | High-efficiency parameterized cross-site scripting (XSS) audit | `--skip-dalfox` |
+| 22 | `httpx`, `nuclei` | Direct technology classification & WAF identification | `--skip-fingerprint` |
 
 </details>
 
