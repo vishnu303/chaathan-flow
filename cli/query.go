@@ -156,17 +156,18 @@ func runQuerySubdomains(cmd *cobra.Command, args []string) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "DOMAIN\tLIVE\tIP\tSOURCE")
+	logger.TableHeader(w, "DOMAIN", "LIVE", "IP", "SOURCE")
 	for _, s := range subs {
-		live := "-"
+		live := logger.Dim + "-" + logger.Reset
 		if s.IsLive {
-			live = "yes"
+			live = logger.BrightGreen + "yes" + logger.Reset
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Domain, live, s.IPAddress, s.Source)
+		logger.TableRow(w, s.Domain, live, s.IPAddress, s.Source)
 	}
 	w.Flush()
 
-	logger.Info("\nTotal: %d subdomains", len(subs))
+	logger.Print("\n")
+	logger.Result(len(subs), "subdomains")
 }
 
 func runQueryPorts(cmd *cobra.Command, args []string) {
@@ -192,13 +193,14 @@ func runQueryPorts(cmd *cobra.Command, args []string) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "HOST\tPORT\tPROTOCOL\tSERVICE")
+	logger.TableHeader(w, "HOST", "PORT", "PROTOCOL", "SERVICE")
 	for _, p := range ports {
-		fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", p.Host, p.Port, p.Protocol, p.Service)
+		logger.TableRow(w, p.Host, fmt.Sprintf("%d", p.Port), p.Protocol, p.Service)
 	}
 	w.Flush()
 
-	logger.Info("\nTotal: %d open ports", len(ports))
+	logger.Print("\n")
+	logger.Result(len(ports), "open ports")
 }
 
 func runQueryVulns(cmd *cobra.Command, args []string) {
@@ -231,25 +233,60 @@ func runQueryVulns(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Group by severity for display
+	// Group by severity for display (critical → info, then any others)
+	sevOrder := []string{"critical", "high", "medium", "low", "info"}
+	groups := make(map[string][]database.Vulnerability)
 	for _, v := range vulns {
-		sevColor := logger.ColorSeverity(v.Severity)
-		fmt.Printf("[%s] %s\n", sevColor, v.Name)
-		fmt.Printf("  Host: %s\n", v.Host)
-		if v.URL != "" {
-			fmt.Printf("  URL: %s\n", v.URL)
+		groups[v.Severity] = append(groups[v.Severity], v)
+	}
+	ordered := make([]string, 0, len(groups))
+	for _, sev := range sevOrder {
+		if len(groups[sev]) > 0 {
+			ordered = append(ordered, sev)
 		}
-		if v.TemplateID != "" {
-			fmt.Printf("  Template: %s\n", v.TemplateID)
+	}
+	known := make(map[string]bool, len(sevOrder))
+	for _, sev := range sevOrder {
+		known[sev] = true
+	}
+	for sev := range groups {
+		if !known[sev] {
+			ordered = append(ordered, sev)
 		}
-		fmt.Println()
+	}
+
+	logger.Print("\n")
+	for _, sev := range ordered {
+		logger.Print("  %s%s%s %s(%d)%s\n",
+			logger.SevColor(sev)+logger.Bold, strings.ToUpper(sev), logger.Reset,
+			logger.Dim, len(groups[sev]), logger.Reset)
+		for _, v := range groups[sev] {
+			details := v.Host
+			if v.URL != "" {
+				details += " · " + v.URL
+			}
+			logger.Print("  %s●%s %s%s%s %s%s%s\n",
+				logger.SevColor(sev), logger.Reset,
+				logger.Bold, v.Name, logger.Reset,
+				logger.Dim, details, logger.Reset)
+		}
+		logger.Print("\n")
 	}
 
 	// Summary
 	counts, _ := database.CountVulnerabilities(scanID)
 	logger.Section("Summary")
+	printed := make(map[string]bool)
+	for _, sev := range sevOrder {
+		if counts[sev] > 0 {
+			logger.ResultSev(sev, counts[sev], "%s", sev)
+			printed[sev] = true
+		}
+	}
 	for sev, count := range counts {
-		fmt.Printf("  %s: %d\n", logger.ColorSeverity(sev), count)
+		if !printed[sev] && count > 0 {
+			logger.ResultSev(sev, count, "%s", sev)
+		}
 	}
 }
 
@@ -276,17 +313,18 @@ func runQueryUrls(cmd *cobra.Command, args []string) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "URL\tSTATUS\tTITLE\tSOURCE")
+	logger.TableHeader(w, "URL", "STATUS", "TITLE", "SOURCE")
 	for _, u := range urls {
 		title := u.Title
 		if len(title) > 40 {
 			title = title[:37] + "..."
 		}
-		fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", utils.TruncateURL(u.URL, 60), u.StatusCode, title, u.Source)
+		logger.TableRow(w, utils.TruncateURL(u.URL, 60), fmt.Sprintf("%d", u.StatusCode), title, u.Source)
 	}
 	w.Flush()
 
-	logger.Info("\nTotal: %d URLs", len(urls))
+	logger.Print("\n")
+	logger.Result(len(urls), "URLs")
 }
 
 func runQueryEndpoints(cmd *cobra.Command, args []string) {
@@ -312,13 +350,14 @@ func runQueryEndpoints(cmd *cobra.Command, args []string) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ENDPOINT\tMETHOD\tSOURCE")
+	logger.TableHeader(w, "ENDPOINT", "METHOD", "SOURCE")
 	for _, e := range endpoints {
-		fmt.Fprintf(w, "%s\t%s\t%s\n", utils.TruncateURL(e.URL, 80), e.Method, e.Source)
+		logger.TableRow(w, utils.TruncateURL(e.URL, 80), e.Method, e.Source)
 	}
 	w.Flush()
 
-	logger.Info("\nTotal: %d endpoints", len(endpoints))
+	logger.Print("\n")
+	logger.Result(len(endpoints), "endpoints")
 }
 
 func runQueryROI(cmd *cobra.Command, args []string) {
@@ -380,7 +419,7 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "SCORE\tN-SCORE\tCONF\tSTATUS\tURL\tSURFACES")
+	logger.TableHeader(w, "SCORE", "N-SCORE", "CONF", "STATUS", "URL", "SURFACES")
 	for _, t := range targets {
 		surfaces := "-"
 		if len(t.AttackSurfaces) > 0 {
@@ -389,11 +428,18 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 				surfaces = surfaces[:27] + "..."
 			}
 		}
-		fmt.Fprintf(w, "%d\t%d\t%s\t%d\t%s\t%s\n",
-			t.Score,
-			t.NormalizedScore,
+		nScore := fmt.Sprintf("%d", t.NormalizedScore)
+		switch {
+		case t.NormalizedScore >= 70:
+			nScore = logger.BrightGreen + nScore + logger.Reset
+		case t.NormalizedScore >= 40:
+			nScore = logger.BrightYellow + nScore + logger.Reset
+		}
+		logger.TableRow(w,
+			fmt.Sprintf("%d", t.Score),
+			nScore,
 			t.Confidence,
-			t.StatusCode,
+			fmt.Sprintf("%d", t.StatusCode),
 			utils.TruncateURL(t.URL, 65),
 			surfaces,
 		)
@@ -403,21 +449,21 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 	for _, t := range targets {
 		logger.Section("ROI %d (N:%d %s) - %s", t.Score, t.NormalizedScore, t.Confidence, t.URL)
 		if t.Title != "" {
-			fmt.Printf("Title: %s\n", t.Title)
+			logger.Print("  %sTitle:%s %s\n", logger.Dim, logger.Reset, t.Title)
 		}
 		if len(t.AttackSurfaces) > 0 {
-			fmt.Printf("Attack surfaces: %s\n", strings.Join(t.AttackSurfaces, ", "))
+			logger.Print("  %sAttack surfaces:%s %s\n", logger.Dim, logger.Reset, strings.Join(t.AttackSurfaces, ", "))
 		}
 		if len(t.Tech) > 0 {
-			fmt.Printf("Tech: %s\n", strings.Join(t.Tech, ", "))
+			logger.Print("  %sTech:%s %s\n", logger.Dim, logger.Reset, strings.Join(t.Tech, ", "))
 		}
 		if len(t.Reasons) > 0 {
-			fmt.Println("Why it ranked:")
+			logger.Print("  %sWhy it ranked:%s\n", logger.Dim, logger.Reset)
 			for _, reason := range t.Reasons {
-				fmt.Printf("  - %s\n", reason)
+				logger.Print("    %s▸%s %s\n", logger.Dim, logger.Reset, reason)
 			}
 		}
-		fmt.Println()
+		logger.Print("\n")
 	}
 
 	logger.Info("Showing %d ranked targets (max 3 per host)", len(targets))

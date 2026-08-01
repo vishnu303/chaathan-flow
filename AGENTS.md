@@ -12,7 +12,7 @@ chaathan-flow/
 ├── Makefile                   Build, install, setup, test, vet targets
 ├── cli/                       Cobra commands, flags, argument parsing
 │   ├── root.go                Global flags, version, PersistentPreRun init
-│   ├── wildcard.go            23-step domain recon command
+│   ├── wildcard.go            21-step domain recon command
 │   ├── company.go             3-step company recon command
 │   ├── setup.go               Tool installation entry
 │   ├── scans.go               Scan list/show/resume/delete
@@ -25,7 +25,7 @@ chaathan-flow/
 │   ├── config.go              Config management commands
 │   └── tools_cmd.go           Tools list/check commands
 ├── pkg/
-│   ├── wildcard_flow/         23-step domain recon workflow (6 phase files)
+│   ├── wildcard_flow/         21-step domain recon workflow (6 phase files)
 │   ├── company_flow/          3-step company recon workflow
 │   ├── orchestrate/           Signal handling, infra bootstrap (runner/toolbox/notifier)
 │   ├── database/              SQLite persistence, queries, ROI ranking, metadata

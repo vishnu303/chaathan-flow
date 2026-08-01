@@ -19,32 +19,10 @@ import (
 )
 
 const (
-	jsAnalysisHostCap  = 1000
-	ffufHostCap        = 1000
-	paramDiscoveryCap  = 150
-	metadataHostCap    = 250
-	jsSecretMaxMatches = 100
-	jsFileMaxBytes     = 10 * 1024 * 1024
+	ffufHostCap       = 1000
+	paramDiscoveryCap = 150
+	metadataHostCap   = 250
 )
-
-var jsGFPatterns = map[string]bool{
-	"domxss":   true,
-	"execs":    true,
-	"js-sinks": true,
-}
-
-var secretGFPatterns = map[string]bool{
-	"api-keys":      true,
-	"aws-keys":      true,
-	"firebase":      true,
-	"github":        true,
-	"jwt":           true,
-	"slack-webhook": true,
-	"google-api":    true,
-	"stripe-api":    true,
-	"db-connection": true,
-	"private-key":   true,
-}
 
 // ─────────────────────────────────────────────────────────────
 // Skip-tool support
@@ -117,8 +95,7 @@ func runWithSkip(c *Ctx, toolName string, fn func(ctx context.Context) error) er
 		return err
 	case <-c.SkipChan:
 		toolCancel()
-		logger.Warning("⏭ Skip requested — skipping current tool...")
-		logger.Warning("⏭ Skipped: %s", toolName)
+		logger.Skip("Skipped %s — continuing with next tool", toolName)
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):

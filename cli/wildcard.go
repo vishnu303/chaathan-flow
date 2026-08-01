@@ -29,8 +29,8 @@ var (
 	skipTlsx        bool
 	skipX8          bool
 	skipShuffleDNS  bool
-	skipHakrawler   bool
 	skipFingerprint bool
+	skipJS          bool
 	wordlistPath    string
 	dnsWordlistPath string
 	resolversPath   string
@@ -55,43 +55,41 @@ var wildcardCmd = &cobra.Command{
 	Aliases: []string{"scan"},
 	Short:   "Run the Wildcard Reconnaissance Workflow",
 	Long: `
-Runs a comprehensive 23-step recon & vulnerability scanning workflow
+Runs a comprehensive 22-step recon & vulnerability scanning workflow
 organised into 6 clean phases:
 
   PHASE 0 — PROXY SETUP (Step 1)
   1. Proxy Scraping & IP Rotation Setup (Mubeng) [Optional, --auto-proxy]
 
-  PHASE 1 — ASSET DISCOVERY (Steps 2–6)
+  PHASE 1 — ASSET DISCOVERY (Steps 2–5)
   2. Passive Enumeration (Subfinder, Assetfinder, Sublist3r) [Parallel]
   3. Active Enumeration (Amass) [Optional, --skip-amass]
   4. GitHub Subdomain Discovery [Requires GITHUB_TOKEN]
   5. Search Engine Dorking (Uncover/Shodan/Censys) [Optional, --skip-uncover]
-  6. JavaScript Crawling (Hakrawler) [Optional, --skip-hakrawler]
 
-  PHASE 2 — VALIDATION & PROBING (Steps 7–11)
-  7. Consolidation & DNS Resolution (DNSx)
-  8. DNS Brute-force (ShuffleDNS/MassDNS) [Optional, --skip-shuffledns]
-  9. Port Scanning on ALL subdomains (Naabu) [Optional, --skip-naabu]
-  10. Live Web Probing (Httpx) [+ host metadata collection for ROI]
-  11. TLS Certificate Analysis (tlsx) [Optional, --skip-tlsx]
+  PHASE 2 — VALIDATION & PROBING (Steps 6–10)
+  6. Consolidation & DNS Resolution (DNSx)
+  7. DNS Brute-force (ShuffleDNS/MassDNS) [Optional, --skip-shuffledns]
+  8. Port Scanning on ALL subdomains (Naabu) [Optional, --skip-naabu]
+  9. Live Web Probing (Httpx) [+ host metadata collection for ROI]
+  10. TLS Certificate Analysis (tlsx) [Optional, --skip-tlsx]
 
-  PHASE 3 — CONTENT DISCOVERY (Steps 12–18)
-  12. Historical URL Discovery (Waybackurls, GAU) [Parallel]
-  13. Web Crawling (Katana, GoSpider) [Parallel, --skip-crawl]
-  14. JavaScript Analysis (GoLinkFinder)
-  15. Directory Fuzzing (ffuf) [Requires --wordlist]
-  16. HTTP Parameter Discovery (x8) [Optional, --skip-x8]
-  17. URL Consolidation & Live Check (httpx)
-  18. JS Secret Scan (gf + httpx)
+  PHASE 3 — CONTENT DISCOVERY (Steps 11–16)
+  11. Historical URL Discovery (Waybackurls, GAU) [Parallel]
+  12. Web Crawling (Katana, GoSpider) [Parallel, --skip-crawl]
+  13. JavaScript Deep Analysis (jsluice + secrets)
+  14. Directory Fuzzing (ffuf) [Requires --wordlist]
+  15. HTTP Parameter Discovery (x8) [Optional, --skip-x8]
+  16. URL Consolidation & Live Check (httpx)
 
-  PHASE 4 — VULNERABILITY SCANNING (Steps 19–22)
-  19. Subdomain Takeover Detection (Nuclei) [Optional, --skip-takeovers]
-  20. Vulnerability Scanning — Infra (Nuclei) [Optional, --skip-nuclei]
-  21. Vulnerability Scanning — URLs (Nuclei) [Optional, --skip-nuclei]
-  22. XSS Scanning (Dalfox) [Optional, --skip-dalfox]
+  PHASE 4 — VULNERABILITY SCANNING (Steps 17–20)
+  17. Subdomain Takeover Detection (Nuclei) [Optional, --skip-takeovers]
+  18. Vulnerability Scanning — Infra (Nuclei) [Optional, --skip-nuclei]
+  19. Vulnerability Scanning — URLs (Nuclei) [Optional, --skip-nuclei]
+  20. XSS Scanning (Dalfox) [Optional, --skip-dalfox]
 
-  PHASE 5 — FINGERPRINTING (Step 23)
-  23. Technology & WAF Fingerprinting (Httpx, Nuclei) [Optional, --skip-fingerprint]
+  PHASE 5 — FINGERPRINTING (Step 21)
+  21. Technology & WAF Fingerprinting (Httpx, Nuclei) [Optional, --skip-fingerprint]
 
 Press 's' at any time during scanning to skip the current tool.
 All results are stored in a SQLite database for querying and reporting.
@@ -111,8 +109,8 @@ func init() {
 	wildcardCmd.Flags().BoolVar(&skipTlsx, "skip-tlsx", false, "Skip TLS certificate analysis")
 	wildcardCmd.Flags().BoolVar(&skipX8, "skip-x8", false, "Skip x8 parameter discovery")
 	wildcardCmd.Flags().BoolVar(&skipShuffleDNS, "skip-shuffledns", false, "Skip ShuffleDNS brute-force")
-	wildcardCmd.Flags().BoolVar(&skipHakrawler, "skip-hakrawler", false, "Skip Hakrawler JS crawling")
 	wildcardCmd.Flags().BoolVar(&skipFingerprint, "skip-fingerprint", false, "Skip Technology & WAF Fingerprinting step")
+	wildcardCmd.Flags().BoolVar(&skipJS, "skip-js", false, "Skip JavaScript Deep Analysis (jsluice + secrets)")
 	wildcardCmd.Flags().StringVarP(&wordlistPath, "wordlist", "w", "", "Wordlist for directory fuzzing with ffuf (auto-detects SecLists on device if omitted)")
 	wildcardCmd.Flags().StringVar(&dnsWordlistPath, "dns-wordlist", "", "Wordlist for DNS brute-force with ShuffleDNS (auto-detects SecLists on device if omitted)")
 	wildcardCmd.Flags().StringVar(&resolversPath, "resolvers", "", "Custom DNS resolvers file for ShuffleDNS")
@@ -192,8 +190,8 @@ func runWildcard(cmd *cobra.Command, args []string) {
 		SkipTlsx:        skipTlsx,
 		SkipX8:          skipX8,
 		SkipShuffleDNS:  skipShuffleDNS,
-		SkipHakrawler:   skipHakrawler,
 		SkipFingerprint: skipFingerprint,
+		SkipJS:          skipJS,
 		WordlistPath:    wl,
 		DNSWordlistPath: dnsWl,
 		ResolversPath:   resolvers,

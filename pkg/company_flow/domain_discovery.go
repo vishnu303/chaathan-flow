@@ -22,16 +22,16 @@ func stepAmassIntel(c *Ctx) (bool, error) {
 	if !c.SkipAmassIntel {
 		logger.StepHeader("Step 2: Root Domain Discovery (Amass Intel)")
 		amassIntelOut := filepath.Join(c.ResultDir, "root_domains.txt")
-		logger.SubStep("Running Amass Intel reverse-whois for: %s", c.Company)
+		logger.ToolStart("Amass Intel")
 
 		if err := c.Tb.RunAmassIntel(c.GoCtx, c.Company, amassIntelOut); err != nil {
-			logger.Warning("Amass Intel failed: %v", err)
+			logger.ToolFail("Amass Intel", err.Error())
 			logger.Info("  This is common — amass intel requires WHOIS data access")
 			c.Failed++
 			return c.cancelled(), err
 		} else {
 			count, _ := utils.CountFileLines(amassIntelOut)
-			logger.Success("Discovered %d root domains", count)
+			logger.Result(count, "root domains discovered")
 			c.Completed++
 		}
 	} else {

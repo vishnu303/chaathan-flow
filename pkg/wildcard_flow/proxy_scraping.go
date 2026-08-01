@@ -101,7 +101,7 @@ func (c *Ctx) runProxyScrapingAndRotation() {
 		OutputDir:     filepath.Join(c.ResultDir, "intermediate_files"),
 	}
 
-	logger.Info("Scraping and validating proxies (timeout: %dm)...", timeoutMin)
+	logger.ToolStart("Proxy Scraping")
 
 	var result *proxy_scraping.HarvestResult
 	var harvestErr error
@@ -119,15 +119,15 @@ func (c *Ctx) runProxyScrapingAndRotation() {
 	}
 
 	if harvestErr != nil && !harvestSkipped {
-		logger.Warning("Proxy scraping failed: %v — continuing without proxy", harvestErr)
+		logger.ToolFail("Proxy Scraping", harvestErr.Error())
 		return
 	}
 
 	if result == nil || result.TotalValid == 0 {
 		if harvestSkipped {
-			logger.Info("  Proxy scraping skipped — no valid proxies found")
+			logger.ToolSkip("Proxy Scraping", "no valid proxies found")
 		} else {
-			logger.Warning("No valid proxies found — continuing without proxy")
+			logger.ToolSkip("Proxy Scraping", "no valid proxies found")
 		}
 		return
 	}
@@ -143,7 +143,7 @@ func (c *Ctx) runProxyScrapingAndRotation() {
 		result.TotalScraped, result.TotalValid, label,
 		result.Duration.Round(time.Second))
 
-	logger.SubStep("Starting rotating proxy server (mubeng)...")
+	logger.ToolStart("mubeng")
 
 	rotatorCfg := proxy_scraping.RotatorConfig{
 		ProxyListFile: result.ProxyListFile,
@@ -155,7 +155,7 @@ func (c *Ctx) runProxyScrapingAndRotation() {
 
 	rotator, err := proxy_scraping.StartRotator(c.GoCtx, rotatorCfg)
 	if err != nil {
-		logger.Warning("Failed to start proxy rotator: %v — continuing without proxy", err)
+		logger.ToolFail("mubeng", err.Error())
 		return
 	}
 
@@ -186,7 +186,7 @@ func (c *Ctx) restoreProxyRotatorOnResume() {
 		return
 	}
 
-	logger.Info("  Resuming proxy rotator from existing pool (%d proxies)...", lines)
+	logger.ToolStart("mubeng")
 	rotateMethod := "random"
 	rotateEvery := 1
 	if c.Cfg != nil {
@@ -208,7 +208,7 @@ func (c *Ctx) restoreProxyRotatorOnResume() {
 
 	rotator, err := proxy_scraping.StartRotator(c.GoCtx, rotatorCfg)
 	if err != nil {
-		logger.Warning("Failed to restart proxy rotator on resume: %v — continuing without proxy", err)
+		logger.ToolFail("mubeng", err.Error())
 		return
 	}
 

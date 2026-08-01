@@ -16,19 +16,19 @@ import (
 	"github.com/vishnu303/chaathan/utils"
 )
 
-// Phase 5 — Fingerprinting (Step 23)
+// Phase 5 — Fingerprinting (Step 21)
 //
 // Runs technology fingerprinting and WAF detection safely at the very end
 // to prevent WAF blocks from affecting prior discovery or vulnerability scanning.
 
 // stepFingerprinting runs httpx for tech-detect and nuclei for WAF detection.
 func stepFingerprinting(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("tech_waf_fingerprinting", "Step 23: Technology & WAF Fingerprinting"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("tech_waf_fingerprinting", "Step 21: Technology & WAF Fingerprinting"); skipped {
 		return cancelled
 	}
 
 	if c.SkipFingerprint {
-		logger.StepHeader("Step 23: Skipping Fingerprinting (--skip-fingerprint)")
+		logger.StepHeader("Step 21: Skipping Fingerprinting (--skip-fingerprint)")
 		c.markStepCompleteIfNoFailure("tech_waf_fingerprinting")
 		return c.cancelled()
 	}
@@ -36,23 +36,23 @@ func stepFingerprinting(c *Ctx) bool {
 	// 1. HTTPX Tech Detection
 	if utils.FileExists(c.F.HttpxLiveHosts) {
 		writeEmptyFile(c.F.HttpxTechOut)
-		logger.SubStep("Running HTTPX Tech Detection on live hosts...")
+		logger.ToolStart("HTTPX Tech Detection")
 		if err := runWithSkip(c, "httpx-tech", func(sCtx context.Context) error {
 			return c.Tb.RunHttpxFingerprint(sCtx, c.F.HttpxLiveHosts, c.F.HttpxTechOut)
 		}); err != nil {
 			if err != ErrToolSkipped {
-				logger.Warning("HTTPX Tech Detection failed: %v", err)
+				logger.ToolFail("HTTPX Tech Detection", err.Error())
 			}
 		}
 	} else {
-		logger.Info("  Skipping HTTPX Tech Detection (no live hosts)")
+		logger.ToolSkip("HTTPX Tech Detection", "no live hosts")
 	}
 
 	// 2. Nuclei WAF Detection
 	if utils.FileExists(c.F.HttpxLiveHosts) {
 		writeEmptyFile(c.F.NucleiWafOut)
 
-		logger.SubStep("Running Nuclei WAF Detection on live hosts...")
+		logger.ToolStart("Nuclei WAF Detection")
 
 		// Snapshot known vulnerabilities to avoid duplicate notifications on resume
 		knownVulnIDs := snapshotVulnIDs(c.ScanID)
@@ -64,7 +64,7 @@ func stepFingerprinting(c *Ctx) bool {
 			if err == ErrToolSkipped {
 				wafSkipped = true
 			} else {
-				logger.Warning("Nuclei WAF Detection failed: %v", err)
+				logger.ToolFail("Nuclei WAF Detection", err.Error())
 			}
 		}
 
@@ -75,7 +75,7 @@ func stepFingerprinting(c *Ctx) bool {
 				if wafSkipped {
 					label = " (partial)"
 				}
-				logger.Success("  🛡️ Found %d WAF detections!%s", count, label)
+				logger.Result(count, "WAF detections%s", label)
 
 				if c.Notifier != nil {
 					sendWafNotifications(c, notify.Finding{
@@ -84,10 +84,8 @@ func stepFingerprinting(c *Ctx) bool {
 						Timestamp: time.Now(),
 					}, knownVulnIDs)
 				}
-			} else if wafSkipped {
-				logger.Info("  Nuclei WAF Detection scan skipped")
-			} else {
-				logger.Info("  No WAFs detected")
+			} else if !wafSkipped {
+				logger.ToolDone("Nuclei WAF Detection")
 			}
 		}
 	}
@@ -147,7 +145,7 @@ func logFingerprintSummary(c *Ctx) {
 		}
 		if len(wafHosts) > 0 {
 			for waf, hosts := range wafHosts {
-				logger.Info("  🛡️  %s → %s", waf, strings.Join(hosts, ", "))
+				logger.Info("  ▸ %s → %s", waf, strings.Join(hosts, ", "))
 			}
 		}
 	}
@@ -167,7 +165,7 @@ func logFingerprintSummary(c *Ctx) {
 				if end > len(parts) {
 					end = len(parts)
 				}
-				logger.Info("  🔧 %s", strings.Join(parts[i:end], ", "))
+				logger.Info("  ▸ %s", strings.Join(parts[i:end], ", "))
 			}
 		}
 	}

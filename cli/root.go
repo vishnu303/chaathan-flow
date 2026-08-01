@@ -158,31 +158,36 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("%s%sChaathan%s %s\n", logger.BrightCyan, logger.Bold, logger.Reset, Version)
-		fmt.Printf("%sBuilt: %s%s\n", logger.Dim, BuildTime, logger.Reset)
-		fmt.Printf("%sPentesting Recon Framework%s\n", logger.Dim, logger.Reset)
-		fmt.Printf("%s%d tools • 23-step wildcard • 3-step company%s\n", logger.Dim, len(tools.GetAllTools()), logger.Reset)
-		fmt.Printf("%shttps://github.com/vishnu303/chaathan%s\n", logger.Dim, logger.Reset)
+		logger.Box("CHAATHAN "+Version, []string{
+			fmt.Sprintf("%sPentesting Recon Framework%s", logger.Dim, logger.Reset),
+			fmt.Sprintf("%s%d tools · 23-step wildcard · 3-step company%s", logger.Dim, len(tools.GetAllTools()), logger.Reset),
+			fmt.Sprintf("%sBuilt: %s%s", logger.Dim, BuildTime, logger.Reset),
+			fmt.Sprintf("%shttps://github.com/vishnu303/chaathan%s", logger.Dim, logger.Reset),
+		})
 
-		fmt.Printf("\n%sChecking for updates...%s\n", logger.Dim, logger.Reset)
+		logger.Info("Checking for updates...")
 		info, err := update.CheckForUpdates(Version)
 		if err != nil {
 			if Verbose {
 				logger.Warning("Update check failed: %v", err)
 			} else {
-				fmt.Printf("%s(Could not connect to GitHub to check for updates)%s\n", logger.Dim, logger.Reset)
+				logger.Info("(Could not connect to GitHub to check for updates)")
 			}
 			return
 		}
 
 		if info.IsNewer {
-			fmt.Printf("\n  %s🔥 A new version is available: %s%s %s(latest)%s\n", logger.BrightYellow+logger.Bold, logger.BrightGreen, info.LatestVersion, logger.Dim, logger.Reset)
-			fmt.Printf("  %sDownload / Changelog: %s%s\n\n", logger.Dim, info.URL, logger.Reset)
+			logger.Print("\n  %s▲%s %sNew version available:%s %s%s%s %s(latest)%s\n",
+				logger.BrightYellow+logger.Bold, logger.Reset,
+				logger.BrightYellow, logger.Reset,
+				logger.BrightGreen+logger.Bold, info.LatestVersion, logger.Reset,
+				logger.Dim, logger.Reset)
+			logger.Print("  %sDownload / Changelog: %s%s\n\n", logger.Dim, info.URL, logger.Reset)
 		} else {
 			if Version == "dev" || strings.HasPrefix(Version, "dev-") {
-				fmt.Printf("  %sLatest stable version is %s (you are running a local dev build)%s\n", logger.Dim, info.LatestVersion, logger.Reset)
+				logger.Print("  %sLatest stable version is %s (you are running a local dev build)%s\n", logger.Dim, info.LatestVersion, logger.Reset)
 			} else {
-				fmt.Printf("  %sYou are running the latest version! (%s)%s\n", logger.BrightGreen, Version, logger.Reset)
+				logger.Print("  %s✓%s %sYou are running the latest version! (%s)%s\n", logger.BrightGreen, logger.Reset, logger.BrightGreen, Version, logger.Reset)
 			}
 		}
 	},

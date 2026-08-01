@@ -36,7 +36,7 @@ var sublist3rPinArgs = []string{"install", "--break-system-packages", "requests"
 func installPythonToolsSection(ctx *SetupContext) (int, int, int) {
 	pip := resolvePip()
 	if pip == "" {
-		progress.Section("[4/7] Python Tools", "")
+		progress.Section("[3/6] Python Tools", "")
 		progress.ItemInfo("pip not found — skipping")
 		return 0, 0, 0
 	}
@@ -62,7 +62,7 @@ func installPythonToolsSection(ctx *SetupContext) (int, int, int) {
 	if skippedCount == 0 {
 		detail = fmt.Sprintf("%d to install", totalToInstall)
 	}
-	progress.Section("[4/7] Python Tools", detail)
+	progress.Section("[3/6] Python Tools", detail)
 
 	if totalToInstall == 0 {
 		progress.ItemInfo("Nothing to do")

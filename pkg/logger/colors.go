@@ -1,5 +1,7 @@
 package logger
 
+import "strings"
+
 // ANSI style and color constants shared by all terminal output.
 const (
 	Reset = "\033[0m"
@@ -42,22 +44,6 @@ func ColorStatus(status string) string {
 	}
 }
 
-// EmojiStatus returns an emoji-prefixed status string for CLI table output.
-func EmojiStatus(status string) string {
-	switch status {
-	case "completed":
-		return "✅ completed"
-	case "running":
-		return "🔄 running"
-	case "failed":
-		return "❌ failed"
-	case "cancelled":
-		return "⚠️  cancelled"
-	default:
-		return status
-	}
-}
-
 // ColorSeverity returns an ANSI-coloured string for a vulnerability severity.
 // Expected values: "critical", "high", "medium", "low", "info".
 func ColorSeverity(sev string) string {
@@ -77,21 +63,19 @@ func ColorSeverity(sev string) string {
 	}
 }
 
-// EmojiSeverity returns an emoji-prefixed, uppercased severity label
-// for CLI table output (e.g. "🔴 CRITICAL").
-func EmojiSeverity(sev string) string {
-	switch sev {
+// SevColor returns the raw ANSI color code for a vulnerability severity.
+// Used for severity dots (●) and markers in finding lines.
+func SevColor(sev string) string {
+	switch strings.ToLower(sev) {
 	case "critical":
-		return "🔴 CRITICAL"
+		return BrightRed
 	case "high":
-		return "🟠 HIGH"
+		return Red
 	case "medium":
-		return "🟡 MEDIUM"
+		return BrightYellow
 	case "low":
-		return "🟢 LOW"
-	case "info":
-		return "🔵 INFO"
+		return BrightGreen
 	default:
-		return sev
+		return BrightBlue
 	}
 }

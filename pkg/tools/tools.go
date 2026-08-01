@@ -298,9 +298,7 @@ const (
 	gauMaxTimeout              = 30 * time.Minute
 	waybackurlsMaxTimeout      = 20 * time.Minute
 	x8MaxTimeout               = 120 * time.Minute
-	uncoverMaxTimeout          = 10 * time.Minute
 	githubSubdomainsMaxTimeout = 15 * time.Minute
-	hakrawlerMaxTimeout        = 30 * time.Minute
 )
 
 func (t *ToolBox) subfinderThreads() int {
@@ -315,6 +313,20 @@ func (t *ToolBox) subfinderTimeout() int {
 		return val
 	}
 	return getDefaultToolsConfig().Subfinder.Timeout
+}
+
+func (t *ToolBox) assetfinderTimeout() time.Duration {
+	if val := t.config().Assetfinder.Timeout; val > 0 {
+		return time.Duration(val) * time.Second
+	}
+	return time.Duration(getDefaultToolsConfig().Assetfinder.Timeout) * time.Second
+}
+
+func (t *ToolBox) uncoverTimeout() time.Duration {
+	if val := t.config().Uncover.Timeout; val > 0 {
+		return time.Duration(val) * time.Second
+	}
+	return time.Duration(getDefaultToolsConfig().Uncover.Timeout) * time.Second
 }
 
 func (t *ToolBox) httpxThreads() int {
@@ -514,6 +526,9 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 		if t.APIKeys.SecurityTrails != "" {
 			envVars = append(envVars, "SECURITYTRAILS_API_KEY="+t.APIKeys.SecurityTrails)
 		}
+		if t.APIKeys.Shodan != "" {
+			envVars = append(envVars, "SHODAN_API_KEY="+t.APIKeys.Shodan)
+		}
 		if len(envVars) > 0 {
 			opts = append(opts, runner.WithEnv(envVars...))
 		}
@@ -526,8 +541,12 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 
 func (t *ToolBox) RunAssetfinder(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"--subs-only", domain}
-	output, err := t.Runner.Run(ctx, "assetfinder", args)
-	if strings.TrimSpace(output) != "" {
+	output, err := t.Runner.Run(ctx, "assetfinder", args, runner.WithTimeout(t.assetfinderTimeout()))
+	// Keep only valid domain lines — assetfinder may emit banner/error noise on stdout.
+	output = utils.FilterOutputLines(output, func(line string) bool {
+		return utils.ValidateDomain(line) == nil
+	})
+	if output != "" {
 		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
@@ -569,7 +588,9 @@ func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) 
 	args := []string{"--providers", "wayback,commoncrawl,otx,urlscan", "--subs", domain}
 	args = t.appendProxy(args, "--proxy")
 	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(gauMaxTimeout))
-	if strings.TrimSpace(output) != "" {
+	// Keep only absolute http(s) URL lines — gau may print warnings to stdout.
+	output = utils.FilterOutputLines(output, utils.IsValidHTTPURL)
+	if output != "" {
 		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
@@ -653,7 +674,10 @@ func (t *ToolBox) RunGoSpider(ctx context.Context, inputFile string, outputFile 
 	args := []string{"-S", inputFile, "-q", "-c", "10", "-d", "3", "-t", "10"} // -t = per-request timeout (seconds)
 	args = t.appendGoSpiderUA(args)
 	output, err := t.Runner.Run(ctx, "gospider", args, runner.WithTimeout(t.goSpiderMaxTimeout()))
-	if strings.TrimSpace(output) != "" {
+	// Keep only absolute http(s) URL lines — gospider may emit tagged lines and
+	// progress notices on stdout even with -q.
+	output = utils.FilterOutputLines(output, utils.IsValidHTTPURL)
+	if output != "" {
 		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
@@ -810,22 +834,6 @@ func (t *ToolBox) RunCloudEnum(ctx context.Context, keyword string, outputFile s
 	return err
 }
 
-func (t *ToolBox) RunHakrawler(ctx context.Context, url string, outputFile string) error {
-	args := []string{"-subs", "-u", "-d", "3"}
-	if t.uaEnabled() {
-		args = append(args, "-h", "User-Agent: "+t.getUA())
-	}
-	args = t.appendProxy(args, "-proxy")
-
-	output, err := t.Runner.Run(ctx, "hakrawler", args, runner.WithStdin(strings.NewReader(url+"\n")), runner.WithTimeout(hakrawlerMaxTimeout))
-	if strings.TrimSpace(output) != "" {
-		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
-			return writeErr
-		}
-	}
-	return err
-}
-
 // --- URL Discovery ---
 
 // RunWaybackurls fetches historical URLs from Wayback Machine
@@ -833,7 +841,9 @@ func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile 
 	args := []string{}
 	// waybackurls reads the domain from standard input
 	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")), runner.WithTimeout(waybackurlsMaxTimeout))
-	if strings.TrimSpace(output) != "" {
+	// Keep only absolute http(s) URL lines — waybackurls may emit API noise on stdout.
+	output = utils.FilterOutputLines(output, utils.IsValidHTTPURL)
+	if output != "" {
 		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
 			return writeErr
 		}
@@ -841,12 +851,37 @@ func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile 
 	return err
 }
 
-// RunGoLinkFinder extracts endpoints from JavaScript files found at the given URL.
-func (t *ToolBox) RunGoLinkFinder(ctx context.Context, url string, outputFile string) error {
-	args := []string{"-d", url, "-o", outputFile, "--silent", "--timeout", "10"}
-	// GoLinkFinder does not have a built-in proxy flag, but if it runs in docker we could pass HTTP_PROXY.
-	// We'll pass it as a runner env var later if needed, but for now it's skipped as there's no native flag.
-	_, err := t.Runner.Run(ctx, "GoLinkFinder", args, runner.WithNoRetry())
+// RunJsluiceURLs extracts URLs and API routes from a local JavaScript file
+// using jsluice's AST-based analysis. Output is JSON lines written to outputFile.
+func (t *ToolBox) RunJsluiceURLs(ctx context.Context, jsFile string, outputFile string) error {
+	args := []string{"urls", jsFile}
+	output, err := t.Runner.Run(ctx, "jsluice", args, runner.WithNoRetry())
+	// Keep only JSON object lines — jsluice may print warnings to stdout.
+	output = utils.FilterOutputLines(output, func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), "{")
+	})
+	if output != "" {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
+	}
+	return err
+}
+
+// RunJsluiceObjects extracts custom objects and interesting method calls from a
+// local JavaScript file using jsluice. Output is JSON lines written to outputFile.
+func (t *ToolBox) RunJsluiceObjects(ctx context.Context, jsFile string, outputFile string) error {
+	args := []string{"objects", jsFile}
+	output, err := t.Runner.Run(ctx, "jsluice", args, runner.WithNoRetry())
+	// Keep only JSON object lines — jsluice may print warnings to stdout.
+	output = utils.FilterOutputLines(output, func(line string) bool {
+		return strings.HasPrefix(strings.TrimSpace(line), "{")
+	})
+	if output != "" {
+		if writeErr := utils.WriteToFile(outputFile, output); writeErr != nil {
+			return writeErr
+		}
+	}
 	return err
 }
 
@@ -874,7 +909,9 @@ func (t *ToolBox) RunX8WithWordlist(ctx context.Context, inputFile string, outpu
 		args = append(args, "-x", p)
 	}
 
-	_, err := t.Runner.Run(ctx, "x8", args, runner.WithTimeout(x8MaxTimeout))
+	// NoRetry: a retry would re-run the full (up to 2h) discovery and append a
+	// second JSON document to outputFile, invalidating whole-file parsing below.
+	_, err := t.Runner.Run(ctx, "x8", args, runner.WithTimeout(x8MaxTimeout), runner.WithNoRetry())
 	return err
 }
 
@@ -1047,7 +1084,7 @@ func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile stri
 		}
 	}
 
-	opts = append(opts, runner.WithTimeout(uncoverMaxTimeout))
+	opts = append(opts, runner.WithTimeout(t.uncoverTimeout()))
 	_, err := t.Runner.Run(ctx, "uncover", args, opts...)
 	return err
 }
@@ -1126,6 +1163,8 @@ func (t *ToolBox) RunNucleiWAF(ctx context.Context, inputFile string, outputFile
 		uaHeader:  true,
 		proxyFlag: "-proxy",
 	})
-	_, err := t.Runner.Run(ctx, "nuclei", args)
+	// NoRetry: nuclei appends to existing -o files; a retry would duplicate
+	// JSONL findings and inflate notification/stats counts.
+	_, err := t.Runner.Run(ctx, "nuclei", args, runner.WithNoRetry())
 	return err
 }

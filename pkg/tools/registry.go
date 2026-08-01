@@ -46,8 +46,7 @@ var allTools = []ToolInfo{
 	{Name: "gospider", Category: "Crawl", Description: "Web crawling & spidering", Required: false, InstallURL: "github.com/jaeles-project/gospider@latest"},
 
 	// Analysis
-	{Name: "GoLinkFinder", Category: "Analysis", Description: "JavaScript endpoint extraction (Go)", Required: false, InstallURL: "github.com/rix4uni/GoLinkFinder@latest"},
-	{Name: "hakrawler", Category: "Crawl", Description: "Fast web crawler for endpoint & asset discovery", Required: false, InstallURL: "github.com/hakluke/hakrawler@latest"},
+	{Name: "jsluice", Category: "Analysis", Description: "AST-based JavaScript URL & secret extraction", Required: false, InstallURL: "github.com/BishopFox/jsluice/cmd/jsluice@latest"},
 
 	// Fuzzing & Scanning
 	{Name: "ffuf", Category: "Fuzz", Description: "Web fuzzer & directory brute-force", Required: false, InstallURL: "github.com/ffuf/ffuf/v2@latest"},
@@ -62,7 +61,6 @@ var allTools = []ToolInfo{
 
 	// Utility
 	{Name: "anew", Category: "Util", Description: "Append unique lines to file", Required: false, InstallURL: "github.com/tomnomnom/anew@latest"},
-	{Name: "gf", Category: "Util", Description: "Pattern-based URL/param filtering", Required: false, InstallURL: "github.com/tomnomnom/gf@latest"},
 
 	// Proxy Automation
 	{Name: "mubeng", Category: "Proxy", Description: "Proxy scraper, checker & IP rotator (Go)", Required: false, InstallURL: "github.com/mubeng/mubeng@latest"},

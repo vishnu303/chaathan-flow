@@ -14,7 +14,7 @@ Activate this skill for any normal development, feature addition, bug fixing, or
 ```
 main.go              → paths.Init(), defer database.Close(), cli.Execute()
 cli/                 → Cobra commands, flag parsing, maps flags to RunConfig
-pkg/wildcard_flow/   → 23-step domain recon workflow (6 phases)
+pkg/wildcard_flow/   → 21-step domain recon workflow (6 phases)
 pkg/company_flow/    → 3-step company recon workflow
 pkg/orchestrate/     → Signal traps, tool-runner bootstrap, notifications wiring
 pkg/database/        → SQLite models, ROI priorities, metadata schema, database actions
@@ -105,7 +105,7 @@ func stepExampleTool(c *Ctx) bool {
 
 1. **Step Registries Alignment:** The step list in `pkg/scan/scan.go` (e.g., `WildcardSteps`) must match the execution order in `pkg/wildcard_flow/flow.go` exactly.
 2. **Step Counts:**
-   - **Wildcard Scan:** Exactly **23 steps across 6 phases (Phases 0 to 5)**.
+   - **Wildcard Scan:** Exactly **22 steps across 6 phases (Phases 0 to 5)**.
    - **Company Scan:** Exactly **3 steps**.
 3. **No Short-Circuit Returns:** Step functions must never return hardcoded `false` on failure. Always log the error, register the failure via `MarkStepFailed`, and return `c.cancelled()`.
 4. **CLI Flag Propagation:**

@@ -29,7 +29,7 @@ var exportManifest = []struct{ File, Desc string }{
 	{utils.FileVulnCriticalHigh, "Critical/High severity vulns only"},
 	{utils.FileEndpoints, "All discovered endpoints (with method)"},
 	{utils.FileEndpointsInteresting, "Interesting endpoints (API, admin, etc.)"},
-	{utils.FileGFSecrets, "JS secret and JS sink matches from downloaded JS"},
+	{utils.FileGFSecrets, "JS secrets from JavaScript deep analysis"},
 	{utils.FileNucleiVulns, "Nuclei infra scan raw output"},
 	{utils.FileNucleiURLVulns, "Nuclei URL scan raw output"},
 	{utils.FileDalfoxXSS, "Dalfox XSS scan structured JSONL output"},

@@ -67,7 +67,7 @@ func containsWord(s, word string) bool {
 
 // installPrerequisites checks and installs system-level packages.
 func installPrerequisites(ctx *SetupContext) {
-	progress.Section("[1/7] Prerequisites", "")
+	progress.Section("[1/6] Prerequisites", "")
 
 	if runtime.GOOS != "linux" {
 		progress.ItemInfo("Auto-install only supported on Linux (Debian/Ubuntu, Arch/CachyOS).")

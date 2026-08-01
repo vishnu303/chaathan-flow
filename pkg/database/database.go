@@ -258,6 +258,7 @@ func createTables() error {
 		scan_id INTEGER NOT NULL,
 		url TEXT NOT NULL,
 		pattern TEXT NOT NULL,
+		confirmed TEXT NOT NULL DEFAULT 'unverified',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (scan_id) REFERENCES scans(id),
 		UNIQUE(scan_id, url, pattern)
@@ -280,7 +281,21 @@ func createTables() error {
 	`
 
 	_, err := DB.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	return migrateSchema()
+}
+
+// migrateSchema applies incremental schema changes for existing databases.
+func migrateSchema() error {
+	// Add confirmed column to gf_matches (added in JS Deep Analysis upgrade).
+	// ALTER TABLE ADD COLUMN is idempotent-safe: ignore "duplicate column" errors.
+	_, err := DB.Exec(`ALTER TABLE gf_matches ADD COLUMN confirmed TEXT NOT NULL DEFAULT 'unverified'`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 // Close closes the database connection
@@ -1357,6 +1372,7 @@ func GetTotalPortsCount() (int, error) {
 type GFMatch struct {
 	URL     string
 	Pattern string
+	Status  string // confirmed | invalid | unverified
 }
 
 // InsertGFMatches stores gf pattern matches for a scan.
@@ -1374,7 +1390,7 @@ func InsertGFMatches(scanID int64, matches []GFMatch) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO gf_matches (scan_id, url, pattern) VALUES (?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO gf_matches (scan_id, url, pattern, confirmed) VALUES (?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -1386,33 +1402,43 @@ func InsertGFMatches(scanID int64, matches []GFMatch) error {
 		if urlStr == "" || patternStr == "" {
 			continue
 		}
-		if _, err := stmt.Exec(scanID, urlStr, patternStr); err != nil {
+		status := m.Status
+		if status == "" {
+			status = "unverified"
+		}
+		if _, err := stmt.Exec(scanID, urlStr, patternStr, status); err != nil {
 			return fmt.Errorf("failed to insert gf match for %q pattern %q: %w", urlStr, patternStr, err)
 		}
 	}
 	return tx.Commit()
 }
 
+// GFMatchResult holds a pattern match with its validation status.
+type GFMatchResult struct {
+	Pattern string
+	Status  string // confirmed | invalid | unverified
+}
+
 // GetGFMatchesByScan returns all gf pattern matches for a scan, grouped by URL.
-// The returned map keys are raw URLs; the values are slices of pattern names
-// (e.g. "sqli", "xss", "rce").
-func GetGFMatchesByScan(scanID int64) (map[string][]string, error) {
+// The returned map keys are raw URLs; the values are slices of GFMatchResult
+// containing pattern names and validation status.
+func GetGFMatchesByScan(scanID int64) (map[string][]GFMatchResult, error) {
 	if DB == nil {
 		return nil, ErrDBNotInitialized
 	}
-	rows, err := DB.Query(`SELECT url, pattern FROM gf_matches WHERE scan_id = ?`, scanID)
+	rows, err := DB.Query(`SELECT url, pattern, confirmed FROM gf_matches WHERE scan_id = ?`, scanID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	result := make(map[string][]string)
+	result := make(map[string][]GFMatchResult)
 	for rows.Next() {
-		var u, pattern string
-		if err := rows.Scan(&u, &pattern); err != nil {
+		var u, pattern, status string
+		if err := rows.Scan(&u, &pattern, &status); err != nil {
 			continue
 		}
-		result[u] = append(result[u], pattern)
+		result[u] = append(result[u], GFMatchResult{Pattern: pattern, Status: status})
 	}
 	return result, rows.Err()
 }

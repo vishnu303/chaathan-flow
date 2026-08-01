@@ -54,8 +54,8 @@ type RunConfig struct {
 	SkipTlsx        bool
 	SkipX8          bool
 	SkipShuffleDNS  bool
-	SkipHakrawler   bool
 	SkipFingerprint bool
+	SkipJS          bool
 
 	// Paths / tokens
 	WordlistPath    string
@@ -109,16 +109,17 @@ type Files struct {
 	NaabuOut            string
 	KatanaOut           string
 	GospiderOut         string
-	GoLinkFinderOut     string
-	HakrawlerOut        string
+	GoLinkFinderOut     string // deprecated: kept for resume compat
+	JSEndpointsOut      string
+	JSSecretsOut        string
+	JSSubdomainsOut     string
+	JSMetadataOut       string
+	HakrawlerOut        string // deprecated: kept for resume compat
 	X8Out               string
 	X8URLsOut           string
 	AllURLsRaw          string
 	AllURLsLive         string
 	JSURLsFile          string
-	GFJSMatches         string
-	GFSecretsMatches    string
-	GFSecretsFinal      string
 	ROIMetadataTargets  string
 	FfufOut             string
 	FfufDiscoveredURLs  string
@@ -132,13 +133,13 @@ type Files struct {
 	NucleiMisconfigOut  string
 	NucleiDASTOut       string
 	TakeoverCandidates  string
+	CnameRefreshOut     string // dedicated dnsx CNAME refresh (never clobbers DnsxOut)
 	ProxyScrapingConfig string // intermediate_files/proxy_scraping_config.toml
 	ProxyPool           string // intermediate_files/proxy_pool.txt
 	TlsSanNewSubs       string
 	TlsSanHttpxOut      string
 	TlsSanHttpxLive     string
 	X8Input             string
-	GfSecretsMetadata   string
 }
 
 // newFiles builds all output paths from the result directory.
@@ -171,16 +172,17 @@ func newFiles(dir string) Files {
 		NaabuOut:           j("naabu_ports.txt"),
 		KatanaOut:          j("katana_urls.txt"),
 		GospiderOut:        j("gospider_urls.txt"),
-		GoLinkFinderOut:    j("golinkfinder_endpoints.txt"),
+		GoLinkFinderOut:    j("golinkfinder_endpoints.txt"), // deprecated
+		JSEndpointsOut:     j("js_endpoints.txt"),
+		JSSecretsOut:       jf(utils.FileGFSecrets),
+		JSSubdomainsOut:    j("js_new_subdomains.txt"),
+		JSMetadataOut:      j("js_analysis_metadata.txt"),
 		HakrawlerOut:       j("hakrawler_crawl.txt"),
 		X8Out:              j("x8_params.json"),
 		X8URLsOut:          j("x8_urls.txt"),
 		AllURLsRaw:         j("all_urls_raw.txt"),
 		AllURLsLive:        j("all_urls_live.txt"),
 		JSURLsFile:         j("js_urls.txt"),
-		GFJSMatches:        j("gf_js_matches.txt"),
-		GFSecretsMatches:   j("gf_secrets_matches.txt"),
-		GFSecretsFinal:     jf(utils.FileGFSecrets),
 		ROIMetadataTargets: j("roi_metadata_targets.txt"),
 		FfufOut:            j("ffuf_results.json"),
 		FfufDiscoveredURLs: j("ffuf_discovered_urls.txt"),
@@ -196,13 +198,13 @@ func newFiles(dir string) Files {
 		NucleiMisconfigOut:  jf("nuclei_misconfig.json"),
 		NucleiDASTOut:       jf("nuclei_dast.json"),
 		TakeoverCandidates:  j("takeover_candidates.txt"),
+		CnameRefreshOut:     j("dnsx_cname_refresh.json"),
 		ProxyScrapingConfig: j("proxy_scraping_config.toml"),
 		ProxyPool:           j("proxy_pool.txt"),
 		TlsSanNewSubs:       j("tls_san_new_subs.txt"),
 		TlsSanHttpxOut:      j("tls_san_httpx_out.json"),
 		TlsSanHttpxLive:     j("tls_san_httpx_live.txt"),
 		X8Input:             j("x8_input.txt"),
-		GfSecretsMetadata:   j("gf_secrets_metadata.txt"),
 	}
 }
 
@@ -267,7 +269,7 @@ func (c *Ctx) urlSources() []string {
 		c.F.GauOut,
 		c.F.KatanaOut,
 		c.F.GospiderOut,
-		c.F.GoLinkFinderOut,
+		c.F.JSEndpointsOut,
 		c.F.X8URLsOut,
 		c.F.FfufDiscoveredURLs,
 	}
@@ -341,8 +343,8 @@ func Run(cfg RunConfig) error {
 		"skip_tlsx":        cfg.SkipTlsx,
 		"skip_x8":          cfg.SkipX8,
 		"skip_shuffledns":  cfg.SkipShuffleDNS,
-		"skip_hakrawler":   cfg.SkipHakrawler,
 		"skip_fingerprint": cfg.SkipFingerprint,
+		"skip_js":          cfg.SkipJS,
 		"wordlist":         cfg.WordlistPath,
 		"dns_wordlist":     cfg.DNSWordlistPath,
 		"resolvers":        cfg.ResolversPath,
@@ -396,8 +398,8 @@ func Run(cfg RunConfig) error {
 			checkBoolDiff("skip_tlsx", cfg.SkipTlsx)
 			checkBoolDiff("skip_x8", cfg.SkipX8)
 			checkBoolDiff("skip_shuffledns", cfg.SkipShuffleDNS)
-			checkBoolDiff("skip_hakrawler", cfg.SkipHakrawler)
 			checkBoolDiff("skip_fingerprint", cfg.SkipFingerprint)
+			checkBoolDiff("skip_js", cfg.SkipJS)
 			checkBoolDiff("auto_proxy", cfg.AutoProxy)
 			checkBoolDiff("save_log", cfg.SaveLog)
 
@@ -504,7 +506,7 @@ func Run(cfg RunConfig) error {
 		c.Notifier.Done = goCtx.Done()
 	}
 
-	logger.Info("💡 Press 's' at any time to skip the current tool")
+	logger.Info("Press 's' at any time to skip the current tool")
 	logger.Info("Mode: %s", cfg.Mode)
 
 	// Wire scope from config
@@ -525,46 +527,52 @@ func Run(cfg RunConfig) error {
 	// Order must match scan.WildcardSteps (the source of truth for
 	// step names, descriptions, and resume/progress tracking).
 	steps := []struct {
-		name string
-		fn   func(*Ctx) bool
+		name  string
+		phase string
+		fn    func(*Ctx) bool
 	}{
-		// Phase 0 — Proxy Scraping
-		{"proxy_scraping", stepProxyScraping},
+		// Phase 0 — Proxy Scraping (Step 1)
+		{"proxy_scraping", "Proxy Scraping", stepProxyScraping},
 
-		// Phase 1 — Asset Discovery (Steps 2–6)
-		{"passive_enum", stepPassiveEnum},
-		{"active_enum", stepActiveEnum},
-		{"github_recon", stepGitHubRecon},
-		{"search_engine_recon", stepSearchEngineRecon},
-		{"js_subdomain_discovery", stepJSSubdomains},
+		// Phase 1 — Asset Discovery (Steps 2–5)
+		{"passive_enum", "Asset Discovery", stepPassiveEnum},
+		{"active_enum", "Asset Discovery", stepActiveEnum},
+		{"github_recon", "Asset Discovery", stepGitHubRecon},
+		{"search_engine_recon", "Asset Discovery", stepSearchEngineRecon},
 
-		// Phase 2 — Validation & Probing (Steps 7–11)
-		{"dns_resolution", stepDNSConsolidation},
-		{"dns_bruteforce", stepDNSBruteforce},
-		{"port_scanning", stepPortScanning},
-		{"http_probing", stepHTTPProbing},
-		{"tls_analysis", stepTLSAnalysis},
+		// Phase 2 — Validation & Probing (Steps 6–10)
+		{"dns_resolution", "Validation & Probing", stepDNSConsolidation},
+		{"dns_bruteforce", "Validation & Probing", stepDNSBruteforce},
+		{"port_scanning", "Validation & Probing", stepPortScanning},
+		{"http_probing", "Validation & Probing", stepHTTPProbing},
+		{"tls_analysis", "Validation & Probing", stepTLSAnalysis},
 
-		// Phase 3 — Content Discovery (Steps 12–18)
-		{"url_discovery", stepURLDiscovery},
-		{"web_crawling", stepWebCrawling},
-		{"js_analysis", stepJSAnalysis},
-		{"dir_fuzzing", stepDirFuzzing},
-		{"param_discovery", stepParamDiscovery},
-		{"url_consolidation", stepURLConsolidation},
-		{"js_secret_scan", stepJSSecretScan},
+		// Phase 3 — Content Discovery (Steps 11–16)
+		{"url_discovery", "Content Discovery", stepURLDiscovery},
+		{"web_crawling", "Content Discovery", stepWebCrawling},
+		{"js_deep_analysis", "Content Discovery", stepJSDeepAnalysis},
+		{"dir_fuzzing", "Content Discovery", stepDirFuzzing},
+		{"param_discovery", "Content Discovery", stepParamDiscovery},
+		{"url_consolidation", "Content Discovery", stepURLConsolidation},
 
-		// Phase 4 — Vulnerability Scanning (Steps 19–22)
-		{"takeover_detection", stepTakeoverDetection},
-		{"vuln_scanning", stepVulnScanningInfra},
-		{"vuln_scanning_urls", stepVulnScanningURLs},
-		{"xss_scanning", stepXSSScanning},
+		// Phase 4 — Vulnerability Scanning (Steps 17–20)
+		{"takeover_detection", "Vulnerability Scanning", stepTakeoverDetection},
+		{"vuln_scanning", "Vulnerability Scanning", stepVulnScanningInfra},
+		{"vuln_scanning_urls", "Vulnerability Scanning", stepVulnScanningURLs},
+		{"xss_scanning", "Vulnerability Scanning", stepXSSScanning},
 
-		// Phase 5 — Fingerprinting (Step 23)
-		{"tech_waf_fingerprinting", stepFingerprinting},
+		// Phase 5 — Fingerprinting (Step 21)
+		{"tech_waf_fingerprinting", "Fingerprinting", stepFingerprinting},
 	}
 
+	phaseNum := -1
+	lastPhase := ""
 	for _, step := range steps {
+		if step.phase != lastPhase {
+			lastPhase = step.phase
+			phaseNum++
+			logger.PhaseBanner(phaseNum, step.phase)
+		}
 		if executeStep(c, step.name, step.fn) {
 			finalizeScan(c, "cancelled")
 			return nil
@@ -663,16 +671,14 @@ func countFindingsForStep(c *Ctx, stepName string) int {
 		return countLines(c.F.WaybackOut, c.F.GauOut)
 	case "web_crawling":
 		return countLines(c.F.KatanaOut, c.F.GospiderOut)
-	case "js_analysis":
-		return countLines(c.F.GoLinkFinderOut)
+	case "js_deep_analysis":
+		return countLines(c.F.JSEndpointsOut, c.F.JSSecretsOut)
 	case "js_subdomain_discovery":
-		return countLines(c.F.HakrawlerOut)
+		return 0 // deprecated step — kept for resume compat
 	case "param_discovery":
 		return countLines(c.F.X8URLsOut)
 	case "url_consolidation":
 		return countLines(c.F.AllURLsLive)
-	case "js_secret_scan":
-		return countLines(c.F.GFSecretsFinal)
 	case "dir_fuzzing":
 		return c.FfufTotalFindings // Uses properly parsed JSON array count, not lines
 	case "vuln_scanning":
@@ -771,7 +777,8 @@ func finalizeScan(c *Ctx, status string) {
 		// Export results into final_files/
 		if status == "completed" || status == "cancelled" {
 			finalDir := filepath.Join(c.ResultDir, "final_files")
-			logger.Info("\nExporting results to final_files/...")
+			logger.Print("\n")
+			logger.Info("Exporting results to final_files/...")
 			if err := ingest.ExportResults(c.ScanID, finalDir); err != nil {
 				logger.Warning("Failed to export some results: %v", err)
 			} else {
@@ -784,7 +791,8 @@ func finalizeScan(c *Ctx, status string) {
 
 		// Generate report
 		if c.GenerateReport && status == "completed" {
-			logger.Info("\nGenerating report...")
+			logger.Print("\n")
+			logger.Info("Generating report...")
 			rpt, err := report.Generate(c.ScanID)
 			if err == nil {
 				reportPath := filepath.Join(paths.ReportsDir(), fmt.Sprintf("scan_%d.md", c.ScanID))

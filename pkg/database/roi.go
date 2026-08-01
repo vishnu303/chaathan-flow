@@ -435,30 +435,35 @@ func GetRankedURLs(scanID int64, limit int) ([]URLROI, error) {
 		}
 
 		// GF pattern match scoring
-		if patterns, ok := gfMatches[u.URL]; ok {
+		if matches, ok := gfMatches[u.URL]; ok {
 			signalCategories["gf_matches"] = true
-			for _, pattern := range patterns {
-				switch pattern {
+			for _, m := range matches {
+				// Confirmed secrets get a significant boost
+				confirmedBoost := 0
+				if m.Status == "confirmed" {
+					confirmedBoost = 20
+				}
+				switch m.Pattern {
 				case "rce", "rce-2":
-					addPoints(30, "gf matched: RCE pattern")
+					addPoints(30+confirmedBoost, "gf matched: RCE pattern")
 				case "sqli", "sqli-error":
-					addPoints(25, "gf matched: SQLi pattern")
+					addPoints(25+confirmedBoost, "gf matched: SQLi pattern")
 				case "ssrf":
-					addPoints(25, "gf matched: SSRF pattern")
+					addPoints(25+confirmedBoost, "gf matched: SSRF pattern")
 				case "ssti":
-					addPoints(25, "gf matched: SSTI pattern")
+					addPoints(25+confirmedBoost, "gf matched: SSTI pattern")
 				case "lfi":
-					addPoints(20, "gf matched: LFI pattern")
+					addPoints(20+confirmedBoost, "gf matched: LFI pattern")
 				case "idor":
-					addPoints(20, "gf matched: IDOR pattern")
+					addPoints(20+confirmedBoost, "gf matched: IDOR pattern")
 				case "xss":
-					addPoints(15, "gf matched: XSS pattern")
+					addPoints(15+confirmedBoost, "gf matched: XSS pattern")
 				case "redirect":
-					addPoints(12, "gf matched: open redirect pattern")
+					addPoints(12+confirmedBoost, "gf matched: open redirect pattern")
 				case "debug_logic":
-					addPoints(10, "gf matched: debug logic pattern")
+					addPoints(10+confirmedBoost, "gf matched: debug logic pattern")
 				default:
-					addPoints(8, fmt.Sprintf("gf matched: %s pattern", pattern))
+					addPoints(8+confirmedBoost, fmt.Sprintf("gf matched: %s pattern", m.Pattern))
 				}
 			}
 		}
@@ -1078,7 +1083,7 @@ func computeConfidence(categories map[string]bool) string {
 // computeAttackSurfaces tags a URL with the attack types it's most suitable
 // for, based on already-computed signals. This helps pentesters quickly triage
 // which tools to point at each target.
-func computeAttackSurfaces(roi *URLROI, meta mergedMetadata, gfPatterns []string) []string {
+func computeAttackSurfaces(roi *URLROI, meta mergedMetadata, gfPatterns []GFMatchResult) []string {
 	seen := make(map[string]bool)
 	add := func(tag string) {
 		if !seen[tag] {
@@ -1087,8 +1092,8 @@ func computeAttackSurfaces(roi *URLROI, meta mergedMetadata, gfPatterns []string
 	}
 
 	// Injection surfaces
-	for _, p := range gfPatterns {
-		switch p {
+	for _, m := range gfPatterns {
+		switch m.Pattern {
 		case "sqli", "sqli-error", "rce", "rce-2", "ssti", "lfi":
 			add("injection")
 		case "xss":

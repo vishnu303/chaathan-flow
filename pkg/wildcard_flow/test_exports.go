@@ -4,10 +4,11 @@ package wildcard_flow
 var PathKey = pathKey
 var URLROIScore = urlROIScore
 var ConvertX8ToURLs = convertX8ToURLs
-var FilterAndDeduplicateHosts = filterAndDeduplicateHosts
 var ShannonEntropy = shannonEntropy
 var IsLikelySecret = isLikelySecret
-var ExtractContext = extractContext
+var ExtractSecretContext = extractSecretContext
+var RankJSURLs = rankJSURLs
+var ExtractSubdomainsFromJS = extractSubdomainsFromJS
 var NucleiMaxTimeout = nucleiMaxTimeout
 var DalfoxMaxTimeout = dalfoxMaxTimeout
 

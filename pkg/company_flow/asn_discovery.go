@@ -22,15 +22,15 @@ func stepMetabigor(c *Ctx) (bool, error) {
 	if !c.SkipMetabigor {
 		logger.StepHeader("Step 1: ASN & Network Range Discovery (Metabigor)")
 		asnOut := filepath.Join(c.ResultDir, "asn_ranges.txt")
-		logger.SubStep("Running Metabigor for org: %s", c.Company)
+		logger.ToolStart("Metabigor")
 
 		if err := c.Tb.RunMetabigorNet(c.GoCtx, c.Company, asnOut); err != nil {
-			logger.Error("Metabigor failed: %v", err)
+			logger.ToolFail("Metabigor", err.Error())
 			c.Failed++
 			return c.cancelled(), err
 		} else {
 			count, _ := utils.CountFileLines(asnOut)
-			logger.Success("Found %d ASN/network ranges", count)
+			logger.Result(count, "ASN/network ranges found")
 			c.Completed++
 		}
 	} else {
