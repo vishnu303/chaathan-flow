@@ -181,7 +181,7 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 	}
 
 	if len(allJSURLs) == 0 {
-		logger.Info("  No JavaScript URLs found in crawler outputs")
+		logger.Info("No JavaScript files found in crawled content")
 		c.markStepCompleteIfNoFailure("js_deep_analysis")
 		return c.cancelled()
 	}
@@ -200,7 +200,7 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 		f.Close()
 	}
 
-	logger.Info("  Selected %d JavaScript URL(s) for deep analysis (priority-ranked)", len(allJSURLs))
+	logger.Info("Analyzing %d JavaScript files (priority-ranked)", len(allJSURLs))
 
 	// ── 14.2–14.3 Unified Fetch + Analyze ─────────────────────
 	cfg := c.jsAnalysisCfg()
@@ -288,7 +288,7 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 				// Progress log every 200 files
 				cur := atomic.AddInt64(&processed, 1)
 				if cur%200 == 0 || cur == totalJobs {
-					logger.Info("  JS fetch progress: %d/%d files processed", cur, totalJobs)
+					logger.Info("Progress: %d/%d JavaScript files analyzed", cur, totalJobs)
 				}
 
 				if body == nil {
@@ -411,7 +411,7 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 	if c.ScanID > 0 {
 		if len(endpoints) > 0 {
 			count, _ := ingest.ParseEndpointsFile(c.ScanID, c.F.JSEndpointsOut, "jsluice")
-			logger.Result(count, "endpoints from JS deep analysis")
+			logger.Result(count, "API endpoints extracted from JavaScript")
 		}
 		if len(secretFindings) > 0 {
 			var parsed []database.GFMatch
@@ -441,7 +441,7 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 				if err := database.MarkHostsJSSecrets(c.ScanID, hosts); err != nil {
 					logger.Warning("Failed to flag JS-secret hosts: %v", err)
 				} else {
-					logger.Info("  Flagged %d hosts with JS secrets for ROI boost", len(hosts))
+					logger.Info("Prioritized %d hosts with exposed secrets", len(hosts))
 				}
 			}
 		}
@@ -456,13 +456,13 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 	}
 	if len(secretFindings) > 0 {
 		if confirmedCount > 0 {
-			logger.Result(len(secretFindings), "secret findings (%d confirmed live)", confirmedCount)
+			logger.Result(len(secretFindings), "exposed secrets found (%d verified active)", confirmedCount)
 		} else {
-			logger.Result(len(secretFindings), "secret findings (unverified)")
+			logger.Result(len(secretFindings), "exposed secrets found (pending verification)")
 		}
 	}
 	if len(subdomains) > 0 {
-		logger.Result(len(subdomains), "new subdomains from JS content")
+		logger.Result(len(subdomains), "subdomains discovered in JavaScript source")
 	}
 
 	// Notify confirmed secrets as high-severity findings
@@ -488,7 +488,7 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 		filesFetched, mapsFetched, float64(totalBytes)/(1024*1024*1024), len(endpoints), len(secretFindings), len(subdomains))
 	_ = os.WriteFile(c.F.JSMetadataOut, []byte(meta), 0644)
 
-	logger.Info("  Fetched %d JS files (%.2f MB), %d source maps", filesFetched, float64(totalBytes)/(1024*1024), mapsFetched)
+	logger.Info("Processed %d JS files (%.2f MB) and %d source maps", filesFetched, float64(totalBytes)/(1024*1024), mapsFetched)
 
 	c.markStepCompleteIfNoFailure("js_deep_analysis")
 	return c.cancelled()

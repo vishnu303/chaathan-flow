@@ -35,7 +35,7 @@ import (
 // stepDNSConsolidation merges all passive sources and resolves them with DNSx.
 // Returns true if the scan should be cancelled.
 func stepDNSConsolidation(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("dns_resolution", "Step 6: Consolidation & DNS Resolution"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("dns_resolution", "Step 6: Subdomain Consolidation & DNS Validation"); skipped {
 		return cancelled
 	}
 	writeEmptyFile(c.F.DnsxOut)
@@ -79,7 +79,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 		}); err == nil {
 			afterCount, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
 			if filtered := subCount - afterCount; filtered > 0 {
-				logger.Info("  Filtered %d out-of-scope subdomains", filtered)
+				logger.Info("Scope filter: removed %d out-of-scope subdomains", filtered)
 				logger.FileDebug("scope filter: %d -> %d subdomains", subCount, afterCount)
 			}
 		}
@@ -109,7 +109,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 		}
 	}
 
-	logger.ToolStart("DNSx")
+	logger.ToolStart("dnsx")
 	logger.FileDebug("dnsx input: %s (%d lines) out=%s", c.F.ConsolidatedSubs, subCount, c.F.DnsxOut)
 
 	var dnsxSkipped bool
@@ -120,7 +120,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 			dnsxSkipped = true
 		} else {
 			c.markStepFailedSafe("dns_resolution", err)
-			logger.ToolFail("DNSx", err.Error())
+			logger.ToolFail("dnsx", err.Error())
 		}
 	}
 
@@ -162,7 +162,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			c.DNSWordlistPath = autoWl
 			logger.Info("Auto-detected SecLists DNS wordlist for ShuffleDNS: %s", autoWl)
 		} else {
-			logger.StepHeader("Step 7: Skipping ShuffleDNS (no --dns-wordlist provided and SecLists not found on device)")
+			logger.StepHeader("Step 7: Skipping DNS Brute-Force (no wordlist — run 'chaathan setup')")
 			logger.Info("Use --dns-wordlist or run 'chaathan setup' to install SecLists")
 			logger.FileDebug("shuffledns skipped: no --dns-wordlist provided and SecLists not found on device")
 			c.markStepCompleteIfNoFailure("dns_bruteforce")
@@ -175,7 +175,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 	// Validate DNS wordlist exists (may be a default config path like seclists)
 	if !utils.FileExists(c.DNSWordlistPath) {
 		logger.Warning("DNS wordlist not found: %s", c.DNSWordlistPath)
-		logger.Info("  Install seclists (apt install seclists / pacman -S seclists) or provide a valid --dns-wordlist path")
+		logger.Info("Install seclists (apt install seclists / pacman -S seclists) or provide a valid --dns-wordlist path")
 		logger.FileDebug("shuffledns skipped: wordlist does not exist at %s", c.DNSWordlistPath)
 		c.markStepCompleteIfNoFailure("dns_bruteforce")
 		return c.cancelled()
@@ -184,7 +184,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 	if c.ResolversPath != "" && !utils.FileExists(c.ResolversPath) {
 		// Resolvers file was explicitly provided but doesn't exist
 		logger.Warning("Resolvers file not found: %s", c.ResolversPath)
-		logger.Info("  Provide a valid --resolvers file path")
+		logger.Info("Provide a valid --resolvers file path")
 		logger.FileDebug("shuffledns skipped: resolvers file does not exist at %s", c.ResolversPath)
 		c.markStepCompleteIfNoFailure("dns_bruteforce")
 		return c.cancelled()
@@ -253,7 +253,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 // stepHTTPProbing probes all consolidated subdomains with Httpx.
 // Returns true if the scan should be cancelled.
 func stepHTTPProbing(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("http_probing", "Step 9: Live Web Server Probing"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("http_probing", "Step 9: HTTP Probing & Liveness Check"); skipped {
 		return cancelled
 	}
 	writeEmptyFile(c.F.HttpxOut)
@@ -270,7 +270,7 @@ func stepHTTPProbing(c *Ctx) bool {
 		return c.cancelled()
 	}
 
-	logger.ToolStart("Httpx")
+	logger.ToolStart("httpx")
 	hostInputCount, _ := utils.CountFileLines(c.F.HttpxInput)
 	logger.FileDebug("httpx input: %s (%d hosts) out=%s", c.F.HttpxInput, hostInputCount, c.F.HttpxOut)
 
@@ -282,7 +282,7 @@ func stepHTTPProbing(c *Ctx) bool {
 			httpxSkipped = true
 		} else {
 			c.markStepFailedSafe("http_probing", err)
-			logger.ToolFail("Httpx", err.Error())
+			logger.ToolFail("httpx", err.Error())
 		}
 	}
 
@@ -296,7 +296,7 @@ func stepHTTPProbing(c *Ctx) bool {
 		if httpxSkipped {
 			label = " (partial)"
 		}
-		logger.Result(count, "live hosts%s", label)
+		logger.Result(count, "live web servers confirmed%s", label)
 		logger.FileDebug("httpx output: %d live hosts -> %s", count, c.F.HttpxOut)
 	}
 
@@ -541,7 +541,7 @@ func (c *Ctx) filterSubsToScope(filePath string) {
 	}); err == nil {
 		afterCount, _ := utils.CountFileLines(filePath)
 		if filtered := subCount - afterCount; filtered > 0 {
-			logger.Info("  Filtered %d out-of-scope subdomains", filtered)
+			logger.Info("Scope filter: removed %d out-of-scope subdomains", filtered)
 			logger.FileDebug("scope filter (%s): %d -> %d subdomains", filePath, subCount, afterCount)
 		}
 	}

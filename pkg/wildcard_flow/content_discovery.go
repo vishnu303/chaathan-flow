@@ -104,9 +104,9 @@ func stepURLDiscovery(c *Ctx) bool {
 				if urlDiscoverySkipped {
 					label = " (partial)"
 				}
-				logger.Result(count, "historical URLs (Waybackurls)%s", label)
+				logger.Result(count, "archived URLs via Wayback Machine%s", label)
 			} else if !urlDiscoverySkipped {
-				logger.Result(0, "historical URLs (Waybackurls)")
+				logger.Result(0, "archived URLs via Wayback Machine")
 			}
 		}
 		if utils.FileExists(c.F.GauOut) {
@@ -116,9 +116,9 @@ func stepURLDiscovery(c *Ctx) bool {
 				if urlDiscoverySkipped {
 					label = " (partial)"
 				}
-				logger.Result(count, "historical URLs (GAU)%s", label)
+				logger.Result(count, "archived URLs via GAU%s", label)
 			} else if !urlDiscoverySkipped {
-				logger.Result(0, "historical URLs (GAU)")
+				logger.Result(0, "archived URLs via GAU")
 			}
 		}
 	}
@@ -215,9 +215,9 @@ func stepWebCrawling(c *Ctx) bool {
 				if crawlSkipped {
 					label = " (partial)"
 				}
-				logger.Result(count, "crawled URLs (Katana)%s", label)
+				logger.Result(count, "URLs crawled by Katana%s", label)
 			} else if !crawlSkipped {
-				logger.Result(0, "crawled URLs (Katana)")
+				logger.Result(0, "URLs crawled by Katana")
 			}
 		}
 		if utils.FileExists(c.F.GospiderOut) {
@@ -227,9 +227,9 @@ func stepWebCrawling(c *Ctx) bool {
 				if crawlSkipped {
 					label = " (partial)"
 				}
-				logger.Result(count, "crawled URLs (GoSpider)%s", label)
+				logger.Result(count, "URLs crawled by GoSpider%s", label)
 			} else if !crawlSkipped {
-				logger.Result(0, "crawled URLs (GoSpider)")
+				logger.Result(0, "URLs crawled by GoSpider")
 			}
 		}
 	}
@@ -335,7 +335,7 @@ func stepParamDiscovery(c *Ctx) bool {
 		if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" {
 			logger.Warning("x8 parameters wordlist not found: %s", c.Cfg.General.Wordlists.Parameters)
 		}
-		logger.Info("  SecLists parameter wordlist not found on device — falling back to x8's built-in parameter list")
+		logger.Info("SecLists parameter wordlist not found on device — falling back to x8's built-in parameter list")
 	}
 
 	var x8Skipped bool
@@ -357,9 +357,9 @@ func stepParamDiscovery(c *Ctx) bool {
 		if x8Skipped {
 			label = " (partial)"
 		}
-		logger.Result(count, "parameterized URLs from x8%s", label)
+		logger.Result(count, "hidden parameters discovered%s", label)
 		if stored > 0 {
-			logger.Info("  Stored x8 param counts for %d URLs%s", stored, label)
+			logger.Info("Stored x8 param counts for %d URLs%s", stored, label)
 		}
 	}
 
@@ -497,7 +497,7 @@ func stepURLConsolidation(c *Ctx) bool {
 		logger.Warning("URL sanitization failed: %v", err)
 	}
 	rawCount, _ := utils.CountFileLines(c.F.AllURLsRaw)
-	logger.Info("  Merged %d unique URLs", rawCount)
+	logger.Info("Consolidated %d unique URLs from all sources", rawCount)
 	logger.FileDebug("url_consolidation merged %d raw URLs -> %s", rawCount, c.F.AllURLsRaw)
 
 	// Live-check all URLs with httpx
@@ -519,7 +519,7 @@ func stepURLConsolidation(c *Ctx) bool {
 		// fresh output exists from this scan session.
 		if !utils.FileExists(c.F.AllURLsLive) || !fileModifiedAfter(c.F.AllURLsLive, c.StartTime) {
 			usedFallback = true
-			logger.Info("  Using raw URLs as fallback")
+			logger.Info("Live-check unavailable — using unverified URLs")
 			copyFile(c.F.AllURLsRaw, c.F.AllURLsLive)
 		}
 	} else {
@@ -540,7 +540,7 @@ func stepURLConsolidation(c *Ctx) bool {
 			} else if urlCheckSkipped {
 				label = " (partial)"
 			}
-			logger.Result(dbCount, "live URLs consolidated%s", label)
+			logger.Result(dbCount, "verified live URLs consolidated%s", label)
 		}
 	}
 
@@ -578,7 +578,7 @@ func stepDirFuzzing(c *Ctx) bool {
 			c.WordlistPath = autoWl
 			logger.Info("Auto-detected SecLists wordlist for ffuf: %s", autoWl)
 		} else {
-			logger.StepHeader("Step 14: Skipping ffuf (no wordlist provided and SecLists not found on device)")
+			logger.StepHeader("Step 14: Skipping Directory Fuzzing (no wordlist — run 'chaathan setup')")
 			logger.Info("Provide --wordlist or run 'chaathan setup' to install SecLists")
 			c.markStepCompleteIfNoFailure("dir_fuzzing")
 			return c.cancelled()
@@ -594,7 +594,7 @@ func stepDirFuzzing(c *Ctx) bool {
 	// Validate wordlist file exists before invoking ffuf.
 	if !utils.FileExists(c.WordlistPath) {
 		logger.Warning("ffuf wordlist not found: %s", c.WordlistPath)
-		logger.Info("  Install seclists (apt install seclists / pacman -S seclists) or provide a valid --wordlist path")
+		logger.Info("Install seclists (apt install seclists / pacman -S seclists) or provide a valid --wordlist path")
 		logger.FileDebug("ffuf skipped: wordlist does not exist at %s", c.WordlistPath)
 		c.markStepCompleteIfNoFailure("dir_fuzzing")
 		return c.cancelled()
@@ -707,9 +707,9 @@ func stepDirFuzzing(c *Ctx) bool {
 				if ffufSkipped {
 					label = " (partial)"
 				}
-				logger.Result(count, "directory discoveries (ffuf)%s", label)
+				logger.Result(count, "hidden paths discovered via fuzzing%s", label)
 			} else if !ffufSkipped {
-				logger.Result(0, "directory discoveries (ffuf)")
+				logger.Result(0, "hidden paths discovered via fuzzing")
 			}
 		}
 	}

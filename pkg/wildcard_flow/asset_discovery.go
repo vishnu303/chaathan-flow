@@ -108,7 +108,7 @@ func stepPassiveEnum(c *Ctx) bool {
 		if passiveSkipped {
 			label = " (partial)"
 		}
-		logger.Result(totalPassive, "subdomains found%s", label)
+		logger.Result(totalPassive, "subdomains from passive sources%s", label)
 	}
 
 	subfinderCount, _ := utils.CountFileLines(c.F.SubfinderOut)
@@ -178,7 +178,7 @@ func stepActiveEnum(c *Ctx) bool {
 // Returns true if the scan should be cancelled.
 func stepGitHubRecon(c *Ctx) bool {
 	if c.GitHubToken == "" {
-		logger.StepHeader("Step 4: Skipping GitHub Recon (no token provided)")
+		logger.StepHeader("Step 4: Skipping GitHub Recon (set api_keys.github or --github-token)")
 		logger.Warning("Set api_keys.github in config.yaml or pass --github-token flag for GitHub recon")
 		logger.FileDebug("github_recon skipped: no token provided")
 		c.markStepCompleteIfNoFailure("github_recon")
@@ -227,7 +227,7 @@ func stepGitHubRecon(c *Ctx) bool {
 // stepSearchEngineRecon runs Uncover unless --skip-uncover is set.
 // Returns true if the scan should be cancelled.
 func stepSearchEngineRecon(c *Ctx) bool {
-	if skipped, cancelled := c.resumeOrSkip("search_engine_recon", "Step 5: Passive Search Engine Recon (Uncover)"); skipped {
+	if skipped, cancelled := c.resumeOrSkip("search_engine_recon", "Step 5: Search Engine Dorking"); skipped {
 		return cancelled
 	}
 
@@ -259,7 +259,7 @@ func stepSearchEngineRecon(c *Ctx) bool {
 		if uncoverSkipped {
 			label = " (partial)"
 		}
-		logger.Result(subs, "hosts from search engines (%d open ports)%s", ports, label)
+		logger.Result(subs, "hosts via search engine dorking (%d open ports discovered)%s", ports, label)
 	}
 
 	// Extract hostnames into a plain-text file so DNS consolidation can merge them

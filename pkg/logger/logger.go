@@ -281,7 +281,14 @@ func Print(format string, args ...any) {
 // Info prints a styled info message
 func Info(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s %s\n", Dim, Reset, msg))
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s\n", Dim, Reset, msg))
+}
+
+// StepDone prints a dim completion line marking the end of a scan step with
+// the step's elapsed duration. Call it once per step after the step function
+// returns (skip it for steps that were resumed rather than executed).
+func StepDone(elapsed time.Duration) {
+	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s✓%s %sdone %s%s\n", Dim, Reset, BrightGreen, Reset, Dim, fmtElapsed(elapsed), Reset))
 }
 
 // Success prints a styled success message
@@ -388,9 +395,18 @@ func StepHeader(format string, args ...any) {
 }
 
 // PhaseBanner prints a phase separator during scan workflows. Call this
-// when transitioning between scan phases.
-func PhaseBanner(num int, name string) {
+// when transitioning between scan phases. stepRange (e.g. "Steps 2–5") and
+// elapsed (time spent in the preceding phase) are optional — pass an empty
+// range and zero duration to omit them. The first phase banner typically
+// omits elapsed since nothing preceded it.
+func PhaseBanner(num int, name string, stepRange string, elapsed time.Duration) {
 	label := fmt.Sprintf(" PHASE %d · %s ", num, strings.ToUpper(name))
+	if stepRange != "" {
+		label += "· " + stepRange + " "
+	}
+	if elapsed > 0 {
+		label += "· " + FmtDuration(elapsed) + " "
+	}
 	fill := 56 - utf8.RuneCountInString(label) - 3
 	if fill < 4 {
 		fill = 4
