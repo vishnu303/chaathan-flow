@@ -515,7 +515,7 @@ func DefaultConfig() *Config {
 			Httpx: HttpxConfig{
 				Threads:         50,
 				Timeout:         10,
-				Ports:           []string{"80", "443", "8080", "8443", "8000", "8888"},
+				Ports:           []string{"80", "443", "8080", "8443", "8000", "8888", "3000", "9090", "4443", "5000"},
 				FollowRedirects: true,
 			},
 			Naabu: NaabuConfig{

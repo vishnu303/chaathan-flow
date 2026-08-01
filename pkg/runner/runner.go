@@ -404,13 +404,13 @@ var dockerImages = map[string]dockerImageInfo{
 	"github-subdomains": {"gwen001/github-subdomains", false},
 
 	// No official Docker image — alpine fallback (won't work without custom image)
-	"sublist3r":  {"alpine", false},           // Python script — no official image
-	"cloud_enum": {"alpine", false},           // Python script — no official image
-	"massdns":    {"alpine", false},           // compiled from source
-	"anew":       {"alpine", false},           // tiny Go binary — unlikely to need Docker
-	"gf":         {"alpine", false},           // tiny Go binary — unlikely to need Docker
-	"x8":         {"alpine", false},           // Rust binary — no official Docker image
-	"mubeng":     {"alpine", false},           // Go binary — no official Docker image
+	"sublist3r":  {"alpine", false}, // Python script — no official image
+	"cloud_enum": {"alpine", false}, // Python script — no official image
+	"massdns":    {"alpine", false}, // compiled from source
+	"anew":       {"alpine", false}, // tiny Go binary — unlikely to need Docker
+	"gf":         {"alpine", false}, // tiny Go binary — unlikely to need Docker
+	"x8":         {"alpine", false}, // Rust binary — no official Docker image
+	"mubeng":     {"alpine", false}, // Go binary — no official Docker image
 }
 
 func getDockerImage(tool string) string {

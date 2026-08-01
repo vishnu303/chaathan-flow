@@ -508,6 +508,7 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 	args := []string{
 		"-d", domain,
 		"-silent",
+		"-all",
 		"-t", strconv.Itoa(t.subfinderThreads()),
 		"-timeout", strconv.Itoa(t.subfinderTimeout()),
 		"-o", outputFile,
@@ -558,7 +559,7 @@ func (t *ToolBox) RunAssetfinder(ctx context.Context, domain string, outputFile 
 // Note: Sublist3r is a python tool, and the docker image (alpine) doesn't have python.
 // Therefore, Sublist3r runs natively only; docker runner will fail due to lack of python in the alpine base.
 func (t *ToolBox) RunSublist3r(ctx context.Context, domain string, outputFile string) error {
-	args := []string{"-d", domain, "-t", "50", "-v", "-o", outputFile}
+	args := []string{"-d", domain, "-t", "50", "-o", outputFile}
 	_, err := t.Runner.Run(ctx, "sublist3r", args, runner.WithTimeout(sublist3rMaxTimeout))
 	return err
 }
@@ -585,7 +586,13 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 }
 
 func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) error {
-	args := []string{"--providers", "wayback,commoncrawl,otx,urlscan", "--subs", domain}
+	args := []string{
+		"--providers", "wayback,commoncrawl,otx,urlscan",
+		"--subs",
+		"--threads", "3",
+		"--blacklist", "png,jpg,jpeg,gif,svg,ico,css,woff,woff2,ttf,eot",
+		domain,
+	}
 	args = t.appendProxy(args, "--proxy")
 	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(gauMaxTimeout))
 	// Keep only absolute http(s) URL lines — gau may print warnings to stdout.
@@ -606,6 +613,7 @@ func (t *ToolBox) RunDnsx(ctx context.Context, inputFile string, outputFile stri
 		"-a", "-aaaa", "-cname", "-mx", "-txt", "-resp", "-json",
 		"-timeout", "3", // seconds per DNS query
 		"-retry", "2", // retry failed queries twice before giving up
+		"-wt", "5", // wildcard detection threshold
 		"-o", outputFile,
 	}
 	_, err := t.Runner.Run(ctx, "dnsx", args)
@@ -620,7 +628,7 @@ func (t *ToolBox) RunHttpx(ctx context.Context, domainsFile string, outputFile s
 		"-ports", t.httpxPorts(),
 		"-threads", strconv.Itoa(t.httpxThreads()),
 		"-timeout", strconv.Itoa(t.httpxTimeout()),
-		"-tech-detect", "-title", "-status-code", "-json",
+		"-tech-detect", "-title", "-status-code", "-content-length", "-web-server", "-json",
 		"-o", outputFile,
 	}
 	if t.Config != nil && t.Config.Httpx.FollowRedirects {
@@ -647,6 +655,7 @@ func (t *ToolBox) RunNaabuList(ctx context.Context, inputFile string, outputFile
 		"-rate", strconv.Itoa(t.effectiveRate(t.naabuRate())),
 		"-c", strconv.Itoa(t.naabuThreads()),
 		"-timeout", "3", // seconds per probe; prevents hanging on filtered ports
+		"-exclude-cdn",
 		"-o", outputFile,
 	}
 	// Use explicit port list if configured, otherwise use -top-ports
@@ -671,7 +680,7 @@ func (t *ToolBox) RunNaabuList(ctx context.Context, inputFile string, outputFile
 // --- Web Crawling & Fuzzing ---
 
 func (t *ToolBox) RunGoSpider(ctx context.Context, inputFile string, outputFile string) error {
-	args := []string{"-S", inputFile, "-q", "-c", "10", "-d", "3", "-t", "10"} // -t = per-request timeout (seconds)
+	args := []string{"-S", inputFile, "-q", "-c", "10", "-d", "3", "-t", "10", "--include-subs"} // -t = per-request timeout (seconds)
 	args = t.appendGoSpiderUA(args)
 	output, err := t.Runner.Run(ctx, "gospider", args, runner.WithTimeout(t.goSpiderMaxTimeout()))
 	// Keep only absolute http(s) URL lines — gospider may emit tagged lines and
@@ -690,6 +699,10 @@ func (t *ToolBox) RunKatana(ctx context.Context, inputFile string, outputFile st
 		"-list", inputFile,
 		"-o", outputFile,
 		"-jc",
+		"-d", "3",
+		"-aff",
+		"-kf", "all",
+		"-c", "10",
 		"-timeout", "15", // seconds per request; extra headroom for proxy pools
 	}
 	args = t.appendCommon(args, appendOptions{
@@ -713,6 +726,8 @@ func (t *ToolBox) buildFfufArgs(url string, wordlist string, outputFile string) 
 		"-u", url,
 		"-w", wordlist,
 		"-mc", t.ffufMatchCodes(),
+		"-fc", "404",
+		"-ac", // auto-calibrate: detect and filter uniform responses
 		"-o", outputFile,
 		"-of", "json",
 		"-t", strconv.Itoa(t.ffufThreads()),
@@ -1051,6 +1066,7 @@ func (t *ToolBox) RunUncover(ctx context.Context, domain string, outputFile stri
 		"-json",
 		"-silent",
 		"-e", strings.Join(engines, ","),
+		"-limit", "200",
 	}
 
 	var opts []runner.Option
