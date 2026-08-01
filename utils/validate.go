@@ -2,8 +2,10 @@ package utils
 
 import (
 	"fmt"
+	neturl "net/url"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // domainRegex validates a standard domain name format.
@@ -25,6 +27,22 @@ func ValidateDomain(domain string) error {
 		return fmt.Errorf("invalid domain format: %q — expected something like example.com", domain)
 	}
 	return nil
+}
+
+// IsValidHTTPURL reports whether s is an absolute http(s) URL with a hostname.
+// Used to keep banner/progress/error noise emitted by crawlers out of URL
+// files and the database.
+func IsValidHTTPURL(s string) bool {
+	parsed, err := neturl.Parse(strings.TrimSpace(s))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return false
+	}
+	return parsed.Hostname() != ""
 }
 
 // ParseScanID parses a string argument into a positive int64 scan ID.

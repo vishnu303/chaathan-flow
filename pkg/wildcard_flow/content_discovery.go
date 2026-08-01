@@ -14,10 +14,10 @@ package wildcard_flow
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -587,6 +587,9 @@ func stepDirFuzzing(c *Ctx) bool {
 
 	writeEmptyFile(c.F.FfufOut)
 	writeEmptyFile(c.F.FfufDiscoveredURLs)
+	// Remove leftover ffuf temp files from aborted runs so stale results are
+	// never parsed into the current scan.
+	cleanupFfufTmpFiles(c.F.FfufOut)
 
 	// Validate wordlist file exists before invoking ffuf.
 	if !utils.FileExists(c.WordlistPath) {
@@ -633,7 +636,15 @@ func stepDirFuzzing(c *Ctx) bool {
 			}
 			targetURL += "FUZZ"
 
-			tmpFfufOut := filepath.Join(filepath.Dir(c.F.FfufOut), fmt.Sprintf("ffuf_tmp_%d.json", rand.IntN(1000000)))
+			// Unique per-host temp file: os.CreateTemp guarantees no collision
+			// with stale files from aborted runs.
+			tmpFfuf, tmpErr := os.CreateTemp(filepath.Dir(c.F.FfufOut), "ffuf_tmp_*.json")
+			if tmpErr != nil {
+				logger.Warning("ffuf: cannot create temp output file: %v", tmpErr)
+				continue
+			}
+			tmpFfufOut := tmpFfuf.Name()
+			tmpFfuf.Close() // ffuf manages the file itself
 
 			logger.FileDebug("ffuf input: target=%s wordlist=%s out=%s", targetURL, c.WordlistPath, tmpFfufOut)
 			if err := c.Tb.RunFfufWithFUZZ(sCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
@@ -705,6 +716,18 @@ func stepDirFuzzing(c *Ctx) bool {
 
 	c.markStepCompleteIfNoFailure("dir_fuzzing")
 	return c.cancelled()
+}
+
+// cleanupFfufTmpFiles removes leftover ffuf temp files (ffuf_tmp_*.json) from
+// aborted runs in the same directory as referenceFile.
+func cleanupFfufTmpFiles(referenceFile string) {
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(referenceFile), "ffuf_tmp_*.json"))
+	if err != nil {
+		return
+	}
+	for _, m := range matches {
+		_ = os.Remove(m)
+	}
 }
 
 // collectJSURLsFromFile filters live URLs for JavaScript files, deduplicates
@@ -803,6 +826,52 @@ type x8FoundParameter struct {
 	Name string `json:"name"`
 }
 
+// parseX8Results tolerantly parses x8 JSON output. x8 normally emits one JSON
+// object per line; retried, truncated, or noise-polluted runs can leave the
+// file as multiple concatenated documents or a partial trailing line, which
+// breaks whole-file unmarshalling. We try the whole file first, then fall back
+// to per-line extraction, deduplicating by URL in both paths.
+func parseX8Results(data []byte) []x8Result {
+	var results []x8Result
+	if err := json.Unmarshal(data, &results); err == nil {
+		return dedupeX8Results(results)
+	}
+
+	var out []x8Result
+	seen := make(map[string]bool)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var single x8Result
+		if err := json.Unmarshal([]byte(line), &single); err != nil {
+			continue
+		}
+		if single.URL == "" || seen[single.URL] {
+			continue
+		}
+		seen[single.URL] = true
+		out = append(out, single)
+	}
+	return out
+}
+
+// dedupeX8Results removes duplicate entries (by URL) from parsed x8 results.
+func dedupeX8Results(results []x8Result) []x8Result {
+	seen := make(map[string]bool, len(results))
+	out := results[:0]
+	for _, r := range results {
+		if r.URL == "" || seen[r.URL] {
+			continue
+		}
+		seen[r.URL] = true
+		out = append(out, r)
+	}
+	return out
+}
+
 // convertX8ToURLs parses x8's JSON output and writes parameterized URLs
 // to outputFile.
 func convertX8ToURLs(x8JSON, outputFile string) int {
@@ -815,11 +884,7 @@ func convertX8ToURLs(x8JSON, outputFile string) int {
 		return 0
 	}
 
-	var results []x8Result
-	if err := json.Unmarshal(data, &results); err != nil {
-		logger.Warning("Failed to parse x8 JSON: %v", err)
-		return 0
-	}
+	results := parseX8Results(data)
 
 	f, err := os.Create(outputFile)
 	if err != nil {
@@ -868,10 +933,7 @@ func storeX8ParamCounts(scanID int64, x8JSON string) int {
 		return 0
 	}
 
-	var results []x8Result
-	if err := json.Unmarshal(data, &results); err != nil {
-		return 0
-	}
+	results := parseX8Results(data)
 
 	stored := 0
 	for _, r := range results {

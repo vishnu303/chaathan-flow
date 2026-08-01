@@ -512,6 +512,10 @@ func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 	count := 0
 
 	err := scanTextLines(filePath, func(line string) {
+		// Drop banner/progress/error noise: only absolute http(s) URLs are stored.
+		if !utils.IsValidHTTPURL(line) {
+			return
+		}
 		if targetDomain != "" && !isURLInScope(line, targetDomain) {
 			return
 		}

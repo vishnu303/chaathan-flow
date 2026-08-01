@@ -70,7 +70,7 @@ Phase 5: Fingerprinting (Step 21)      ──► Output: WAF/Tech JSON
 - **Step 16: `url_consolidation`** (httpx live URL validation and ROI metadata collection).
 
 ### Phase 4 — Vulnerability Scanning (`vulnerability_scanning.go`)
-- **Step 17: `takeover_detection`** (Nuclei takeover checking on CNAME-filtered subdomains; runs first in Phase 4 for early alerts).
+- **Step 17: `takeover_detection`** (Nuclei takeover checking on CNAME-filtered subdomains; runs first in Phase 4 for early alerts). CNAME data is refreshed into `intermediate_files/dnsx_cname_refresh.json` (never clobbers Step-6 `dnsx_resolved.json`); falls back to `dnsx_resolved.json` if the refresh yields 0 CNAME records.
 - **Step 18: `vuln_scanning`** (Nuclei infra scan: CVE check + misconfigs).
 - **Step 19: `vuln_scanning_urls`** (Nuclei DAST fuzzing mode on consolidated URL lists).
 - **Step 20: `xss_scanning`** (dalfox parameter fuzzing; skip with `--skip-dalfox`).

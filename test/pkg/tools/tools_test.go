@@ -438,3 +438,147 @@ func TestWriteToFileHarden(t *testing.T) {
 		t.Errorf("expected file content to be 'hello world', got %q", string(content))
 	}
 }
+
+func TestStdoutNoiseFiltering(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+
+	t.Run("gau keeps only http(s) URL lines", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{Default: "banner noise\nhttps://example.com/a\n[WARN] rate limited\nhttp://example.com/b\n"}
+		tb := tools.New(dr)
+		out := filepath.Join(tempDir, "gau.txt")
+		if err := tb.RunGau(ctx, "example.com", out); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(out)
+		got := string(data)
+		if strings.Contains(got, "banner noise") || strings.Contains(got, "[WARN]") {
+			t.Errorf("noise leaked into gau output file: %q", got)
+		}
+		if !strings.Contains(got, "https://example.com/a") || !strings.Contains(got, "http://example.com/b") {
+			t.Errorf("valid URLs missing from gau output file: %q", got)
+		}
+	})
+
+	t.Run("gospider drops tagged and progress lines", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{Default: "[+] Crawling: https://example.com/\n[js] https://cdn.example.com/app.js\nhttps://example.com/valid\n"}
+		tb := tools.New(dr)
+		out := filepath.Join(tempDir, "gospider.txt")
+		if err := tb.RunGoSpider(ctx, "hosts.txt", out); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(out)
+		got := string(data)
+		if strings.Contains(got, "[+]") || strings.Contains(got, "[js]") {
+			t.Errorf("tagged noise leaked into gospider output file: %q", got)
+		}
+		if !strings.Contains(got, "https://example.com/valid") {
+			t.Errorf("valid URL missing from gospider output file: %q", got)
+		}
+	})
+
+	t.Run("waybackurls keeps only http(s) URL lines", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{Default: "fetching from wayback...\nhttps://example.com/historic\n"}
+		tb := tools.New(dr)
+		out := filepath.Join(tempDir, "wayback.txt")
+		if err := tb.RunWaybackurls(ctx, "example.com", out); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(out)
+		got := string(data)
+		if strings.Contains(got, "fetching from wayback") {
+			t.Errorf("noise leaked into wayback output file: %q", got)
+		}
+		if !strings.Contains(got, "https://example.com/historic") {
+			t.Errorf("valid URL missing from wayback output file: %q", got)
+		}
+	})
+
+	t.Run("assetfinder keeps only valid domains", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{Default: "assetfinder v1.0\nwww.example.com\nbad line here\nsub.example.com\n"}
+		tb := tools.New(dr)
+		out := filepath.Join(tempDir, "assetfinder.txt")
+		if err := tb.RunAssetfinder(ctx, "example.com", out); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(out)
+		got := string(data)
+		if strings.Contains(got, "assetfinder v1.0") || strings.Contains(got, "bad line here") {
+			t.Errorf("noise leaked into assetfinder output file: %q", got)
+		}
+		if !strings.Contains(got, "www.example.com") || !strings.Contains(got, "sub.example.com") {
+			t.Errorf("valid domains missing from assetfinder output file: %q", got)
+		}
+	})
+
+	t.Run("jsluice keeps only JSON lines", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{Default: "warning: something\n{\"url\":\"https://example.com/app.js\",\"method\":\"GET\"}\n"}
+		tb := tools.New(dr)
+		out := filepath.Join(tempDir, "jsluice.json")
+		if err := tb.RunJsluiceURLs(ctx, "app.js", out); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(out)
+		got := string(data)
+		if strings.Contains(got, "warning:") {
+			t.Errorf("noise leaked into jsluice output file: %q", got)
+		}
+		if !strings.Contains(got, "https://example.com/app.js") {
+			t.Errorf("valid JSON missing from jsluice output file: %q", got)
+		}
+	})
+}
+
+func TestScannerRunsUseNoRetry(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("nuclei scanner disables retries", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{}
+		tb := tools.New(dr)
+		s, err := tb.GetScanner("nuclei")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = s.Scan(ctx, "targets.txt", "out.json", tools.ScanOptions{Mode: "smart-cve"})
+		if dr.LastCmd != "nuclei" {
+			t.Fatalf("expected nuclei command, got %q", dr.LastCmd)
+		}
+		if opts := dr.GetOptions(); !opts.NoRetry {
+			t.Error("expected NoRetry set on nuclei scan run")
+		}
+	})
+
+	t.Run("dalfox scanner disables retries", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{}
+		tb := tools.New(dr)
+		s, err := tb.GetScanner("dalfox")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = s.Scan(ctx, "params.txt", "out.json", tools.ScanOptions{})
+		if dr.LastCmd != "dalfox" {
+			t.Fatalf("expected dalfox command, got %q", dr.LastCmd)
+		}
+		if opts := dr.GetOptions(); !opts.NoRetry {
+			t.Error("expected NoRetry set on dalfox scan run")
+		}
+	})
+
+	t.Run("x8 disables retries", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{}
+		tb := tools.New(dr)
+		_ = tb.RunX8(ctx, "input.txt", "out.json")
+		if opts := dr.GetOptions(); !opts.NoRetry {
+			t.Error("expected NoRetry set on x8 run")
+		}
+	})
+
+	t.Run("nuclei WAF run disables retries", func(t *testing.T) {
+		dr := &runnerfaketest.DummyRunner{}
+		tb := tools.New(dr)
+		_ = tb.RunNucleiWAF(ctx, "hosts.txt", "out.json")
+		if opts := dr.GetOptions(); !opts.NoRetry {
+			t.Error("expected NoRetry set on nuclei WAF run")
+		}
+	})
+}

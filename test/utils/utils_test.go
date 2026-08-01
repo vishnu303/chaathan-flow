@@ -644,6 +644,87 @@ https://other.org/b
 	}
 }
 
+func TestParseURLsFile_NoiseIgnored(t *testing.T) {
+	scanID, tempDir := setupTestDB(t)
+
+	content := `[js] https://cdn.example.com/app.js
+[+] Crawling: https://example.com/
+Looking for subdomains of example.com...
+https://example.com/a
+https://other.org/b
+relative/path.js
+example.com/bare-domain
+https://example.com/valid?q=1
+`
+	filePath := filepath.Join(tempDir, "noisy_urls.txt")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := ingest.ParseURLsFile(scanID, filePath, "test")
+	if err != nil {
+		t.Fatalf("ParseURLsFile error: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("expected 2 in-scope URL lines (noise dropped), got %d", count)
+	}
+
+	urls, err := database.GetURLs(scanID)
+	if err != nil {
+		t.Fatalf("GetURLs error: %v", err)
+	}
+	if len(urls) != 2 {
+		t.Fatalf("expected 2 URLs in database, got %d", len(urls))
+	}
+	for _, u := range urls {
+		if u.URL == "[js] https://cdn.example.com/app.js" ||
+			u.URL == "[+] Crawling: https://example.com/" ||
+			u.URL == "Looking for subdomains of example.com..." ||
+			u.URL == "relative/path.js" ||
+			u.URL == "example.com/bare-domain" {
+			t.Errorf("noise line leaked into database: %q", u.URL)
+		}
+	}
+}
+
+func TestIsValidHTTPURL(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"https://example.com/a", true},
+		{"http://example.com", true},
+		{"https://sub.example.com/path?q=1", true},
+		{"  https://example.com/spaced  ", true},
+		{"[js] https://cdn.example.com/app.js", false},
+		{"[+] Crawling: https://example.com/", false},
+		{"Looking for subdomains of example.com...", false},
+		{"example.com/bare-domain", false},
+		{"relative/path.js", false},
+		{"ftp://example.com/file", false},
+		{"https://", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := utils.IsValidHTTPURL(tt.in); got != tt.want {
+			t.Errorf("IsValidHTTPURL(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestFilterOutputLines(t *testing.T) {
+	output := "banner line\nhttps://example.com/a\n\n[js] https://x.com/b.js\n"
+	kept := utils.FilterOutputLines(output, utils.IsValidHTTPURL)
+	want := "https://example.com/a\n"
+	if kept != want {
+		t.Errorf("FilterOutputLines = %q, want %q", kept, want)
+	}
+
+	if got := utils.FilterOutputLines("only noise\n", utils.IsValidHTTPURL); got != "" {
+		t.Errorf("expected empty result for all-noise output, got %q", got)
+	}
+}
+
 func TestParseEndpointsFile(t *testing.T) {
 	scanID, tempDir := setupTestDB(t)
 

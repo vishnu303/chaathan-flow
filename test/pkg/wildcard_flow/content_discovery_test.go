@@ -1,6 +1,9 @@
 package wildcard_flow_test
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/vishnu303/chaathan/pkg/config"
@@ -68,6 +71,78 @@ func TestExtractSubdomainsFromJS(t *testing.T) {
 	if found["other.domain.com"] {
 		t.Error("other.domain.com should not be extracted (different domain)")
 	}
+}
+
+func TestConvertX8ToURLs_NoisyAndTruncatedJSON(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	validJSON := `[
+		{"method": "GET", "url": "https://example.com/search", "found_params": [{"name": "q"}, {"name": "page"}]},
+		{"method": "POST", "url": "https://example.com/api", "found_params": [{"name": "token"}]}
+	]`
+
+	t.Run("valid array parses", func(t *testing.T) {
+		in := write("valid.json", validJSON)
+		out := filepath.Join(dir, "valid_urls.txt")
+		count := wildcard_flow.ConvertX8ToURLs(in, out)
+		if count != 2 {
+			t.Fatalf("expected 2 URLs, got %d", count)
+		}
+		data, _ := os.ReadFile(out)
+		if !strings.Contains(string(data), "https://example.com/search?q=1&page=1") {
+			t.Errorf("missing parameterized URL in output: %s", data)
+		}
+	})
+
+	t.Run("concatenated JSONL with noise still parses", func(t *testing.T) {
+		content := `{"method": "GET", "url": "https://example.com/a", "found_params": [{"name": "id"}]}
+garbage line that is not json
+{"method": "GET", "url": "https://example.com/b", "found_params": [{"name": "x"}]}`
+		in := write("jsonl.json", content)
+		out := filepath.Join(dir, "jsonl_urls.txt")
+		count := wildcard_flow.ConvertX8ToURLs(in, out)
+		if count != 2 {
+			t.Fatalf("expected 2 URLs from JSONL, got %d", count)
+		}
+	})
+
+	t.Run("truncated trailing line is skipped", func(t *testing.T) {
+		content := `{"method": "GET", "url": "https://example.com/c", "found_params": [{"name": "z"}]}
+{"method": "GET", "url": "https://example.com/d", "found_par`
+		in := write("truncated.json", content)
+		out := filepath.Join(dir, "truncated_urls.txt")
+		count := wildcard_flow.ConvertX8ToURLs(in, out)
+		if count != 1 {
+			t.Fatalf("expected 1 URL from truncated file, got %d", count)
+		}
+	})
+
+	t.Run("duplicate URLs are deduplicated", func(t *testing.T) {
+		content := `{"method": "GET", "url": "https://example.com/dup", "found_params": [{"name": "a"}]}
+{"method": "GET", "url": "https://example.com/dup", "found_params": [{"name": "b"}]}`
+		in := write("dup.json", content)
+		out := filepath.Join(dir, "dup_urls.txt")
+		count := wildcard_flow.ConvertX8ToURLs(in, out)
+		if count != 1 {
+			t.Fatalf("expected 1 URL after dedup, got %d", count)
+		}
+	})
+
+	t.Run("all-noise file yields zero", func(t *testing.T) {
+		in := write("noise.json", "not json at all\nmore noise\n")
+		out := filepath.Join(dir, "noise_urls.txt")
+		count := wildcard_flow.ConvertX8ToURLs(in, out)
+		if count != 0 {
+			t.Fatalf("expected 0 URLs from noise file, got %d", count)
+		}
+	})
 }
 
 func TestJSAnalysisConfigDefaults(t *testing.T) {

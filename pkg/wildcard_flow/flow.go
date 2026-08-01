@@ -133,6 +133,7 @@ type Files struct {
 	NucleiMisconfigOut  string
 	NucleiDASTOut       string
 	TakeoverCandidates  string
+	CnameRefreshOut     string // dedicated dnsx CNAME refresh (never clobbers DnsxOut)
 	ProxyScrapingConfig string // intermediate_files/proxy_scraping_config.toml
 	ProxyPool           string // intermediate_files/proxy_pool.txt
 	TlsSanNewSubs       string
@@ -197,6 +198,7 @@ func newFiles(dir string) Files {
 		NucleiMisconfigOut:  jf("nuclei_misconfig.json"),
 		NucleiDASTOut:       jf("nuclei_dast.json"),
 		TakeoverCandidates:  j("takeover_candidates.txt"),
+		CnameRefreshOut:     j("dnsx_cname_refresh.json"),
 		ProxyScrapingConfig: j("proxy_scraping_config.toml"),
 		ProxyPool:           j("proxy_pool.txt"),
 		TlsSanNewSubs:       j("tls_san_new_subs.txt"),
