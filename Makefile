@@ -18,7 +18,7 @@ MAGENTA:= \033[35m
 CYAN   := \033[36m
 RESET  := \033[0m
 
-.PHONY: all build install uninstall clean test vet lint setup tools-check help dev version check-go install-go
+.PHONY: all build install uninstall clean test test-pkg vet lint setup tools-check help dev version check-go install-go
 
 help: ## Show this help message with dynamic target listings
 	@echo "Chaathan Makefile"
@@ -93,6 +93,14 @@ test: ## Run the Go unit test suite with race detection and coverage
 	@printf "$(MAGENTA)[TEST]$(RESET) Running tests...\n"
 	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) test -race -count=1 -coverpkg=github.com/vishnu303/chaathan/pkg/...,github.com/vishnu303/chaathan/utils/... -coverprofile=coverage.out ./...
 	@printf "$(GREEN)[TEST]$(RESET) ✅ Tests passed\n"
+
+test-pkg: ## Run tests for a single package (usage: make test-pkg PKG=./test/pkg/wildcard_flow/...)
+	@if [ -z "$(PKG)" ]; then \
+		printf "$(RED)[TEST]$(RESET) Usage: make test-pkg PKG=./test/pkg/<package>/...\n"; exit 1; \
+	fi
+	@printf "$(MAGENTA)[TEST]$(RESET) Running tests for $(PKG)...\n"
+	@PATH=$$PATH:/usr/local/go/bin $(GO_BIN) test -race -count=1 $(PKG)
+	@printf "$(GREEN)[TEST]$(RESET) ✅ $(PKG) tests passed\n"
 
 vet: ## Run static code analysis with go vet
 	@printf "$(CYAN)[VET]$(RESET) Running go vet...\n"

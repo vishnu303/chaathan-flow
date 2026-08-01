@@ -86,28 +86,15 @@ The flow of data and control in Chaathan is structured to maintain isolated, mod
 | **`~/.chaathan` directory paths** | `pkg/paths/` | Hardcoded strings and configurations elsewhere |
 | **File I/O, string/url/host normalization, file-name + severity constants** | `utils/` (leaf package) | Any `pkg/*` import (no `pkg/database`, `pkg/logger`, `pkg/ingest`), DB access, `logger.*` calls, scan / workflow logic |
 
-## Core Principles
+## Core Architecture Rules
 
-### 1. Thin CLI, Thick Packages
-All Cobra command files in `cli/` are thin entry points. They parse input parameters and flags, map them into a `RunConfig` structure, and delegate to packages within `pkg/`. Cobra handlers must contain zero business logic, raw directory operations, or database SQL.
+> **Canonical source:** The seven numbered architecture rules live in [`AGENTS.md`](../../../AGENTS.md) under "Core architecture rules". Always treat that file as authoritative. Do not restate or re-number them here.
 
-### 2. Workflows Own Workflow State
-Workflows are controlled via `RunConfig` and `Ctx`. To extend feature sets, add fields to these models. Do not thread arguments across many nested functions.
+The following supplementary principles expand on those rules with implementation-specific guidance not covered in AGENTS.md:
 
-### 3. Persisted Data is a Product Interface
-All DB models, results files (e.g., JSON outputs in `final_files/`), and JSON schemas are consumer interfaces. Before altering schemas or tables in `pkg/database/`, inspect all downstream readers including queries, ranking algorithms, exports, and notifications.
-
-### 4. Database Isolation
-No SQL queries, database handles, or transaction scopes may leak outside of `pkg/database/`. All operations—including findings insertion, host-metadata storage, and scan metrics accumulation—must be exposed as clean, typed Go APIs in `pkg/database/database.go` or dedicated models.
-
-### 5. External Tools Remain External
-Chaathan orchestrates third-party recon utilities. Never silently replace external-tool execution with in-process logic unless explicitly requested. Prefer clear setup/install paths, predictable command-line arguments, and process isolation.
-
-### 6. Fail Soft in Scans, Fail Loud at Boundaries
-Within multi-step scans, individual tool failures log and continue. At command boundaries, bad input or broken setup returns explicit errors.
-
-### 7. Documentation Sync (Meta-Rule)
-Every time changes are made to the codebase—specifically CLI options, workflow step indices, command runner integrations, or architecture topology—you **must** update the corresponding `.agents/skills/*.md` files and the root `README.md` to keep all steps, options, and guidelines in sync (only if necessary).
+- **Database Isolation.** No SQL queries, database handles, or transaction scopes may leak outside of `pkg/database/`. All operations—including findings insertion, host-metadata storage, and scan metrics accumulation—must be exposed as clean, typed Go APIs in `pkg/database/database.go` or dedicated models.
+- **External Tools Remain External.** Chaathan orchestrates third-party recon utilities. Never silently replace external-tool execution with in-process logic unless explicitly requested. Prefer clear setup/install paths, predictable command-line arguments, and process isolation.
+- **Fail Soft in Scans, Fail Loud at Boundaries.** Within multi-step scans, individual tool failures log and continue. At command boundaries, bad input or broken setup returns explicit errors.
 
 ---
 

@@ -105,7 +105,7 @@ func stepExampleTool(c *Ctx) bool {
 
 1. **Step Registries Alignment:** The step list in `pkg/scan/scan.go` (e.g., `WildcardSteps`) must match the execution order in `pkg/wildcard_flow/flow.go` exactly.
 2. **Step Counts:**
-   - **Wildcard Scan:** Exactly **22 steps across 6 phases (Phases 0 to 5)**.
+   - **Wildcard Scan:** Exactly **21 steps across 6 phases (Phases 0 to 5)**.
    - **Company Scan:** Exactly **3 steps**.
 3. **No Short-Circuit Returns:** Step functions must never return hardcoded `false` on failure. Always log the error, register the failure via `MarkStepFailed`, and return `c.cancelled()`.
 4. **CLI Flag Propagation:**
