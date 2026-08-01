@@ -105,9 +105,7 @@ func stepURLDiscovery(c *Ctx) bool {
 					label = " (partial)"
 				}
 				logger.Result(count, "historical URLs (Waybackurls)%s", label)
-			} else if urlDiscoverySkipped {
-				logger.ToolSkip("Waybackurls", "no URLs found")
-			} else {
+			} else if !urlDiscoverySkipped {
 				logger.Result(0, "historical URLs (Waybackurls)")
 			}
 		}
@@ -119,9 +117,7 @@ func stepURLDiscovery(c *Ctx) bool {
 					label = " (partial)"
 				}
 				logger.Result(count, "historical URLs (GAU)%s", label)
-			} else if urlDiscoverySkipped {
-				logger.ToolSkip("GAU", "no URLs found")
-			} else {
+			} else if !urlDiscoverySkipped {
 				logger.Result(0, "historical URLs (GAU)")
 			}
 		}
@@ -220,9 +216,7 @@ func stepWebCrawling(c *Ctx) bool {
 					label = " (partial)"
 				}
 				logger.Result(count, "crawled URLs (Katana)%s", label)
-			} else if crawlSkipped {
-				logger.Info("  Katana skipped — no URLs found")
-			} else {
+			} else if !crawlSkipped {
 				logger.Result(0, "crawled URLs (Katana)")
 			}
 		}
@@ -234,9 +228,7 @@ func stepWebCrawling(c *Ctx) bool {
 					label = " (partial)"
 				}
 				logger.Result(count, "crawled URLs (GoSpider)%s", label)
-			} else if crawlSkipped {
-				logger.Info("  GoSpider skipped — no URLs found")
-			} else {
+			} else if !crawlSkipped {
 				logger.Result(0, "crawled URLs (GoSpider)")
 			}
 		}
@@ -705,9 +697,7 @@ func stepDirFuzzing(c *Ctx) bool {
 					label = " (partial)"
 				}
 				logger.Result(count, "directory discoveries (ffuf)%s", label)
-			} else if ffufSkipped {
-				logger.Info("  ffuf skipped — no discoveries found")
-			} else {
+			} else if !ffufSkipped {
 				logger.Result(0, "directory discoveries (ffuf)")
 			}
 		}

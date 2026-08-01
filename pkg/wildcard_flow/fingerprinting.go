@@ -84,9 +84,7 @@ func stepFingerprinting(c *Ctx) bool {
 						Timestamp: time.Now(),
 					}, knownVulnIDs)
 				}
-			} else if wafSkipped {
-				logger.ToolSkip("Nuclei WAF Detection", "skipped")
-			} else {
+			} else if !wafSkipped {
 				logger.ToolDone("Nuclei WAF Detection")
 			}
 		}
