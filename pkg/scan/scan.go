@@ -246,6 +246,16 @@ func (state *State) IsStepCompleted(stepName string) bool {
 	return false
 }
 
+// IsStepFailed checks if a step has a recorded failure.
+func (state *State) IsStepFailed(stepName string) bool {
+	for _, fs := range state.FailedSteps {
+		if fs.Name == stepName {
+			return true
+		}
+	}
+	return false
+}
+
 // GetNextStep returns the next step to execute based on scan type.
 func (state *State) GetNextStep() *Step {
 	steps := StepsForType(state.Type)

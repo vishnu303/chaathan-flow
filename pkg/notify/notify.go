@@ -95,6 +95,7 @@ type StepComplete struct {
 	TotalSteps      int           `json:"total_steps"`
 	Duration        time.Duration `json:"duration"`
 	FindingsCount   int           `json:"findings_count,omitempty"`
+	Failed          bool          `json:"failed,omitempty"`
 	Timestamp       time.Time     `json:"timestamp"`
 }
 
@@ -399,10 +400,17 @@ func (n *Notifier) sendDiscordStepComplete(step StepComplete) error {
 		})
 	}
 
+	title := "Step Completed"
+	color := 0x0099FF
+	if step.Failed {
+		title = "Step Failed"
+		color = 0xFF6600
+	}
+
 	embed := map[string]any{
-		"title":       "Step Completed",
+		"title":       title,
 		"description": formatStepLabel(step),
-		"color":       0x0099FF,
+		"color":       color,
 		"fields":      fields,
 		"timestamp":   step.Timestamp.Format(time.RFC3339),
 		"footer": map[string]string{
@@ -485,9 +493,16 @@ func (n *Notifier) sendSlackStepComplete(step StepComplete) error {
 		})
 	}
 
+	title := "Step Completed"
+	color := "#0099FF"
+	if step.Failed {
+		title = "Step Failed"
+		color = "#FF6600"
+	}
+
 	attachment := map[string]any{
-		"color":  "#0099FF",
-		"title":  "Step Completed",
+		"color":  color,
+		"title":  title,
 		"text":   formatStepLabel(step),
 		"fields": fields,
 		"footer": "Chaathan Security Scanner",
@@ -571,14 +586,20 @@ func (n *Notifier) sendTelegramStepComplete(step StepComplete) error {
 		findings = "0"
 	}
 
+	header := "✅ *Step Completed*"
+	if step.Failed {
+		header = "⚠️ *Step Failed*"
+	}
+
 	text := fmt.Sprintf(
-		"✅ *Step Completed*\n\n"+
+		"%s\n\n"+
 			"━━━━━━━━━━━━━━━━━━━━\n"+
 			"🎯 *Target*    %s\n"+
 			"📊 *Progress*    %d / %d\n"+
 			"📋 *Step*    %s\n"+
 			"⏱ *Duration*    %s\n"+
 			"🔍 *Findings*    %s",
+		header,
 		EscapeMarkdown(step.Target),
 		step.StepNumber,
 		step.TotalSteps,

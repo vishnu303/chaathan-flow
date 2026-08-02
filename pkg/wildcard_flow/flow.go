@@ -613,13 +613,17 @@ func stepRangeLabel(first, last int) string {
 func executeStep(c *Ctx, stepName string, fn func(*Ctx) bool) bool {
 	alreadyCompleted := c.State != nil && c.State.IsStepCompleted(stepName)
 	cancelled := fn(c)
-	if !alreadyCompleted && c.State != nil && c.State.IsStepCompleted(stepName) {
-		notifyStepCompletion(c, stepName)
+	if !alreadyCompleted && c.State != nil {
+		if c.State.IsStepCompleted(stepName) {
+			notifyStepCompletion(c, stepName, false)
+		} else if c.State.IsStepFailed(stepName) {
+			notifyStepCompletion(c, stepName, true)
+		}
 	}
 	return cancelled
 }
 
-func notifyStepCompletion(c *Ctx, stepName string) {
+func notifyStepCompletion(c *Ctx, stepName string, failed bool) {
 	if c.Notifier == nil || !c.NotifyStepComplete {
 		return
 	}
@@ -651,6 +655,7 @@ func notifyStepCompletion(c *Ctx, stepName string) {
 		TotalSteps:      len(scan.WildcardSteps),
 		Duration:        time.Since(c.StartTime),
 		FindingsCount:   countFindingsForStep(c, stepName),
+		Failed:          failed,
 		Timestamp:       time.Now(),
 	}); err != nil {
 		logger.Warning("Failed to send step completion notification: %v", err)

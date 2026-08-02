@@ -100,27 +100,19 @@ func stepURLDiscovery(c *Ctx) bool {
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.WaybackOut) {
 			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.WaybackOut, "waybackurls")
-			if count > 0 {
-				label := ""
-				if urlDiscoverySkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "archived URLs via Wayback Machine%s", label)
-			} else if !urlDiscoverySkipped {
-				logger.Result(0, "archived URLs via Wayback Machine")
+			label := ""
+			if urlDiscoverySkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "archived URLs via Wayback Machine%s", label)
 		}
 		if utils.FileExists(c.F.GauOut) {
 			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GauOut, "gau")
-			if count > 0 {
-				label := ""
-				if urlDiscoverySkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "archived URLs via GAU%s", label)
-			} else if !urlDiscoverySkipped {
-				logger.Result(0, "archived URLs via GAU")
+			label := ""
+			if urlDiscoverySkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "archived URLs via GAU%s", label)
 		}
 	}
 
@@ -211,27 +203,19 @@ func stepWebCrawling(c *Ctx) bool {
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.KatanaOut) {
 			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.KatanaOut, "katana")
-			if count > 0 {
-				label := ""
-				if crawlSkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "URLs crawled by Katana%s", label)
-			} else if !crawlSkipped {
-				logger.Result(0, "URLs crawled by Katana")
+			label := ""
+			if crawlSkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "URLs crawled by Katana%s", label)
 		}
 		if utils.FileExists(c.F.GospiderOut) {
 			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GospiderOut, "gospider")
-			if count > 0 {
-				label := ""
-				if crawlSkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "URLs crawled by GoSpider%s", label)
-			} else if !crawlSkipped {
-				logger.Result(0, "URLs crawled by GoSpider")
+			label := ""
+			if crawlSkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "URLs crawled by GoSpider%s", label)
 		}
 	}
 
@@ -716,16 +700,12 @@ func stepDirFuzzing(c *Ctx) bool {
 		if err != nil {
 			logger.Warning("Failed to parse ffuf results: %v", err)
 		} else {
-			if count > 0 {
-				c.FfufTotalFindings = count
-				label := ""
-				if ffufSkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "hidden paths discovered via fuzzing%s", label)
-			} else if !ffufSkipped {
-				logger.Result(0, "hidden paths discovered via fuzzing")
+			c.FfufTotalFindings = count
+			label := ""
+			if ffufSkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "hidden paths discovered via fuzzing%s", label)
 		}
 	}
 
