@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
@@ -566,7 +567,17 @@ func stepURLConsolidation(c *Ctx) bool {
 // Step 17 — Directory Fuzzing (ffuf)
 // ─────────────────────────────────────────────────────────────
 
+// ffufMaxTimeout returns the total time budget for the entire ffuf step
+// (all hosts combined), not per-host.
+func ffufMaxTimeout(c *Ctx) time.Duration {
+	if c != nil && c.Cfg != nil && c.Cfg.Tools.Ffuf.MaxTimeout > 0 {
+		return time.Duration(c.Cfg.Tools.Ffuf.MaxTimeout) * time.Minute
+	}
+	return time.Duration(config.DefaultConfig().Tools.Ffuf.MaxTimeout) * time.Minute
+}
+
 // stepDirFuzzing runs ffuf when a wordlist is provided via --wordlist.
+// A single timeout (ffuf MaxTimeout) applies to the entire step, not per-host.
 // Returns true if the scan should be cancelled.
 func stepDirFuzzing(c *Ctx) bool {
 	if skipped, cancelled := c.resumeOrSkip("dir_fuzzing", "Step 14: Directory Fuzzing (ffuf)"); skipped {
@@ -619,10 +630,14 @@ func stepDirFuzzing(c *Ctx) bool {
 
 	var ffufSkipped bool
 	if err := runWithSkip(c, "ffuf", func(sCtx context.Context) error {
+		// Apply a single timeout for the entire ffuf step (all hosts combined).
+		stepCtx, cancel := context.WithTimeout(sCtx, ffufMaxTimeout(c))
+		defer cancel()
+
 		for _, host := range liveHosts {
 			select {
-			case <-sCtx.Done():
-				return sCtx.Err()
+			case <-stepCtx.Done():
+				return stepCtx.Err()
 			default:
 			}
 
@@ -647,7 +662,7 @@ func stepDirFuzzing(c *Ctx) bool {
 			tmpFfuf.Close() // ffuf manages the file itself
 
 			logger.FileDebug("ffuf input: target=%s wordlist=%s out=%s", targetURL, c.WordlistPath, tmpFfufOut)
-			if err := c.Tb.RunFfufWithFUZZ(sCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
+			if err := c.Tb.RunFfufWithFUZZ(stepCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
 				if fIn, openErr := os.Open(tmpFfufOut); openErr == nil {
 					var payload struct {
 						Results []localFfufResult `json:"results"`
@@ -659,7 +674,7 @@ func stepDirFuzzing(c *Ctx) bool {
 					}
 					fIn.Close()
 				}
-			} else if err != nil && sCtx.Err() == nil {
+			} else if err != nil && stepCtx.Err() == nil {
 				logger.Warning("ffuf failed on host %s: %v", targetURL, err)
 			}
 			os.Remove(tmpFfufOut)

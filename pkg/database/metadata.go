@@ -106,6 +106,79 @@ func UpsertHostMetadata(scanID int64, meta HostMetadata) error {
 	return err
 }
 
+// UpsertHostMetadataBatch inserts multiple host metadata records in a single transaction.
+func UpsertHostMetadataBatch(scanID int64, items []HostMetadata) (int, error) {
+	if DB == nil {
+		return 0, ErrDBNotInitialized
+	}
+	if len(items) == 0 {
+		return 0, nil
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(
+		`INSERT INTO host_metadata (
+			scan_id, host, base_url, headers_json, has_csp, has_cache_headers,
+			login_surface, response_bytes, ssl_expired, ssl_self_signed,
+			ssl_mismatch, weak_tls, has_js_secrets,
+			cors_wildcard, has_insecure_cookies, has_session_cookie, has_dangerous_methods
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(scan_id, host) DO UPDATE SET
+			base_url = CASE
+				WHEN excluded.base_url != '' THEN excluded.base_url
+				ELSE host_metadata.base_url
+			END,
+			headers_json = CASE
+				WHEN excluded.headers_json != '' THEN excluded.headers_json
+				ELSE host_metadata.headers_json
+			END,
+			has_csp = host_metadata.has_csp OR excluded.has_csp,
+			has_cache_headers = host_metadata.has_cache_headers OR excluded.has_cache_headers,
+			login_surface = host_metadata.login_surface OR excluded.login_surface,
+			response_bytes = CASE
+				WHEN excluded.response_bytes > host_metadata.response_bytes THEN excluded.response_bytes
+				ELSE host_metadata.response_bytes
+			END,
+			ssl_expired = host_metadata.ssl_expired OR excluded.ssl_expired,
+			ssl_self_signed = host_metadata.ssl_self_signed OR excluded.ssl_self_signed,
+			ssl_mismatch = host_metadata.ssl_mismatch OR excluded.ssl_mismatch,
+			weak_tls = host_metadata.weak_tls OR excluded.weak_tls,
+			has_js_secrets = host_metadata.has_js_secrets OR excluded.has_js_secrets,
+			cors_wildcard = host_metadata.cors_wildcard OR excluded.cors_wildcard,
+			has_insecure_cookies = host_metadata.has_insecure_cookies OR excluded.has_insecure_cookies,
+			has_session_cookie = host_metadata.has_session_cookie OR excluded.has_session_cookie,
+			has_dangerous_methods = host_metadata.has_dangerous_methods OR excluded.has_dangerous_methods,
+			updated_at = CURRENT_TIMESTAMP`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	count := 0
+	for _, meta := range items {
+		meta.Host = strings.ToLower(strings.TrimSpace(meta.Host))
+		if _, execErr := stmt.Exec(
+			scanID, meta.Host, meta.BaseURL, meta.HeadersJSON,
+			meta.HasCSP, meta.HasCacheHeaders, meta.LoginSurface, meta.ResponseBytes,
+			meta.SSLExpired, meta.SSLSelfSigned, meta.SSLMismatch, meta.WeakTLS,
+			meta.HasJSSecrets, meta.CORSWildcard, meta.HasInsecureCookies,
+			meta.HasSessionCookie, meta.HasDangerousMethods,
+		); execErr != nil {
+			continue
+		}
+		count++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func UpsertURLMetadata(scanID int64, meta URLMetadata) error {
 	if DB == nil {
 		return ErrDBNotInitialized

@@ -781,6 +781,84 @@ func AddURL(scanID int64, rawURL string, statusCode int, contentType, title, tec
 	return err
 }
 
+// URLRecord holds the fields needed for batch URL insertion.
+type URLRecord struct {
+	RawURL      string
+	StatusCode  int
+	ContentType string
+	Title       string
+	Tech        string
+	Source      string
+}
+
+// AddURLsBatch inserts multiple URLs in a single transaction for performance.
+// It uses the same upsert logic as AddURL but avoids per-row fsync overhead.
+func AddURLsBatch(scanID int64, records []URLRecord) (int, error) {
+	if DB == nil {
+		return 0, ErrDBNotInitialized
+	}
+	if len(records) == 0 {
+		return 0, nil
+	}
+
+	tx, err := DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(
+		`INSERT INTO urls (scan_id, url, host, status_code, content_type, title, tech, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(scan_id, url) DO UPDATE SET
+			host = CASE WHEN urls.host IS NULL OR urls.host = '' THEN excluded.host ELSE urls.host END,
+			source = CASE
+				WHEN (',' || urls.source || ',') LIKE ('%,' || ? || ',%') THEN urls.source
+				ELSE urls.source || ',' || ?
+			END,
+			status_code = CASE WHEN ? > 0 AND urls.status_code = 0 THEN ? ELSE urls.status_code END,
+			content_type = CASE WHEN ? != '' AND urls.content_type = '' THEN ? ELSE urls.content_type END,
+			title = CASE WHEN ? != '' AND urls.title = '' THEN ? ELSE urls.title END,
+			tech = CASE WHEN ? != '' AND urls.tech = '' THEN ? ELSE urls.tech END`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	count := 0
+	for _, r := range records {
+		var host string
+		if parsed, parseErr := url.Parse(strings.TrimSpace(r.RawURL)); parseErr == nil {
+			host = strings.ToLower(parsed.Hostname())
+		}
+		if host == "" {
+			cleaned := r.RawURL
+			if !strings.Contains(cleaned, "://") {
+				cleaned = "https://" + cleaned
+			}
+			if parsed, parseErr := url.Parse(cleaned); parseErr == nil {
+				host = strings.ToLower(parsed.Hostname())
+			}
+		}
+		if _, execErr := stmt.Exec(
+			scanID, r.RawURL, host, r.StatusCode, r.ContentType, r.Title, r.Tech, r.Source,
+			r.Source, r.Source,
+			r.StatusCode, r.StatusCode,
+			r.ContentType, r.ContentType,
+			r.Title, r.Title,
+			r.Tech, r.Tech,
+		); execErr != nil {
+			continue
+		}
+		count++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func GetURLs(scanID int64) ([]URL, error) {
 	if DB == nil {
 		return nil, ErrDBNotInitialized
@@ -839,6 +917,42 @@ func AddVulnerability(scanID int64, host, url, templateID, name, severity, descr
 		scanID, host, url, templateID, name, severity, description, matcher, evidence,
 	)
 	return err
+}
+
+// AddVulnerabilitiesBatch inserts multiple vulnerabilities in a single transaction.
+func AddVulnerabilitiesBatch(scanID int64, items []Vulnerability) (int, error) {
+	if DB == nil {
+		return 0, ErrDBNotInitialized
+	}
+	if len(items) == 0 {
+		return 0, nil
+	}
+	tx, err := DB.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(
+		`INSERT OR IGNORE INTO vulnerabilities (scan_id, host, url, template_id, name, severity, description, matcher, evidence)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	count := 0
+	for _, v := range items {
+		if _, execErr := stmt.Exec(scanID, v.Host, v.URL, v.TemplateID, v.Name, v.Severity, v.Description, v.Matcher, v.Evidence); execErr != nil {
+			continue
+		}
+		count++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func GetVulnerabilities(scanID int64) ([]Vulnerability, error) {

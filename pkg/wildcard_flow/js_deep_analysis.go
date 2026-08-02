@@ -238,9 +238,10 @@ func stepJSDeepAnalysis(c *Ctx) bool {
 	close(jobs)
 
 	// Interactive skip: create a cancellable context that responds to both
-	// parent cancellation and the 's' key skip signal.
+	// parent cancellation, the 's' key skip signal, and the step timeout.
 	drainSkipSignal(c)
-	fetchCtx, fetchCancel := context.WithCancel(c.GoCtx)
+	stepTimeout := time.Duration(cfg.MaxTimeout) * time.Minute
+	fetchCtx, fetchCancel := context.WithTimeout(c.GoCtx, stepTimeout)
 	defer fetchCancel()
 
 	userSkipped := false
@@ -609,6 +610,7 @@ func fetchSourceMap(c *Ctx, client *http.Client, jsURL string, maxBytes int64) [
 
 // runJsluiceOnContent writes JS content to a temp file, runs jsluice urls,
 // and returns extracted endpoints. Falls back to regex extraction on failure.
+// The step-level timeout (2h) governs overall execution; no per-file timeout.
 func runJsluiceOnContent(c *Ctx, body []byte, sourceURL string) []string {
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("jsluice_%d_%d.js", os.Getpid(), rand.IntN(1000000)))
 	if err := os.WriteFile(tmpFile, body, 0644); err != nil {
@@ -616,17 +618,10 @@ func runJsluiceOnContent(c *Ctx, body []byte, sourceURL string) []string {
 	}
 	defer os.Remove(tmpFile)
 
-	timeout := 30
-	if c.Cfg != nil && c.Cfg.General.JSAnalysis.JsluiceTimeout > 0 {
-		timeout = c.Cfg.General.JSAnalysis.JsluiceTimeout
-	}
-	ctx, cancel := context.WithTimeout(c.GoCtx, time.Duration(timeout)*time.Second)
-	defer cancel()
-
 	tmpOut := tmpFile + ".urls.json"
 	defer os.Remove(tmpOut)
 
-	if err := c.Tb.RunJsluiceURLs(ctx, tmpFile, tmpOut); err != nil || !utils.FileExists(tmpOut) {
+	if err := c.Tb.RunJsluiceURLs(c.GoCtx, tmpFile, tmpOut); err != nil || !utils.FileExists(tmpOut) {
 		// Fallback to regex extraction
 		return regexExtractEndpoints(string(body), sourceURL)
 	}
@@ -734,6 +729,12 @@ func scanSecrets(body []byte, sourceURL string) []secretFinding {
 			}
 
 			ctx := extractSecretContext(content, sp.Regex, m[0])
+
+			// Filter false positives based on context (e.g., Datadog RUM tokens).
+			if isFalsePositiveContext(ctx) {
+				continue
+			}
+
 			findings = append(findings, secretFinding{
 				URL:     sourceURL,
 				Pattern: sp.Name,
@@ -743,6 +744,28 @@ func scanSecrets(body []byte, sourceURL string) []secretFinding {
 		}
 	}
 	return findings
+}
+
+// falsePositiveContextPatterns matches context snippets that indicate a
+// matched "secret" is actually a public-by-design value.
+var falsePositiveContextPatterns = []*regexp.Regexp{
+	// Datadog RUM/SDK client tokens (public, embedded in frontend code)
+	regexp.MustCompile(`(?i)clientToken\s*[=:]`),
+	regexp.MustCompile(`(?i)datadoghq\.com`),
+	regexp.MustCompile(`(?i)datadogRum`),
+	// React PropTypes internal constant
+	regexp.MustCompile(`ReactPropTypesSecret`),
+}
+
+// isFalsePositiveContext returns true if the surrounding context indicates
+// the matched secret is a known false positive.
+func isFalsePositiveContext(ctx string) bool {
+	for _, re := range falsePositiveContextPatterns {
+		if re.MatchString(ctx) {
+			return true
+		}
+	}
+	return false
 }
 
 // scanSourceMapContent parses a source map JSON and scans sourcesContent for secrets.
@@ -1115,6 +1138,11 @@ func isLikelySecret(patternName, val string) bool {
 		}
 	}
 
+	// Filter known false-positive patterns.
+	if isKnownFalsePositive(val) {
+		return false
+	}
+
 	// Entropy check for generic patterns
 	if patternName == "generic-secret" || patternName == "api-keys" {
 		if len(val) < 8 {
@@ -1139,6 +1167,27 @@ func isLikelySecret(patternName, val string) bool {
 		}
 	}
 	return true
+}
+
+// knownFalsePositivePatterns matches values that are commonly flagged as secrets
+// but are public by design or well-known non-secrets.
+var knownFalsePositivePatterns = []*regexp.Regexp{
+	// Datadog RUM client tokens (public by design, prefixed with "pub")
+	regexp.MustCompile(`^pub[0-9a-f]{32}$`),
+	// React PropTypes secret (well-known non-secret constant)
+	regexp.MustCompile(`(?i)SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED`),
+	// Datadog application IDs (UUIDs, not secrets)
+	regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`),
+}
+
+// isKnownFalsePositive returns true if the value matches a known false-positive pattern.
+func isKnownFalsePositive(val string) bool {
+	for _, re := range knownFalsePositivePatterns {
+		if re.MatchString(val) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractSecretContext returns surrounding context for a secret match.
@@ -1180,7 +1229,7 @@ func (c *Ctx) jsAnalysisCfg() jsAnalysisDefaults {
 		MaxFileMB:      15,
 		MapMaxMB:       20,
 		ValidateLimit:  50,
-		JsluiceTimeout: 30,
+		MaxTimeout:     120, // 2 hours
 		SkipValidation: false,
 	}
 	if c.Cfg == nil {
@@ -1202,8 +1251,8 @@ func (c *Ctx) jsAnalysisCfg() jsAnalysisDefaults {
 	if cfg.ValidateLimit > 0 {
 		defaults.ValidateLimit = cfg.ValidateLimit
 	}
-	if cfg.JsluiceTimeout > 0 {
-		defaults.JsluiceTimeout = cfg.JsluiceTimeout
+	if cfg.MaxTimeout > 0 {
+		defaults.MaxTimeout = cfg.MaxTimeout
 	}
 	defaults.SkipValidation = cfg.SkipValidation
 	return defaults
@@ -1215,6 +1264,6 @@ type jsAnalysisDefaults struct {
 	MaxFileMB      int
 	MapMaxMB       int
 	ValidateLimit  int
-	JsluiceTimeout int
+	MaxTimeout     int // entire step timeout in minutes
 	SkipValidation bool
 }

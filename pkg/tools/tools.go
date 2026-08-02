@@ -293,11 +293,6 @@ func (t *ToolBox) effectiveRate(perToolRate int) int {
 // --- Timeouts and Config Helpers ---
 
 const (
-	subfinderMaxTimeout        = 15 * time.Minute
-	sublist3rMaxTimeout        = 15 * time.Minute
-	gauMaxTimeout              = 30 * time.Minute
-	waybackurlsMaxTimeout      = 20 * time.Minute
-	x8MaxTimeout               = 120 * time.Minute
 	githubSubdomainsMaxTimeout = 15 * time.Minute
 )
 
@@ -313,6 +308,94 @@ func (t *ToolBox) subfinderTimeout() int {
 		return val
 	}
 	return getDefaultToolsConfig().Subfinder.Timeout
+}
+
+func (t *ToolBox) subfinderMaxTimeout() time.Duration {
+	val := t.config().Subfinder.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Subfinder.MaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) sublist3rMaxTimeout() time.Duration {
+	val := t.config().Sublist3r.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Sublist3r.MaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) gauMaxTimeout() time.Duration {
+	val := t.config().GAU.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().GAU.MaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) waybackurlsMaxTimeout() time.Duration {
+	val := t.config().Waybackurls.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Waybackurls.MaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) x8MaxTimeout() time.Duration {
+	val := t.config().X8.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().X8.MaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) tlsxMaxTimeout() time.Duration {
+	val := t.config().Tlsx.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Tlsx.MaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) shufflednsMaxTimeout() time.Duration {
+	val := t.config().ShuffleDNS.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().ShuffleDNS.MaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) dnsxMaxTimeout() time.Duration {
+	val := t.config().DNSx.MaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().DNSx.MaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) nucleiDASTMaxTimeout() time.Duration {
+	val := t.config().Nuclei.DASTMaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Nuclei.DASTMaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) nucleiWAFMaxTimeout() time.Duration {
+	val := t.config().Nuclei.WAFMaxTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Nuclei.WAFMaxTimeout
+	}
+	return time.Duration(val) * time.Minute
+}
+
+func (t *ToolBox) httpxFingerprintTimeout() time.Duration {
+	val := t.config().Httpx.FingerprintTimeout
+	if val <= 0 {
+		val = getDefaultToolsConfig().Httpx.FingerprintTimeout
+	}
+	return time.Duration(val) * time.Minute
 }
 
 func (t *ToolBox) assetfinderTimeout() time.Duration {
@@ -535,7 +618,7 @@ func (t *ToolBox) RunSubfinder(ctx context.Context, domain string, outputFile st
 		}
 	}
 
-	opts = append(opts, runner.WithTimeout(subfinderMaxTimeout))
+	opts = append(opts, runner.WithTimeout(t.subfinderMaxTimeout()))
 	_, err := t.Runner.Run(ctx, "subfinder", args, opts...)
 	return err
 }
@@ -560,7 +643,7 @@ func (t *ToolBox) RunAssetfinder(ctx context.Context, domain string, outputFile 
 // Therefore, Sublist3r runs natively only; docker runner will fail due to lack of python in the alpine base.
 func (t *ToolBox) RunSublist3r(ctx context.Context, domain string, outputFile string) error {
 	args := []string{"-d", domain, "-t", "50", "-o", outputFile}
-	_, err := t.Runner.Run(ctx, "sublist3r", args, runner.WithTimeout(sublist3rMaxTimeout))
+	_, err := t.Runner.Run(ctx, "sublist3r", args, runner.WithTimeout(t.sublist3rMaxTimeout()))
 	return err
 }
 
@@ -594,7 +677,7 @@ func (t *ToolBox) RunGau(ctx context.Context, domain string, outputFile string) 
 		domain,
 	}
 	args = t.appendProxy(args, "--proxy")
-	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(gauMaxTimeout))
+	output, err := t.Runner.Run(ctx, "gau", args, runner.WithTimeout(t.gauMaxTimeout()))
 	// Keep only absolute http(s) URL lines — gau may print warnings to stdout.
 	output = utils.FilterOutputLines(output, utils.IsValidHTTPURL)
 	if output != "" {
@@ -616,7 +699,7 @@ func (t *ToolBox) RunDnsx(ctx context.Context, inputFile string, outputFile stri
 		"-wt", "5", // wildcard detection threshold
 		"-o", outputFile,
 	}
-	_, err := t.Runner.Run(ctx, "dnsx", args)
+	_, err := t.Runner.Run(ctx, "dnsx", args, runner.WithTimeout(t.dnsxMaxTimeout()))
 	return err
 }
 
@@ -750,11 +833,14 @@ func (t *ToolBox) RunFfuf(ctx context.Context, url string, wordlist string, outp
 		return fmt.Errorf("ffuf requires a wordlist path")
 	}
 	args := t.buildFfufArgs(url, wordlist, outputFile)
-	_, err := t.Runner.Run(ctx, "ffuf", args, runner.WithTimeout(t.ffufMaxTimeout()))
+	// No per-host timeout — caller applies a single timeout for the entire step.
+	_, err := t.Runner.Run(ctx, "ffuf", args)
 	return err
 }
 
-// RunFfufWithFUZZ runs ffuf with a FUZZ placeholder in the URL
+// RunFfufWithFUZZ runs ffuf with a FUZZ placeholder in the URL.
+// No per-host timeout is applied; the caller should wrap the entire
+// fuzzing loop with a single context deadline (ffuf MaxTimeout).
 func (t *ToolBox) RunFfufWithFUZZ(ctx context.Context, baseURL string, wordlist string, outputFile string) error {
 	if wordlist == "" {
 		return fmt.Errorf("ffuf requires a wordlist path")
@@ -765,7 +851,7 @@ func (t *ToolBox) RunFfufWithFUZZ(ctx context.Context, baseURL string, wordlist 
 		url = baseURL + "/FUZZ"
 	}
 	args := t.buildFfufArgs(url, wordlist, outputFile)
-	_, err := t.Runner.Run(ctx, "ffuf", args, runner.WithTimeout(t.ffufMaxTimeout()))
+	_, err := t.Runner.Run(ctx, "ffuf", args)
 	return err
 }
 
@@ -824,7 +910,7 @@ func (t *ToolBox) RunNucleiDAST(ctx context.Context, urlsFile string, outputFile
 		Concurrency:    concurrency,
 		RateLimit:      rateLimit,
 		DASTAggression: t.dastAggression(),
-		MaxTimeout:     t.nucleiMaxTimeout(),
+		MaxTimeout:     t.nucleiDASTMaxTimeout(),
 	})
 }
 
@@ -855,7 +941,7 @@ func (t *ToolBox) RunCloudEnum(ctx context.Context, keyword string, outputFile s
 func (t *ToolBox) RunWaybackurls(ctx context.Context, domain string, outputFile string) error {
 	args := []string{}
 	// waybackurls reads the domain from standard input
-	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")), runner.WithTimeout(waybackurlsMaxTimeout))
+	output, err := t.Runner.Run(ctx, "waybackurls", args, runner.WithStdin(strings.NewReader(domain+"\n")), runner.WithTimeout(t.waybackurlsMaxTimeout()))
 	// Keep only absolute http(s) URL lines — waybackurls may emit API noise on stdout.
 	output = utils.FilterOutputLines(output, utils.IsValidHTTPURL)
 	if output != "" {
@@ -926,7 +1012,7 @@ func (t *ToolBox) RunX8WithWordlist(ctx context.Context, inputFile string, outpu
 
 	// NoRetry: a retry would re-run the full (up to 2h) discovery and append a
 	// second JSON document to outputFile, invalidating whole-file parsing below.
-	_, err := t.Runner.Run(ctx, "x8", args, runner.WithTimeout(x8MaxTimeout), runner.WithNoRetry())
+	_, err := t.Runner.Run(ctx, "x8", args, runner.WithTimeout(t.x8MaxTimeout()), runner.WithNoRetry())
 	return err
 }
 
@@ -986,7 +1072,7 @@ func (t *ToolBox) RunShuffleDNS(ctx context.Context, domain string, wordlist str
 	}
 	// Check for massdns in PATH and use it
 	args = append(args, "-mode", "bruteforce")
-	_, err := t.Runner.Run(ctx, "shuffledns", args)
+	_, err := t.Runner.Run(ctx, "shuffledns", args, runner.WithTimeout(t.shufflednsMaxTimeout()))
 	return err
 }
 
@@ -1045,7 +1131,7 @@ func (t *ToolBox) RunTlsx(ctx context.Context, inputFile string, outputFile stri
 		"-c", "50",
 		"-timeout", "5", // seconds per TLS handshake; prevents hanging on blocked hosts
 	}
-	_, err := t.Runner.Run(ctx, "tlsx", args)
+	_, err := t.Runner.Run(ctx, "tlsx", args, runner.WithTimeout(t.tlsxMaxTimeout()))
 	return err
 }
 
@@ -1154,7 +1240,7 @@ func (t *ToolBox) RunHttpxFingerprint(ctx context.Context, inputFile string, out
 	if rps := t.globalRPS(); rps > 0 {
 		args = append(args, "-rl", strconv.Itoa(rps))
 	}
-	_, err := t.Runner.Run(ctx, "httpx", args)
+	_, err := t.Runner.Run(ctx, "httpx", args, runner.WithTimeout(t.httpxFingerprintTimeout()))
 	return err
 }
 
@@ -1181,6 +1267,6 @@ func (t *ToolBox) RunNucleiWAF(ctx context.Context, inputFile string, outputFile
 	})
 	// NoRetry: nuclei appends to existing -o files; a retry would duplicate
 	// JSONL findings and inflate notification/stats counts.
-	_, err := t.Runner.Run(ctx, "nuclei", args, runner.WithNoRetry())
+	_, err := t.Runner.Run(ctx, "nuclei", args, runner.WithNoRetry(), runner.WithTimeout(t.nucleiWAFMaxTimeout()))
 	return err
 }

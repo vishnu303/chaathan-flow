@@ -36,13 +36,13 @@ type Config struct {
 
 // JSAnalysisConfig controls the unified JavaScript Deep Analysis step.
 type JSAnalysisConfig struct {
-	JSLimit        int  `yaml:"js_limit"`            // max JS URLs to fetch & analyze (default: 5000)
-	Threads        int  `yaml:"js_threads"`          // concurrent fetch workers (default: 15)
-	MaxFileMB      int  `yaml:"js_max_file_mb"`      // max size per JS file in MB (default: 15)
-	MapMaxMB       int  `yaml:"js_map_max_mb"`       // max size per source map in MB (default: 20)
-	ValidateLimit  int  `yaml:"js_validate_limit"`   // max secrets to live-validate per scan (default: 50)
-	JsluiceTimeout int  `yaml:"jsluice_timeout_sec"` // per-file AST parse timeout in seconds (default: 30)
-	SkipValidation bool `yaml:"skip_validation"`     // disable live secret validation checks
+	JSLimit        int  `yaml:"js_limit"`          // max JS URLs to fetch & analyze (default: 5000)
+	Threads        int  `yaml:"js_threads"`        // concurrent fetch workers (default: 15)
+	MaxFileMB      int  `yaml:"js_max_file_mb"`    // max size per JS file in MB (default: 15)
+	MapMaxMB       int  `yaml:"js_map_max_mb"`     // max size per source map in MB (default: 20)
+	ValidateLimit  int  `yaml:"js_validate_limit"` // max secrets to live-validate per scan (default: 50)
+	MaxTimeout     int  `yaml:"max_timeout_min"`   // entire JS analysis step timeout in minutes (default: 120)
+	SkipValidation bool `yaml:"skip_validation"`   // disable live secret validation checks
 }
 
 type GeneralConfig struct {
@@ -165,11 +165,33 @@ type ToolsConfig struct {
 
 	// Uncover specific settings
 	Uncover UncoverConfig `yaml:"uncover"`
+
+	// Tlsx specific settings
+	Tlsx TlsxConfig `yaml:"tlsx"`
+
+	// ShuffleDNS specific settings
+	ShuffleDNS ShuffleDNSConfig `yaml:"shuffledns"`
+
+	// DNSx specific settings
+	DNSx DNSxConfig `yaml:"dnsx"`
+
+	// X8 specific settings
+	X8 X8Config `yaml:"x8"`
+
+	// Sublist3r specific settings
+	Sublist3r Sublist3rConfig `yaml:"sublist3r"`
+
+	// GAU specific settings
+	GAU GAUConfig `yaml:"gau"`
+
+	// Waybackurls specific settings
+	Waybackurls WaybackurlsConfig `yaml:"waybackurls"`
 }
 
 type SubfinderConfig struct {
-	Threads int `yaml:"threads"` // concurrent threads for passive enumeration (default: 30)
-	Timeout int `yaml:"timeout"` // timeout in seconds per source (default: 30)
+	Threads    int `yaml:"threads"`         // concurrent threads for passive enumeration (default: 30)
+	Timeout    int `yaml:"timeout"`         // timeout in seconds per source (default: 30)
+	MaxTimeout int `yaml:"max_timeout_min"` // hard process timeout in minutes (default: 15)
 }
 
 type AssetfinderConfig struct {
@@ -181,13 +203,15 @@ type AmassConfig struct {
 }
 
 type NucleiConfig struct {
-	Concurrency    int      `yaml:"concurrency"`     // concurrent template executions (default: 25)
-	RateLimit      int      `yaml:"rate_limit"`      // max requests per second (default: 150)
-	ExcludeTags    []string `yaml:"exclude_tags"`    // template tags to exclude (default: [dos, fuzz])
-	Severity       []string `yaml:"severity"`        // severities to scan (default: [low, medium, high, critical])
-	DisableOOB     *bool    `yaml:"disable_oob"`     // disable Interactsh OOB checks — prevents hangs (default: true)
-	MaxTimeout     int      `yaml:"max_timeout_min"` // hard process timeout per Nuclei run in minutes (default: 180)
-	DASTAggression string   `yaml:"dast_aggression"` // DAST fuzzing payload count: low/medium/high (default: high)
+	Concurrency    int      `yaml:"concurrency"`      // concurrent template executions (default: 25)
+	RateLimit      int      `yaml:"rate_limit"`       // max requests per second (default: 150)
+	ExcludeTags    []string `yaml:"exclude_tags"`     // template tags to exclude (default: [dos, fuzz])
+	Severity       []string `yaml:"severity"`         // severities to scan (default: [low, medium, high, critical])
+	DisableOOB     *bool    `yaml:"disable_oob"`      // disable Interactsh OOB checks — prevents hangs (default: true)
+	MaxTimeout     int      `yaml:"max_timeout_min"`  // hard process timeout per Nuclei run in minutes (default: 180)
+	DASTMaxTimeout int      `yaml:"dast_timeout_min"` // DAST scan timeout in minutes (default: 240)
+	WAFMaxTimeout  int      `yaml:"waf_timeout_min"`  // WAF detection timeout in minutes (default: 10)
+	DASTAggression string   `yaml:"dast_aggression"`  // DAST fuzzing payload count: low/medium/high (default: high)
 }
 
 type DalfoxConfig struct {
@@ -197,10 +221,11 @@ type DalfoxConfig struct {
 }
 
 type HttpxConfig struct {
-	Threads         int      `yaml:"threads"`          // concurrent probing threads (default: 50)
-	Timeout         int      `yaml:"timeout"`          // per-request timeout in seconds (default: 10)
-	Ports           []string `yaml:"ports"`            // ports to probe (default: [80, 443, 8080, 8443, 8000, 8888])
-	FollowRedirects bool     `yaml:"follow_redirects"` // follow HTTP redirects (default: true)
+	Threads            int      `yaml:"threads"`                 // concurrent probing threads (default: 50)
+	Timeout            int      `yaml:"timeout"`                 // per-request timeout in seconds (default: 10)
+	Ports              []string `yaml:"ports"`                   // ports to probe (default: [80, 443, 8080, 8443, 8000, 8888])
+	FollowRedirects    bool     `yaml:"follow_redirects"`        // follow HTTP redirects (default: true)
+	FingerprintTimeout int      `yaml:"fingerprint_timeout_min"` // fingerprint step timeout in minutes (default: 10)
 }
 
 type NaabuConfig struct {
@@ -233,6 +258,34 @@ type GoSpiderConfig struct {
 
 type UncoverConfig struct {
 	Timeout int `yaml:"timeout"` // max runtime in seconds (default: 120)
+}
+
+type TlsxConfig struct {
+	MaxTimeout int `yaml:"max_timeout_min"` // hard process timeout in minutes (default: 30)
+}
+
+type ShuffleDNSConfig struct {
+	MaxTimeout int `yaml:"max_timeout_min"` // hard process timeout in minutes (default: 60)
+}
+
+type DNSxConfig struct {
+	MaxTimeout int `yaml:"max_timeout_min"` // hard process timeout in minutes (default: 60)
+}
+
+type X8Config struct {
+	MaxTimeout int `yaml:"max_timeout_min"` // hard process timeout in minutes (default: 120)
+}
+
+type Sublist3rConfig struct {
+	MaxTimeout int `yaml:"max_timeout_min"` // hard process timeout in minutes (default: 15)
+}
+
+type GAUConfig struct {
+	MaxTimeout int `yaml:"max_timeout_min"` // hard process timeout in minutes (default: 30)
+}
+
+type WaybackurlsConfig struct {
+	MaxTimeout int `yaml:"max_timeout_min"` // hard process timeout in minutes (default: 20)
 }
 
 type NotificationConfig struct {
@@ -477,7 +530,7 @@ func DefaultConfig() *Config {
 				MaxFileMB:      15,
 				MapMaxMB:       20,
 				ValidateLimit:  50,
-				JsluiceTimeout: 30,
+				MaxTimeout:     120, // 2 hours for entire JS analysis step
 				SkipValidation: false,
 			},
 			ProxyScraping: ProxyScrapingConfig{
@@ -494,11 +547,12 @@ func DefaultConfig() *Config {
 		},
 		Tools: ToolsConfig{
 			Subfinder: SubfinderConfig{
-				Threads: 30,
-				Timeout: 30,
+				Threads:    30,
+				Timeout:    30,
+				MaxTimeout: 15,
 			},
 			Assetfinder: AssetfinderConfig{
-				Timeout: 60,
+				Timeout: 1800, // 30 minutes
 			},
 			Amass: AmassConfig{
 				Timeout: 60,
@@ -510,13 +564,16 @@ func DefaultConfig() *Config {
 				ExcludeTags:    []string{"dos", "fuzz"},
 				DisableOOB:     newBool(true),
 				MaxTimeout:     180,
+				DASTMaxTimeout: 240, // 4 hours
+				WAFMaxTimeout:  10,
 				DASTAggression: "high",
 			},
 			Httpx: HttpxConfig{
-				Threads:         50,
-				Timeout:         10,
-				Ports:           []string{"80", "443", "8080", "8443", "8000", "8888", "3000", "9090", "4443", "5000"},
-				FollowRedirects: true,
+				Threads:            50,
+				Timeout:            10,
+				Ports:              []string{"80", "443", "8080", "8443", "8000", "8888", "3000", "9090", "4443", "5000"},
+				FollowRedirects:    true,
+				FingerprintTimeout: 10,
 			},
 			Naabu: NaabuConfig{
 				Threads: 25,
@@ -542,6 +599,27 @@ func DefaultConfig() *Config {
 			},
 			Uncover: UncoverConfig{
 				Timeout: 120,
+			},
+			Tlsx: TlsxConfig{
+				MaxTimeout: 30,
+			},
+			ShuffleDNS: ShuffleDNSConfig{
+				MaxTimeout: 60,
+			},
+			DNSx: DNSxConfig{
+				MaxTimeout: 60,
+			},
+			X8: X8Config{
+				MaxTimeout: 120,
+			},
+			Sublist3r: Sublist3rConfig{
+				MaxTimeout: 15,
+			},
+			GAU: GAUConfig{
+				MaxTimeout: 30,
+			},
+			Waybackurls: WaybackurlsConfig{
+				MaxTimeout: 20,
 			},
 		},
 		Notifications: NotificationConfig{
