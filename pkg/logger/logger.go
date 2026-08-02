@@ -284,13 +284,6 @@ func Info(format string, args ...any) {
 	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s\n", Dim, Reset, msg))
 }
 
-// StepDone prints a dim completion line marking the end of a scan step with
-// the step's elapsed duration. Call it once per step after the step function
-// returns (skip it for steps that were resumed rather than executed).
-func StepDone(elapsed time.Duration) {
-	logWrite(os.Stdout, fmt.Sprintf("  %s│%s   %s✓%s %sdone %s%s\n", Dim, Reset, BrightGreen, Reset, Dim, fmtElapsed(elapsed), Reset))
-}
-
 // Success prints a styled success message
 func Success(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)

@@ -254,7 +254,6 @@ type Ctx struct {
 
 	// Findings
 	FfufTotalFindings int // total valid fuzzing discoveries
-
 }
 
 // cancelled returns true when the parent context has been cancelled.
@@ -613,14 +612,7 @@ func stepRangeLabel(first, last int) string {
 
 func executeStep(c *Ctx, stepName string, fn func(*Ctx) bool) bool {
 	alreadyCompleted := c.State != nil && c.State.IsStepCompleted(stepName)
-	stepStart := time.Now()
 	cancelled := fn(c)
-	// Print a closure line for steps that actually ran this session. Resumed
-	// steps (alreadyCompleted) and steps interrupted by cancellation are
-	// excluded so we never emit a misleading "done" marker.
-	if !alreadyCompleted && !cancelled {
-		logger.StepDone(time.Since(stepStart))
-	}
 	if !alreadyCompleted && c.State != nil && c.State.IsStepCompleted(stepName) {
 		notifyStepCompletion(c, stepName)
 	}
