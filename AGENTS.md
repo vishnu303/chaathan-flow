@@ -64,6 +64,11 @@ golangci-lint run ./...
 go build -buildvcs=false -o chaathan .
 ```
 
+**Focused first-pass check** — after editing a single package, run its tests before the full suite:
+```bash
+make test-pkg PKG=./test/pkg/wildcard_flow/...   # or any affected test package
+```
+
 If developing on Windows, use WSL for all commands at the `/mnt/c/Users/vishn/desktop/chaathan` path (using interactive shell `-i` to source your Go environment):
 ```bash
 wsl bash -i -c "cd /mnt/c/Users/vishn/desktop/chaathan && gofmt -w ."

@@ -1,0 +1,151 @@
+{
+  "summary": {
+    "projectName": "chaathan",
+    "locale": "en",
+    "modelId": "agent-work-loop-v4",
+    "reportContractVersion": 25,
+    "overview": "Chaathan has strong agent instructions and a well-structured skill layer, but declared validation rules lack mechanical enforcement, one skill-pair carries a stale step-count discrepancy, and the observation window is too sparse to confirm learning-loop effectiveness.",
+    "aiAgentPractice": {
+      "inspectedSurfaces": [
+        "Rules",
+        "Skills"
+      ],
+      "coverageRows": [
+        {
+          "surface": "Rules",
+          "scopes": [
+            "Project"
+          ],
+          "count": 1,
+          "paths": [
+            "AGENTS.md"
+          ]
+        },
+        {
+          "surface": "Skills",
+          "scopes": [
+            "Project"
+          ],
+          "count": 6,
+          "paths": [
+            ".agents/skills/chaathan-architecture-principles/SKILL.md",
+            ".agents/skills/chaathan-code-review/SKILL.md",
+            ".agents/skills/chaathan-dev/SKILL.md",
+            ".agents/skills/chaathan-recon-workflows/SKILL.md",
+            ".agents/skills/chaathan-reporting-query/SKILL.md",
+            ".agents/skills/chaathan-tooling-setup/SKILL.md"
+          ]
+        },
+        {
+          "surface": "Custom Agents",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0
+        }
+      ]
+    },
+    "assignmentSummaries": [],
+    "dimensions": [
+      {
+        "id": "task-understanding",
+        "label": "Task Understanding",
+        "score": 68,
+        "summary": "AGENTS.md and six domain skills route agents to the correct package and state architecture constraints clearly; a step-count discrepancy between two skills slightly undermines guidance reliability.",
+        "findingRefs": [
+          "skill-step-count-discrepancy",
+          "dual-authority-architecture-rules"
+        ]
+      },
+      {
+        "id": "controlled-execution",
+        "label": "Controlled Execution",
+        "score": 62,
+        "summary": "Makefile targets, WSL-specific commands, and a tools-check route provide a usable startup and operation surface; no doctor or state-reset command exists.",
+        "findingRefs": []
+      },
+      {
+        "id": "change-validation",
+        "label": "Change Validation",
+        "score": 55,
+        "summary": "Four validation layers (fmt, test, lint, build) and 33 test files are available, but no CI gate or affected-check routing connects them to individual changes.",
+        "findingRefs": [
+          "no-enforcement-gate",
+          "no-affected-check-routing"
+        ]
+      },
+      {
+        "id": "reliable-delivery",
+        "label": "Reliable Delivery",
+        "score": 45,
+        "summary": "No CI/CD pipeline, merge protection, or recovery command was detected; delivery acceptance and rollback remain unobserved from static evidence.",
+        "findingRefs": []
+      },
+      {
+        "id": "learning-capture",
+        "label": "Learning Capture",
+        "score": 48,
+        "summary": "Six configured skills and a rich memory system are present, but the sparse 3-session window cannot validate routing, application, or later outcome improvement.",
+        "findingRefs": []
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "skill-step-count-discrepancy",
+      "title": "Step-count discrepancy between chaathan-dev and chaathan-recon-workflows skills",
+      "severity": "Medium",
+      "reason": "chaathan-dev states '22 steps across 6 phases (Phases 0 to 5)' while chaathan-recon-workflows catalogs 21 steps (Steps 1-21) under the same 6 phases. An agent loading one skill receives a different workflow-length expectation than the other, risking missed or phantom steps during scan modification.",
+      "expectedOutput": [
+        "Both chaathan-dev and chaathan-recon-workflows state the same canonical step count matching the code."
+      ],
+      "expectedArtifact": "Updated skill document",
+      "aiFixPrompt": "/better-harness fix this issue\n\nAudit pkg/scan/scan.go and pkg/wildcard_flow/flow.go step registry to count the actual registered steps. Update the incorrect skill document (.agents/skills/chaathan-dev/SKILL.md or .agents/skills/chaathan-recon-workflows/SKILL.md) to match the canonical count.\n\n## Validation\n\n- Count registered steps in the flow step registry\n- Confirm both skills state the same step count\n- Run go build -buildvcs=false -o chaathan . to confirm no code change was needed",
+      "dimensionRefs": [
+        "task-understanding"
+      ]
+    },
+    {
+      "id": "no-enforcement-gate",
+      "title": "Declared validation baseline has no mechanical enforcement gate",
+      "severity": "Medium",
+      "reason": "AGENTS.md declares a four-command validation baseline (gofmt, go test, golangci-lint, go build), but no CI pipeline, pre-commit hook, or git hook enforces it. The four highest-churn files (17-21 commits in 30 days, up to 7,931 lines churn) can receive regressions that pass undetected when the manual validation loop is skipped.",
+      "expectedOutput": [
+        "Every push and PR runs the four declared validation commands automatically and reports pass/fail status."
+      ],
+      "expectedArtifact": "CI workflow file",
+      "aiFixPrompt": "/better-harness fix this issue\n\nAdd a minimal CI workflow (.github/workflows/ci.yml) that runs the AGENTS.md validation baseline (gofmt -l ., go test ./..., golangci-lint run ./..., go build -buildvcs=false -o chaathan .) on push and pull_request events.\n\n## Validation\n\n- Push a trivial change and confirm the workflow triggers\n- Confirm all four validation commands appear in the workflow log\n- Verify the check status appears on the PR",
+      "dimensionRefs": [
+        "change-validation"
+      ]
+    },
+    {
+      "id": "dual-authority-architecture-rules",
+      "title": "Architecture rules duplicated across AGENTS.md and chaathan-architecture-principles skill",
+      "severity": "Low",
+      "reason": "The seven core architecture rules appear in both AGENTS.md (which declares itself canonical) and .agents/skills/chaathan-architecture-principles/SKILL.md (which restates them in expanded form). When one copy is updated without the other, agents loading both surfaces receive conflicting guidance about ownership boundaries and extension patterns.",
+      "expectedOutput": [
+        "One canonical copy of the architecture rules with the skill adding non-overlapping detail and an explicit reference."
+      ],
+      "expectedArtifact": "Deduplicated architecture guidance",
+      "aiFixPrompt": "/better-harness fix this issue\n\nDesignate AGENTS.md as the single canonical source for architecture rules. In .agents/skills/chaathan-architecture-principles/SKILL.md, replace the restated rules with a reference to AGENTS.md and keep only the expanded topology, anti-patterns, and extension guidance that adds value beyond the root file.\n\n## Validation\n\n- Confirm the architecture rules appear verbatim in only one file\n- Confirm the skill references AGENTS.md for the canonical rule text\n- Trigger both surfaces and verify no contradictory rule statements remain",
+      "dimensionRefs": [
+        "task-understanding"
+      ]
+    },
+    {
+      "id": "no-affected-check-routing",
+      "title": "No affected-package test route documented for focused validation",
+      "severity": "Low",
+      "reason": "The Makefile test target and AGENTS.md validation baseline run the full suite (go test ./...) without a documented route for scoping tests to changed packages. With 33 test files across 20+ packages, agents modifying a single package receive no guided fast-feedback path, increasing validation time as the project grows.",
+      "expectedOutput": [
+        "Agents can run package-scoped tests as a fast first-pass check, with the full suite as the final gate."
+      ],
+      "expectedArtifact": "Makefile target and documentation",
+      "aiFixPrompt": "/better-harness fix this issue\n\nAdd a test-focused Makefile target (e.g., test-pkg PKG=./pkg/wildcard_flow/...) that runs go test -race on the specified package. Document it in the AGENTS.md validation baseline as the recommended first-pass check before the full suite.\n\n## Validation\n\n- Run make test-pkg PKG=./pkg/wildcard_flow/... and confirm only that package's tests execute\n- Confirm the full make test still passes\n- Verify AGENTS.md documents both focused and full validation routes",
+      "dimensionRefs": [
+        "change-validation"
+      ]
+    }
+  ]
+}

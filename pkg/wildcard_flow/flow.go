@@ -254,7 +254,6 @@ type Ctx struct {
 
 	// Findings
 	FfufTotalFindings int // total valid fuzzing discoveries
-
 }
 
 // cancelled returns true when the parent context has been cancelled.
@@ -567,11 +566,30 @@ func Run(cfg RunConfig) error {
 
 	phaseNum := -1
 	lastPhase := ""
-	for _, step := range steps {
+	var phaseStart time.Time
+	for i, step := range steps {
 		if step.phase != lastPhase {
+			// Elapsed time for the phase that just ended. The very first
+			// banner has no predecessor, so its elapsed stays zero and is
+			// omitted by PhaseBanner.
+			var elapsed time.Duration
+			if phaseNum >= 0 {
+				elapsed = time.Since(phaseStart)
+			}
 			lastPhase = step.phase
 			phaseNum++
-			logger.PhaseBanner(phaseNum, step.phase)
+			phaseStart = time.Now()
+
+			// Step-number range covered by this phase (1-based indices).
+			first := i + 1
+			last := first
+			for j := i + 1; j < len(steps); j++ {
+				if steps[j].phase != step.phase {
+					break
+				}
+				last = j + 1
+			}
+			logger.PhaseBanner(phaseNum, step.phase, stepRangeLabel(first, last), elapsed)
 		}
 		if executeStep(c, step.name, step.fn) {
 			finalizeScan(c, "cancelled")
@@ -583,16 +601,29 @@ func Run(cfg RunConfig) error {
 	return nil
 }
 
+// stepRangeLabel formats an inclusive step-number range for phase banners,
+// e.g. "Steps 2–5", collapsing to "Step 21" for single-step phases.
+func stepRangeLabel(first, last int) string {
+	if first == last {
+		return fmt.Sprintf("Step %d", first)
+	}
+	return fmt.Sprintf("Steps %d–%d", first, last)
+}
+
 func executeStep(c *Ctx, stepName string, fn func(*Ctx) bool) bool {
 	alreadyCompleted := c.State != nil && c.State.IsStepCompleted(stepName)
 	cancelled := fn(c)
-	if !alreadyCompleted && c.State != nil && c.State.IsStepCompleted(stepName) {
-		notifyStepCompletion(c, stepName)
+	if !alreadyCompleted && c.State != nil {
+		if c.State.IsStepCompleted(stepName) {
+			notifyStepCompletion(c, stepName, false)
+		} else if c.State.IsStepFailed(stepName) {
+			notifyStepCompletion(c, stepName, true)
+		}
 	}
 	return cancelled
 }
 
-func notifyStepCompletion(c *Ctx, stepName string) {
+func notifyStepCompletion(c *Ctx, stepName string, failed bool) {
 	if c.Notifier == nil || !c.NotifyStepComplete {
 		return
 	}
@@ -624,6 +655,7 @@ func notifyStepCompletion(c *Ctx, stepName string) {
 		TotalSteps:      len(scan.WildcardSteps),
 		Duration:        time.Since(c.StartTime),
 		FindingsCount:   countFindingsForStep(c, stepName),
+		Failed:          failed,
 		Timestamp:       time.Now(),
 	}); err != nil {
 		logger.Warning("Failed to send step completion notification: %v", err)

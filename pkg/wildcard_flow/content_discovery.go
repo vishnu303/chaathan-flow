@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
@@ -99,27 +100,19 @@ func stepURLDiscovery(c *Ctx) bool {
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.WaybackOut) {
 			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.WaybackOut, "waybackurls")
-			if count > 0 {
-				label := ""
-				if urlDiscoverySkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "historical URLs (Waybackurls)%s", label)
-			} else if !urlDiscoverySkipped {
-				logger.Result(0, "historical URLs (Waybackurls)")
+			label := ""
+			if urlDiscoverySkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "archived URLs via Wayback Machine%s", label)
 		}
 		if utils.FileExists(c.F.GauOut) {
 			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GauOut, "gau")
-			if count > 0 {
-				label := ""
-				if urlDiscoverySkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "historical URLs (GAU)%s", label)
-			} else if !urlDiscoverySkipped {
-				logger.Result(0, "historical URLs (GAU)")
+			label := ""
+			if urlDiscoverySkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "archived URLs via GAU%s", label)
 		}
 	}
 
@@ -210,27 +203,19 @@ func stepWebCrawling(c *Ctx) bool {
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.KatanaOut) {
 			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.KatanaOut, "katana")
-			if count > 0 {
-				label := ""
-				if crawlSkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "crawled URLs (Katana)%s", label)
-			} else if !crawlSkipped {
-				logger.Result(0, "crawled URLs (Katana)")
+			label := ""
+			if crawlSkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "URLs crawled by Katana%s", label)
 		}
 		if utils.FileExists(c.F.GospiderOut) {
 			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GospiderOut, "gospider")
-			if count > 0 {
-				label := ""
-				if crawlSkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "crawled URLs (GoSpider)%s", label)
-			} else if !crawlSkipped {
-				logger.Result(0, "crawled URLs (GoSpider)")
+			label := ""
+			if crawlSkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "URLs crawled by GoSpider%s", label)
 		}
 	}
 
@@ -335,7 +320,7 @@ func stepParamDiscovery(c *Ctx) bool {
 		if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" {
 			logger.Warning("x8 parameters wordlist not found: %s", c.Cfg.General.Wordlists.Parameters)
 		}
-		logger.Info("  SecLists parameter wordlist not found on device — falling back to x8's built-in parameter list")
+		logger.Info("SecLists parameter wordlist not found on device — falling back to x8's built-in parameter list")
 	}
 
 	var x8Skipped bool
@@ -357,9 +342,9 @@ func stepParamDiscovery(c *Ctx) bool {
 		if x8Skipped {
 			label = " (partial)"
 		}
-		logger.Result(count, "parameterized URLs from x8%s", label)
+		logger.Result(count, "hidden parameters discovered%s", label)
 		if stored > 0 {
-			logger.Info("  Stored x8 param counts for %d URLs%s", stored, label)
+			logger.Info("Stored x8 param counts for %d URLs%s", stored, label)
 		}
 	}
 
@@ -497,7 +482,7 @@ func stepURLConsolidation(c *Ctx) bool {
 		logger.Warning("URL sanitization failed: %v", err)
 	}
 	rawCount, _ := utils.CountFileLines(c.F.AllURLsRaw)
-	logger.Info("  Merged %d unique URLs", rawCount)
+	logger.Info("Consolidated %d unique URLs from all sources", rawCount)
 	logger.FileDebug("url_consolidation merged %d raw URLs -> %s", rawCount, c.F.AllURLsRaw)
 
 	// Live-check all URLs with httpx
@@ -519,7 +504,7 @@ func stepURLConsolidation(c *Ctx) bool {
 		// fresh output exists from this scan session.
 		if !utils.FileExists(c.F.AllURLsLive) || !fileModifiedAfter(c.F.AllURLsLive, c.StartTime) {
 			usedFallback = true
-			logger.Info("  Using raw URLs as fallback")
+			logger.Info("Live-check unavailable — using unverified URLs")
 			copyFile(c.F.AllURLsRaw, c.F.AllURLsLive)
 		}
 	} else {
@@ -540,7 +525,7 @@ func stepURLConsolidation(c *Ctx) bool {
 			} else if urlCheckSkipped {
 				label = " (partial)"
 			}
-			logger.Result(dbCount, "live URLs consolidated%s", label)
+			logger.Result(dbCount, "verified live URLs consolidated%s", label)
 		}
 	}
 
@@ -566,7 +551,17 @@ func stepURLConsolidation(c *Ctx) bool {
 // Step 17 — Directory Fuzzing (ffuf)
 // ─────────────────────────────────────────────────────────────
 
+// ffufMaxTimeout returns the total time budget for the entire ffuf step
+// (all hosts combined), not per-host.
+func ffufMaxTimeout(c *Ctx) time.Duration {
+	if c != nil && c.Cfg != nil && c.Cfg.Tools.Ffuf.MaxTimeout > 0 {
+		return time.Duration(c.Cfg.Tools.Ffuf.MaxTimeout) * time.Minute
+	}
+	return time.Duration(config.DefaultConfig().Tools.Ffuf.MaxTimeout) * time.Minute
+}
+
 // stepDirFuzzing runs ffuf when a wordlist is provided via --wordlist.
+// A single timeout (ffuf MaxTimeout) applies to the entire step, not per-host.
 // Returns true if the scan should be cancelled.
 func stepDirFuzzing(c *Ctx) bool {
 	if skipped, cancelled := c.resumeOrSkip("dir_fuzzing", "Step 14: Directory Fuzzing (ffuf)"); skipped {
@@ -578,7 +573,7 @@ func stepDirFuzzing(c *Ctx) bool {
 			c.WordlistPath = autoWl
 			logger.Info("Auto-detected SecLists wordlist for ffuf: %s", autoWl)
 		} else {
-			logger.StepHeader("Step 14: Skipping ffuf (no wordlist provided and SecLists not found on device)")
+			logger.StepHeader("Step 14: Skipping Directory Fuzzing (no wordlist — run 'chaathan setup')")
 			logger.Info("Provide --wordlist or run 'chaathan setup' to install SecLists")
 			c.markStepCompleteIfNoFailure("dir_fuzzing")
 			return c.cancelled()
@@ -594,7 +589,7 @@ func stepDirFuzzing(c *Ctx) bool {
 	// Validate wordlist file exists before invoking ffuf.
 	if !utils.FileExists(c.WordlistPath) {
 		logger.Warning("ffuf wordlist not found: %s", c.WordlistPath)
-		logger.Info("  Install seclists (apt install seclists / pacman -S seclists) or provide a valid --wordlist path")
+		logger.Info("Install seclists (apt install seclists / pacman -S seclists) or provide a valid --wordlist path")
 		logger.FileDebug("ffuf skipped: wordlist does not exist at %s", c.WordlistPath)
 		c.markStepCompleteIfNoFailure("dir_fuzzing")
 		return c.cancelled()
@@ -619,10 +614,14 @@ func stepDirFuzzing(c *Ctx) bool {
 
 	var ffufSkipped bool
 	if err := runWithSkip(c, "ffuf", func(sCtx context.Context) error {
+		// Apply a single timeout for the entire ffuf step (all hosts combined).
+		stepCtx, cancel := context.WithTimeout(sCtx, ffufMaxTimeout(c))
+		defer cancel()
+
 		for _, host := range liveHosts {
 			select {
-			case <-sCtx.Done():
-				return sCtx.Err()
+			case <-stepCtx.Done():
+				return stepCtx.Err()
 			default:
 			}
 
@@ -647,7 +646,7 @@ func stepDirFuzzing(c *Ctx) bool {
 			tmpFfuf.Close() // ffuf manages the file itself
 
 			logger.FileDebug("ffuf input: target=%s wordlist=%s out=%s", targetURL, c.WordlistPath, tmpFfufOut)
-			if err := c.Tb.RunFfufWithFUZZ(sCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
+			if err := c.Tb.RunFfufWithFUZZ(stepCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
 				if fIn, openErr := os.Open(tmpFfufOut); openErr == nil {
 					var payload struct {
 						Results []localFfufResult `json:"results"`
@@ -659,7 +658,7 @@ func stepDirFuzzing(c *Ctx) bool {
 					}
 					fIn.Close()
 				}
-			} else if err != nil && sCtx.Err() == nil {
+			} else if err != nil && stepCtx.Err() == nil {
 				logger.Warning("ffuf failed on host %s: %v", targetURL, err)
 			}
 			os.Remove(tmpFfufOut)
@@ -701,16 +700,12 @@ func stepDirFuzzing(c *Ctx) bool {
 		if err != nil {
 			logger.Warning("Failed to parse ffuf results: %v", err)
 		} else {
-			if count > 0 {
-				c.FfufTotalFindings = count
-				label := ""
-				if ffufSkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "directory discoveries (ffuf)%s", label)
-			} else if !ffufSkipped {
-				logger.Result(0, "directory discoveries (ffuf)")
+			c.FfufTotalFindings = count
+			label := ""
+			if ffufSkipped {
+				label = " (partial)"
 			}
+			logger.Result(count, "hidden paths discovered via fuzzing%s", label)
 		}
 	}
 

@@ -70,22 +70,18 @@ func stepFingerprinting(c *Ctx) bool {
 
 		if c.ScanID > 0 && (utils.FileExists(c.F.NucleiWafOut) || wafSkipped) {
 			count, _ := ingest.ParseNucleiOutput(c.ScanID, c.F.NucleiWafOut)
-			if count > 0 {
-				label := ""
-				if wafSkipped {
-					label = " (partial)"
-				}
-				logger.Result(count, "WAF detections%s", label)
+			label := ""
+			if wafSkipped {
+				label = " (partial)"
+			}
+			logger.Result(count, "WAF/firewall products identified%s", label)
 
-				if c.Notifier != nil {
-					sendWafNotifications(c, notify.Finding{
-						Target:    c.Domain,
-						Type:      "waf",
-						Timestamp: time.Now(),
-					}, knownVulnIDs)
-				}
-			} else if !wafSkipped {
-				logger.ToolDone("Nuclei WAF Detection")
+			if count > 0 && c.Notifier != nil {
+				sendWafNotifications(c, notify.Finding{
+					Target:    c.Domain,
+					Type:      "waf",
+					Timestamp: time.Now(),
+				}, knownVulnIDs)
 			}
 		}
 	}

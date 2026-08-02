@@ -164,8 +164,8 @@ func TestJSAnalysisConfigDefaults(t *testing.T) {
 	if js.ValidateLimit != 50 {
 		t.Errorf("expected default ValidateLimit 50, got %d", js.ValidateLimit)
 	}
-	if js.JsluiceTimeout != 30 {
-		t.Errorf("expected default JsluiceTimeout 30, got %d", js.JsluiceTimeout)
+	if js.MaxTimeout != 120 {
+		t.Errorf("expected default MaxTimeout 120, got %d", js.MaxTimeout)
 	}
 	if js.SkipValidation != false {
 		t.Error("expected default SkipValidation false")

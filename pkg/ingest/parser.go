@@ -248,7 +248,8 @@ type HttpxResult struct {
 // ParseHttpxOutput parses httpx JSON output and stores in database
 func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 	targetDomain := getTargetDomain(scanID)
-	count := 0
+	var urlRecords []database.URLRecord
+	var liveSubs []string
 
 	err := scanJSONLines(filePath, func(line string) {
 		var result HttpxResult
@@ -270,44 +271,44 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 			tech = string(techJSON)
 		}
 
-		if err := database.AddURL(scanID, result.URL, result.StatusCode, result.ContentType, result.Title, tech, "httpx"); err != nil {
-			logger.FileDebug("parser: AddURL failed for %s: %v", result.URL, err)
-			return
-		}
+		urlRecords = append(urlRecords, database.URLRecord{
+			RawURL:      result.URL,
+			StatusCode:  result.StatusCode,
+			ContentType: result.ContentType,
+			Title:       result.Title,
+			Tech:        tech,
+			Source:      "httpx",
+		})
 
-		// Also mark subdomain as live
+		// Collect subdomain for live marking
 		subdomain := ""
 		if parsed, err := neturl.Parse(result.URL); err == nil && parsed.Hostname() != "" {
 			subdomain = strings.ToLower(parsed.Hostname())
 		} else {
 			subdomain = utils.NormalizeHostValue(result.Input)
 		}
-
 		if subdomain != "" {
-			ipAddr := normalizeIPHost(result.Host)
-			if err := database.UpdateSubdomainLive(scanID, subdomain, true, ipAddr); err != nil {
-				logger.FileDebug("parser: UpdateSubdomainLive failed for %s: %v", subdomain, err)
-			}
+			liveSubs = append(liveSubs, subdomain)
 		}
-
-		count++
 	})
+	if err != nil {
+		return 0, err
+	}
 
-	return count, err
-}
+	count, err := database.AddURLsBatch(scanID, urlRecords)
+	if err != nil {
+		logger.FileDebug("parser: AddURLsBatch failed for httpx: %v", err)
+		return 0, err
+	}
 
-// normalizeIPHost strips a port suffix from an httpx host value ("1.2.3.4:443"
-// or "[::1]:8443") and returns the bare IP without brackets. Bare IPv6
-// addresses (no brackets, multiple colons) are left untouched.
-func normalizeIPHost(host string) string {
-	if idx := strings.LastIndex(host, ":"); idx != -1 &&
-		(strings.Count(host, ":") == 1 || strings.HasSuffix(host[:idx], "]")) {
-		// Only strip when the suffix is actually a port number.
-		if _, err := strconv.Atoi(host[idx+1:]); err == nil {
-			host = host[:idx]
+	// Mark subdomains as live in bulk
+	if len(liveSubs) > 0 {
+		if err := database.UpdateSubdomainsLiveBulk(scanID, liveSubs); err != nil {
+			logger.FileDebug("parser: UpdateSubdomainsLiveBulk failed: %v", err)
 		}
 	}
-	return strings.Trim(host, "[]")
+
+	return count, nil
 }
 
 // NucleiResult represents a line from nuclei JSON output.
@@ -329,9 +330,13 @@ type NucleiResultInfo struct {
 	Description string `json:"description"`
 }
 
-// ParseNucleiOutput parses nuclei JSON output and stores in database
+// ParseNucleiOutput parses nuclei JSON output and stores in database.
+// WAF detection findings are deduplicated by host (ignoring port) to avoid
+// reporting the same WAF multiple times for different ports on the same host.
 func ParseNucleiOutput(scanID int64, filePath string) (int, error) {
-	count := 0
+	var vulns []database.Vulnerability
+	// Deduplicate WAF findings by host+template (ignore port variants).
+	wafSeen := make(map[string]bool)
 
 	err := scanJSONLines(filePath, func(line string) {
 		var result NucleiResult
@@ -365,25 +370,47 @@ func ParseNucleiOutput(scanID int64, filePath string) (int, error) {
 			matchedAt = result.Host
 		}
 
-		err := database.AddVulnerability(
-			scanID,
-			result.Host,
-			matchedAt,
-			result.TemplateID,
-			name,
-			strings.ToLower(result.Info.Severity),
-			result.Info.Description,
-			result.Matcher,
-			evidence,
-		)
-		if err != nil {
-			logger.FileDebug("parser: AddVulnerability failed for %s: %v", result.Host, err)
-			return
+		// Deduplicate WAF findings: one per host+template, ignoring port.
+		if isWAFTemplate(result.TemplateID) {
+			dedupKey := result.Host + "|" + result.TemplateID + "|" + result.Matcher
+			if wafSeen[dedupKey] {
+				return
+			}
+			wafSeen[dedupKey] = true
+			// Normalize URL to host (strip port) for WAF findings.
+			matchedAt = result.Host
 		}
-		count++
-	})
 
-	return count, err
+		vulns = append(vulns, database.Vulnerability{
+			Host:        result.Host,
+			URL:         matchedAt,
+			TemplateID:  result.TemplateID,
+			Name:        name,
+			Severity:    strings.ToLower(result.Info.Severity),
+			Description: result.Info.Description,
+			Matcher:     result.Matcher,
+			Evidence:    evidence,
+		})
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	if len(vulns) == 0 {
+		return 0, nil
+	}
+	count, err := database.AddVulnerabilitiesBatch(scanID, vulns)
+	if err != nil {
+		logger.FileDebug("parser: AddVulnerabilitiesBatch failed: %v", err)
+		return 0, err
+	}
+	return count, nil
+}
+
+// isWAFTemplate returns true if the template ID indicates a WAF detection template.
+func isWAFTemplate(templateID string) bool {
+	lower := strings.ToLower(templateID)
+	return strings.Contains(lower, "waf") || strings.Contains(lower, "firewall")
 }
 
 // NaabuResult represents a line from naabu output
@@ -417,7 +444,7 @@ type FfufResult struct {
 // ParseNaabuOutput parses naabu output and stores in database.
 // Supports both JSON output format and standard host:port/ip:port format.
 func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
-	count := 0
+	var ports []database.Port
 
 	err := scanTextLines(filePath, func(line string) {
 		var host string
@@ -454,21 +481,27 @@ func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
 			return
 		}
 
-		if err := database.AddPort(scanID, host, port, proto, ""); err != nil {
-			logger.FileDebug("parser: AddPort failed for %s:%d: %v", host, port, err)
-			return
-		}
-		count++
+		ports = append(ports, database.Port{Host: host, Port: port, Protocol: proto})
 	})
+	if err != nil {
+		return 0, err
+	}
 
-	return count, err
+	if len(ports) == 0 {
+		return 0, nil
+	}
+	if err := database.AddPorts(scanID, ports); err != nil {
+		logger.FileDebug("parser: AddPorts batch failed: %v", err)
+		return 0, err
+	}
+	return len(ports), nil
 }
 
 // ParseEndpointsFile parses a file with endpoints (one per line)
 func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 	targetDomain := getTargetDomain(scanID)
-	count := 0
 	seen := make(map[string]struct{})
+	var endpoints []database.Endpoint
 
 	err := scanTextLines(filePath, func(line string) {
 		method := ""
@@ -496,20 +529,26 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 			}
 		}
 
-		if err := database.AddEndpoint(scanID, url, method, source); err != nil {
-			logger.FileDebug("parser: AddEndpoint failed for %s: %v", url, err)
-			return
-		}
-		count++
+		endpoints = append(endpoints, database.Endpoint{URL: url, Method: method, Source: source})
 	})
+	if err != nil {
+		return 0, err
+	}
 
-	return count, err
+	if len(endpoints) == 0 {
+		return 0, nil
+	}
+	if err := database.AddEndpoints(scanID, endpoints); err != nil {
+		logger.FileDebug("parser: AddEndpoints batch failed for source %s: %v", source, err)
+		return 0, err
+	}
+	return len(endpoints), nil
 }
 
 // ParseURLsFile parses a file with URLs (one per line)
 func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 	targetDomain := getTargetDomain(scanID)
-	count := 0
+	var records []database.URLRecord
 
 	err := scanTextLines(filePath, func(line string) {
 		// Drop banner/progress/error noise: only absolute http(s) URLs are stored.
@@ -519,15 +558,22 @@ func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 		if targetDomain != "" && !isURLInScope(line, targetDomain) {
 			return
 		}
-
-		if err := database.AddURL(scanID, line, 0, "", "", "", source); err != nil {
-			logger.FileDebug("parser: AddURL failed for %s: %v", line, err)
-			return
-		}
-		count++
+		records = append(records, database.URLRecord{RawURL: line, Source: source})
 	})
+	if err != nil {
+		return 0, err
+	}
 
-	return count, err
+	if len(records) == 0 {
+		return 0, nil
+	}
+
+	count, err := database.AddURLsBatch(scanID, records)
+	if err != nil {
+		logger.FileDebug("parser: AddURLsBatch failed for source %s: %v", source, err)
+		return 0, err
+	}
+	return count, nil
 }
 
 // ParseLiveURLsFile parses httpx plain-text output where each line may be
@@ -537,7 +583,7 @@ func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 	targetDomain := getTargetDomain(scanID)
 	seen := make(map[string]bool)
-	count := 0
+	var records []database.URLRecord
 
 	err := scanTextLines(filePath, func(line string) {
 		fields := strings.Fields(line)
@@ -558,14 +604,22 @@ func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 		}
 
 		seen[key] = true
-		if err := database.AddURL(scanID, url, 0, "", "", "", source); err != nil {
-			logger.FileDebug("parser: AddURL failed for %s: %v", url, err)
-			return
-		}
-		count++
+		records = append(records, database.URLRecord{RawURL: url, Source: source})
 	})
+	if err != nil {
+		return 0, err
+	}
 
-	return count, err
+	if len(records) == 0 {
+		return 0, nil
+	}
+
+	count, err := database.AddURLsBatch(scanID, records)
+	if err != nil {
+		logger.FileDebug("parser: AddURLsBatch failed for source %s: %v", source, err)
+		return 0, err
+	}
+	return count, nil
 }
 
 // ParseFfufOutput parses ffuf JSON output and stores discovered paths as both
@@ -585,7 +639,9 @@ func ParseFfufOutput(scanID int64, filePath string) (int, error) {
 	}
 
 	targetDomain := getTargetDomain(scanID)
-	count := 0
+	var urlRecords []database.URLRecord
+	var endpoints []database.Endpoint
+
 	for _, result := range payload.Results {
 		if strings.TrimSpace(result.URL) == "" {
 			continue
@@ -594,21 +650,26 @@ func ParseFfufOutput(scanID int64, filePath string) (int, error) {
 			continue
 		}
 
-		urlOK := true
-		if err := database.AddURL(scanID, result.URL, result.Status, "", "", "", "ffuf"); err != nil {
-			logger.FileDebug("parser: AddURL failed for %s: %v", result.URL, err)
-			urlOK = false
-		}
-		if err := database.AddEndpoint(scanID, result.URL, "GET", "ffuf"); err != nil {
-			logger.FileDebug("parser: AddEndpoint failed for %s: %v", result.URL, err)
-			urlOK = false
-		}
-		if urlOK {
-			count++
-		}
+		urlRecords = append(urlRecords, database.URLRecord{
+			RawURL:     result.URL,
+			StatusCode: result.Status,
+			Source:     "ffuf",
+		})
+		endpoints = append(endpoints, database.Endpoint{URL: result.URL, Method: "GET", Source: "ffuf"})
 	}
 
-	return count, nil
+	if len(urlRecords) == 0 {
+		return 0, nil
+	}
+
+	if _, err := database.AddURLsBatch(scanID, urlRecords); err != nil {
+		logger.FileDebug("parser: AddURLsBatch failed for ffuf: %v", err)
+	}
+	if err := database.AddEndpoints(scanID, endpoints); err != nil {
+		logger.FileDebug("parser: AddEndpoints batch failed for ffuf: %v", err)
+	}
+
+	return len(urlRecords), nil
 }
 
 // TlsxResult represents a line from tlsx JSON output
@@ -634,6 +695,7 @@ type TlsxResult struct {
 func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSubs int, vulns int, err error) {
 	seenSANs := make(map[string]bool)
 	var sanBatch []string
+	var metaBatch []database.HostMetadata
 
 	err = scanJSONLines(filePath, func(line string) {
 		var result TlsxResult
@@ -672,15 +734,13 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 		host := utils.NormalizeHostValue(result.Host)
 		if host != "" {
 			weakTLS := utils.IsWeakTLSVersion(result.TLSVersion)
-			if err := database.UpsertHostMetadata(scanID, database.HostMetadata{
+			metaBatch = append(metaBatch, database.HostMetadata{
 				Host:          host,
 				SSLExpired:    result.Expired,
 				SSLSelfSigned: result.SelfSigned,
 				SSLMismatch:   result.MisMatched,
 				WeakTLS:       weakTLS,
-			}); err != nil {
-				logger.FileDebug("parser: UpsertHostMetadata failed for %s: %v", host, err)
-			}
+			})
 		}
 	})
 
@@ -688,6 +748,13 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 	if len(sanBatch) > 0 {
 		if err := database.AddSubdomains(scanID, sanBatch, "tlsx-san"); err != nil {
 			logger.FileDebug("parser: AddSubdomains batch failed for %d SANs: %v", len(sanBatch), err)
+		}
+	}
+
+	// Persist host metadata in a single transaction.
+	if len(metaBatch) > 0 {
+		if _, err := database.UpsertHostMetadataBatch(scanID, metaBatch); err != nil {
+			logger.FileDebug("parser: UpsertHostMetadataBatch failed for %d hosts: %v", len(metaBatch), err)
 		}
 	}
 
@@ -709,6 +776,7 @@ func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (sub
 	seenHosts := make(map[string]bool)
 	// Batch subdomains by source to reduce per-host DB transactions.
 	batchBySource := make(map[string][]string)
+	var portBatch []database.Port
 
 	err = scanJSONLines(filePath, func(line string) {
 		var result UncoverResult
@@ -731,17 +799,14 @@ func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (sub
 			}
 		}
 
-		// Add port if found
+		// Collect port for batch insert
 		if result.Port > 0 && host != "" {
 			proto := result.Protocol
 			if proto == "" {
 				proto = "tcp"
 			}
-			if err := database.AddPort(scanID, host, result.Port, proto, ""); err != nil {
-				logger.FileDebug("parser: AddPort failed for %s:%d: %v", host, result.Port, err)
-			} else {
-				ports++
-			}
+			portBatch = append(portBatch, database.Port{Host: host, Port: result.Port, Protocol: proto})
+			ports++
 		}
 	})
 
@@ -749,6 +814,13 @@ func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (sub
 	for src, hosts := range batchBySource {
 		if err := database.AddSubdomains(scanID, hosts, src); err != nil {
 			logger.FileDebug("parser: AddSubdomains batch failed for source %s (%d hosts): %v", src, len(hosts), err)
+		}
+	}
+
+	// Flush batched ports in a single transaction.
+	if len(portBatch) > 0 {
+		if err := database.AddPorts(scanID, portBatch); err != nil {
+			logger.FileDebug("parser: AddPorts batch failed for uncover (%d ports): %v", len(portBatch), err)
 		}
 	}
 
@@ -769,7 +841,7 @@ type DalfoxResult struct {
 
 // ParseDalfoxOutput parses dalfox output for XSS findings.
 func ParseDalfoxOutput(scanID int64, filePath string) (int, error) {
-	count := 0
+	var vulns []database.Vulnerability
 
 	err := scanJSONLines(filePath, func(line string) {
 		// Try JSON first
@@ -818,22 +890,15 @@ func ParseDalfoxOutput(scanID int64, filePath string) (int, error) {
 				evidenceParts = append(evidenceParts, "CWE: "+result.CWE)
 			}
 
-			err := database.AddVulnerability(
-				scanID,
-				targetURL,
-				targetURL,
-				templateID,
-				name,
-				severity,
-				desc,
-				"",
-				strings.Join(evidenceParts, "\n"),
-			)
-			if err != nil {
-				logger.FileDebug("parser: AddVulnerability failed for %s: %v", targetURL, err)
-				return
-			}
-			count++
+			vulns = append(vulns, database.Vulnerability{
+				Host:        targetURL,
+				URL:         targetURL,
+				TemplateID:  templateID,
+				Name:        name,
+				Severity:    severity,
+				Description: desc,
+				Evidence:    strings.Join(evidenceParts, "\n"),
+			})
 		} else if strings.Contains(line, "[POC]") || strings.Contains(line, "[V]") {
 			// Text format fallback: extract host/URL from line
 			var targetURL string
@@ -852,21 +917,30 @@ func ParseDalfoxOutput(scanID int64, filePath string) (int, error) {
 				return
 			}
 
-			err := database.AddVulnerability(
-				scanID, host, targetURL, "xss",
-				"XSS Finding", "medium",
-				"Potential XSS detected by Dalfox",
-				"", line,
-			)
-			if err != nil {
-				logger.FileDebug("parser: AddVulnerability failed for %s: %v", host, err)
-				return
-			}
-			count++
+			vulns = append(vulns, database.Vulnerability{
+				Host:        host,
+				URL:         targetURL,
+				TemplateID:  "xss",
+				Name:        "XSS Finding",
+				Severity:    "medium",
+				Description: "Potential XSS detected by Dalfox",
+				Evidence:    line,
+			})
 		}
 	})
+	if err != nil {
+		return 0, err
+	}
 
-	return count, err
+	if len(vulns) == 0 {
+		return 0, nil
+	}
+	count, err := database.AddVulnerabilitiesBatch(scanID, vulns)
+	if err != nil {
+		logger.FileDebug("parser: AddVulnerabilitiesBatch failed for dalfox: %v", err)
+		return 0, err
+	}
+	return count, nil
 }
 
 func extractURLFromToken(s string) string {
