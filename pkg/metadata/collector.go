@@ -218,47 +218,8 @@ func fetchSignal(ctx context.Context, client *http.Client, rawURL string) (httpS
 		return httpSignal{}, false
 	}
 
-	headers := make(map[string]any, len(resp.Header))
-	for key, values := range resp.Header {
-		if len(values) == 1 {
-			headers[key] = values[0]
-		} else {
-			headers[key] = values
-		}
-	}
-	headersJSON, _ := json.Marshal(headers)
-
 	lowerBody := strings.ToLower(string(body))
-	hasFormOrPasswordInput := strings.Contains(lowerBody, "<form") ||
-		strings.Contains(lowerBody, `type="password"`) ||
-		strings.Contains(lowerBody, `type='password'`) ||
-		strings.Contains(lowerBody, `type=password`)
-
-	loginSurface := hasFormOrPasswordInput && (strings.Contains(lowerBody, "password") ||
-		strings.Contains(lowerBody, "sign in") ||
-		strings.Contains(lowerBody, "signin") ||
-		strings.Contains(lowerBody, "log in") ||
-		strings.Contains(lowerBody, "login") ||
-		strings.Contains(lowerBody, "forgot password") ||
-		strings.Contains(lowerBody, "oauth"))
-
-	hasCSP := resp.Header.Get("Content-Security-Policy") != ""
-	hasCacheHeaders := resp.Header.Get("Cache-Control") != "" ||
-		resp.Header.Get("ETag") != "" ||
-		resp.Header.Get("Expires") != "" ||
-		resp.Header.Get("Vary") != ""
-
-	// Form and file upload detection
-	formCount := strings.Count(lowerBody, "<form")
-	hasFileUpload := strings.Contains(lowerBody, `type="file"`) ||
-		strings.Contains(lowerBody, `type='file'`) ||
-		strings.Contains(lowerBody, "type=file")
-	hiddenInputCount := strings.Count(lowerBody, `type="hidden"`) +
-		strings.Count(lowerBody, `type='hidden'`)
-
-	// CORS wildcard detection
-	corsHeader := resp.Header.Get("Access-Control-Allow-Origin")
-	corsWildcard := corsHeader == "*"
+	formCount, hasFileUpload, hiddenInputCount := analyzeForms(lowerBody)
 
 	// Cookie security analysis
 	hasInsecureCookies, hasSessionCookie := AnalyzeCookies(resp.Header["Set-Cookie"])
@@ -269,19 +230,71 @@ func fetchSignal(ctx context.Context, client *http.Client, rawURL string) (httpS
 	return httpSignal{
 		URL:                 rawURL,
 		Host:                strings.ToLower(parsed.Hostname()),
-		HeadersJSON:         string(headersJSON),
-		HasCSP:              hasCSP,
-		HasCacheHeaders:     hasCacheHeaders,
-		LoginSurface:        loginSurface,
+		HeadersJSON:         marshalHeaders(resp.Header),
+		HasCSP:              resp.Header.Get("Content-Security-Policy") != "",
+		HasCacheHeaders:     hasCacheHeaders(resp.Header),
+		LoginSurface:        detectLoginSurface(lowerBody),
 		ResponseBytes:       len(body),
 		FormCount:           formCount,
 		HasFileUpload:       hasFileUpload,
 		HiddenInputCount:    hiddenInputCount,
-		CORSWildcard:        corsWildcard,
+		CORSWildcard:        resp.Header.Get("Access-Control-Allow-Origin") == "*",
 		HasInsecureCookies:  hasInsecureCookies,
 		HasSessionCookie:    hasSessionCookie,
 		HasDangerousMethods: hasDangerousMethods,
 	}, true
+}
+
+// marshalHeaders serializes response headers to JSON, collapsing
+// single-value headers to a plain string.
+func marshalHeaders(header http.Header) string {
+	headers := make(map[string]any, len(header))
+	for key, values := range header {
+		if len(values) == 1 {
+			headers[key] = values[0]
+		} else {
+			headers[key] = values
+		}
+	}
+	headersJSON, _ := json.Marshal(headers)
+	return string(headersJSON)
+}
+
+// hasCacheHeaders reports whether any common caching header is present.
+func hasCacheHeaders(header http.Header) bool {
+	return header.Get("Cache-Control") != "" ||
+		header.Get("ETag") != "" ||
+		header.Get("Expires") != "" ||
+		header.Get("Vary") != ""
+}
+
+// detectLoginSurface reports whether the (lowercased) body looks like a
+// login page: a form or password input plus login-related text.
+func detectLoginSurface(lowerBody string) bool {
+	hasFormOrPasswordInput := strings.Contains(lowerBody, "<form") ||
+		strings.Contains(lowerBody, `type="password"`) ||
+		strings.Contains(lowerBody, `type='password'`) ||
+		strings.Contains(lowerBody, `type=password`)
+
+	return hasFormOrPasswordInput && (strings.Contains(lowerBody, "password") ||
+		strings.Contains(lowerBody, "sign in") ||
+		strings.Contains(lowerBody, "signin") ||
+		strings.Contains(lowerBody, "log in") ||
+		strings.Contains(lowerBody, "login") ||
+		strings.Contains(lowerBody, "forgot password") ||
+		strings.Contains(lowerBody, "oauth"))
+}
+
+// analyzeForms counts forms and hidden inputs and detects file upload
+// fields in the (lowercased) body.
+func analyzeForms(lowerBody string) (formCount int, hasFileUpload bool, hiddenInputCount int) {
+	formCount = strings.Count(lowerBody, "<form")
+	hasFileUpload = strings.Contains(lowerBody, `type="file"`) ||
+		strings.Contains(lowerBody, `type='file'`) ||
+		strings.Contains(lowerBody, "type=file")
+	hiddenInputCount = strings.Count(lowerBody, `type="hidden"`) +
+		strings.Count(lowerBody, `type='hidden'`)
+	return formCount, hasFileUpload, hiddenInputCount
 }
 
 func DedupeByHost(urls []string) []string {
@@ -375,7 +388,7 @@ func checkDangerousMethods(ctx context.Context, client *http.Client, rawURL stri
 	}
 	defer resp.Body.Close()
 	// Drain body to allow connection reuse
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 
 	allow := resp.Header.Get("Allow")
 	if allow == "" {

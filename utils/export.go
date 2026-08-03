@@ -37,20 +37,3 @@ const (
 	FileDalfoxXSS            = "dalfox_xss.jsonl"
 	FileSummary              = "SUMMARY.txt"
 )
-
-// ExportFilenames lists every exported file, in manifest order.
-var ExportFilenames = []string{
-	FileFinalSubdomains,
-	FileLiveSubdomains,
-	FileOpenPorts,
-	FileAllURLs,
-	FileURLs200,
-	FileVulnerabilities,
-	FileVulnCriticalHigh,
-	FileEndpoints,
-	FileEndpointsInteresting,
-	FileGFSecrets,
-	FileNucleiVulns,
-	FileNucleiURLVulns,
-	FileDalfoxXSS,
-}

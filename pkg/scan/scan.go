@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/vishnu303/chaathan/pkg/database"
 )
 
 // State represents the current state of a scan
@@ -348,49 +346,4 @@ func (m *Manager) ListResumableScans() ([]State, error) {
 	}
 
 	return states, nil
-}
-
-// CleanupOldStates removes state files older than the specified duration
-func (m *Manager) CleanupOldStates(maxAge time.Duration) error {
-	entries, err := os.ReadDir(m.stateDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-
-	cutoff := time.Now().Add(-maxAge)
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		if info.ModTime().Before(cutoff) {
-			path := filepath.Join(m.stateDir, entry.Name())
-			_ = os.Remove(path)
-		}
-	}
-
-	return nil
-}
-
-// GetResumeInfo returns information about resuming a scan
-func GetResumeInfo(scanID int64) (string, error) {
-	scan, err := database.GetScan(scanID)
-	if err != nil {
-		return "", err
-	}
-
-	if scan.Status != "running" && scan.Status != "failed" {
-		return "", fmt.Errorf("scan %d is not resumable (status: %s)", scanID, scan.Status)
-	}
-
-	return fmt.Sprintf("Scan #%d for %s (%s) - Status: %s", scan.ID, scan.Target, scan.Type, scan.Status), nil
 }

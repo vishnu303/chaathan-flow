@@ -25,15 +25,18 @@ chaathan-flow/
 │   ├── config.go              Config management commands
 │   └── tools_cmd.go           Tools list/check commands
 ├── pkg/
-│   ├── wildcard_flow/         21-step domain recon workflow (6 phase files)
+│   ├── wildcard_flow/         21-step domain recon workflow (15 phase/helper files)
 │   ├── company_flow/          3-step company recon workflow
+│   ├── flowkit/               Shared generic step-execution contract (StepResult/StepFunc/ExecuteStep)
 │   ├── orchestrate/           Signal handling, infra bootstrap (runner/toolbox/notifier)
-│   ├── database/              SQLite persistence, queries, ROI ranking, metadata
+│   ├── database/              SQLite persistence split per entity (scans/subdomains/urls/vulns/ports/endpoints/gfmatches/roi/metadata/status/records)
+│   ├── ingest/                Tool-output parsing (parser.go) separated from DB persistence (persist.go)
 │   ├── report/                Report assembly and multi-format export
 │   ├── scan/                  Scan state, resume, step definitions
 │   ├── setup/                 External tool installation and verification
-│   ├── tools/                 Tool registry and wrappers (27 tools)
-│   ├── proxy_scraping/         Automated proxy scraping and IP rotation (mubeng)
+│   ├── tools/                 Tool registry and wrappers, split by category (recon/http/js/fuzzing/vuln) + names.go constants
+│   ├── tui/                   Bubble Tea dashboard and query console (query_data/query_layout/query_render)
+│   ├── proxy_scraping/        Automated proxy scraping and IP rotation (mubeng)
 │   ├── runner/                External command execution, retry, docker mode
 │   ├── config/                YAML config loading and defaults
 │   ├── metadata/              Host metadata collection (CSP, headers, tech)
@@ -41,6 +44,7 @@ chaathan-flow/
 │   ├── notify/                Discord, Slack, Telegram notifications
 │   ├── logger/                Styled terminal output, colors, scan UI
 │   ├── progress/              Spinners and progress bars
+│   ├── update/                Self-update mechanism
 │   └── paths/                 Centralised ~/.chaathan directory paths
 ├── utils/                     File I/O, parsers, export helpers, validation
 ```

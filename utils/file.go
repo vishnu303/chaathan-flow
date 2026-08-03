@@ -99,6 +99,37 @@ func isNonWhitespace(b []byte) bool {
 	return false
 }
 
+// ReadNonEmptyLines reads a file and returns all non-empty lines, each
+// trimmed of surrounding whitespace. Missing or unreadable files return an
+// error.
+func ReadNonEmptyLines(filePath string) ([]string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxScanBufferSize)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return lines, nil
+}
+
+// DedupeLines removes duplicate lines while preserving first-seen order.
+func DedupeLines(lines []string) []string {
+	return DeduplicateSlice(lines)
+}
+
 // readFilteredLines reads a file and returns only non-empty lines that match keep().
 func readFilteredLines(filePath string, keep func(string) bool) ([]string, error) {
 	file, err := os.Open(filePath)

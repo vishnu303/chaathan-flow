@@ -18,6 +18,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/notify"
 	"github.com/vishnu303/chaathan/pkg/orchestrate"
@@ -190,45 +191,43 @@ func Run(cfg RunConfig) error {
 	// ── Execute steps ────────────────────────────────────────
 
 	if executeStep(c, "metabigor", stepMetabigor) {
-		finalizeScan(c, "cancelled")
+		finalizeScan(c, database.StatusCancelled)
 		return nil
 	}
 	if executeStep(c, "amass_intel", stepAmassIntel) {
-		finalizeScan(c, "cancelled")
+		finalizeScan(c, database.StatusCancelled)
 		return nil
 	}
 	if executeStep(c, "cloud_enum", stepCloudEnum) {
-		finalizeScan(c, "cancelled")
+		finalizeScan(c, database.StatusCancelled)
 		return nil
 	}
 
-	finalizeScan(c, "completed")
+	finalizeScan(c, database.StatusCompleted)
 	return nil
 }
 
-// executeStep runs a company step function. Unlike wildcard_flow's
-// resume-aware template, company steps use a simple (cancelled, error)
-// contract with manual counter increments. Resume is intentionally not
-// supported for company scans — see cli/scans.go resumeScanByID().
-func executeStep(c *Ctx, stepName string, fn func(*Ctx) (bool, error)) bool {
+// executeStep runs a company step function through the shared flowkit
+// contract. Company steps increment counters manually and rely on
+// flowkit.ExecuteStep to record failures in the scan state. Resume is
+// intentionally not supported for company scans — see cli/scans.go
+// resumeScanByID().
+func executeStep(c *Ctx, stepName string, fn flowkit.StepFunc[Ctx]) bool {
 	stepNumber, stepDescription := companyStepMeta(stepName)
 	completedBefore := c.Completed
-	cancelled, err := fn(c)
+	res := flowkit.ExecuteStep(c, stepName, fn, c.StateMgr, c.State)
 
-	if c.Completed > completedBefore {
+	if c.Completed > completedBefore && res.Err == nil {
 		// Step succeeded — mark in scan state
 		if c.State != nil && c.StateMgr != nil {
-			c.StateMgr.MarkStepComplete(c.State, stepName)
+			if err := c.StateMgr.MarkStepComplete(c.State, stepName); err != nil {
+				logger.Warning("Failed to mark step %s complete: %v", stepName, err)
+			}
 		}
 		notifyStepCompletion(c, stepNumber, stepName, stepDescription)
-	} else if err != nil {
-		// Step failed — mark in scan state
-		if c.State != nil && c.StateMgr != nil {
-			c.StateMgr.MarkStepFailed(c.State, stepName, err)
-		}
 	}
 
-	return cancelled
+	return res.Cancelled
 }
 
 // companyStepMeta returns (1-based number, description) for a company step name.
@@ -255,14 +254,16 @@ func notifyStepCompletion(c *Ctx, stepNumber int, stepName, stepDescription stri
 		StepNumber:      stepNumber,
 		TotalSteps:      len(scan.CompanySteps),
 		Duration:        time.Since(c.StartTime),
-		FindingsCount:   CountFindingsForStep(c, stepName),
+		FindingsCount:   countFindingsForStep(c, stepName),
 		Timestamp:       time.Now(),
 	}); err != nil {
 		logger.Warning("Failed to send step completion notification: %v", err)
 	}
 }
 
-func CountFindingsForStep(c *Ctx, stepName string) int {
+// countFindingsForStep counts findings produced by a company step from its
+// output files. Exported for tests via test_exports.go.
+func countFindingsForStep(c *Ctx, stepName string) int {
 	countLines := func(files ...string) int {
 		total := 0
 		for _, file := range files {
@@ -293,15 +294,48 @@ func finalizeScan(c *Ctx, status string) {
 	duration := time.Since(c.StartTime)
 
 	if c.ScanID > 0 {
-		database.UpdateScanStatus(c.ScanID, status)
+		if err := database.UpdateScanStatus(c.ScanID, status); err != nil {
+			logger.Warning("Failed to update scan status: %v", err)
+		}
 	}
 
 	// Clean up state file on completion
-	if status == "completed" && c.State != nil && c.StateMgr != nil {
-		c.StateMgr.DeleteState(c.ScanID)
+	if status == database.StatusCompleted && c.State != nil && c.StateMgr != nil {
+		_ = c.StateMgr.DeleteState(c.ScanID)
 	}
 
-	// Build stats map
+	stats := companySummaryStats(c)
+
+	// Count non-empty output files
+	entries, dirErr := os.ReadDir(c.ResultDir)
+	if dirErr == nil {
+		if count := countNonEmptyFiles(entries); count > 0 {
+			stats = append(stats, logger.Stat{Label: "Output files", Value: fmt.Sprintf("%d", count)})
+		}
+	}
+
+	logger.ScanSummary(status, c.Company, c.ScanID, duration, stats)
+	logger.Success("Results saved in: %s", c.ResultDir)
+
+	// List output files with sizes
+	if dirErr == nil {
+		printOutputFiles(entries)
+	}
+
+	if c.ScanID > 0 {
+		hints := []string{
+			fmt.Sprintf("chaathan scans show %d    # View scan details", c.ScanID),
+			"chaathan wildcard -d <discovered-domain>  # Run full recon on discovered domains",
+		}
+		if c.LogFilePath != "" {
+			hints = append([]string{fmt.Sprintf("cat %s  # full scan log", c.LogFilePath)}, hints...)
+		}
+		logger.NextSteps(hints)
+	}
+}
+
+// companySummaryStats builds the step-completion stats shown in the scan summary.
+func companySummaryStats(c *Ctx) []logger.Stat {
 	completedCount := c.Completed
 	totalCount := c.Total
 	if c.State != nil {
@@ -314,46 +348,30 @@ func finalizeScan(c *Ctx, status string) {
 	if c.Failed > 0 {
 		stats = append(stats, logger.Stat{Label: "Failed", Value: fmt.Sprintf("%d", c.Failed)})
 	}
+	return stats
+}
 
-	// Count non-empty output files
-	entries, dirErr := os.ReadDir(c.ResultDir)
-	if dirErr == nil {
-		count := 0
-		for _, e := range entries {
-			if !e.IsDir() {
-				if info, _ := e.Info(); info != nil && info.Size() > 0 {
-					count++
-				}
-			}
-		}
-		if count > 0 {
-			stats = append(stats, logger.Stat{Label: "Output files", Value: fmt.Sprintf("%d", count)})
-		}
-	}
-
-	logger.ScanSummary(status, c.Company, c.ScanID, duration, stats)
-	logger.Success("Results saved in: %s", c.ResultDir)
-
-	// List output files with sizes
-	if dirErr == nil {
-		for _, e := range entries {
-			if !e.IsDir() {
-				if info, _ := e.Info(); info != nil && info.Size() > 0 {
-					logger.Print("  %s▸ %s (%s)%s\n", logger.Dim, e.Name(), utils.FormatSize(info.Size()), logger.Reset)
-				}
+// countNonEmptyFiles returns how many of the entries are regular files with content.
+func countNonEmptyFiles(entries []os.DirEntry) int {
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			if info, _ := e.Info(); info != nil && info.Size() > 0 {
+				count++
 			}
 		}
 	}
+	return count
+}
 
-	if c.ScanID > 0 {
-		hints := []string{
-			fmt.Sprintf("chaathan scans show %d    # View scan details", c.ScanID),
-			"chaathan wildcard -d <discovered-domain>  # Run full recon on discovered domains",
+// printOutputFiles lists non-empty output files with their sizes.
+func printOutputFiles(entries []os.DirEntry) {
+	for _, e := range entries {
+		if !e.IsDir() {
+			if info, _ := e.Info(); info != nil && info.Size() > 0 {
+				logger.Print("  %s▸ %s (%s)%s\n", logger.Dim, e.Name(), utils.FormatSize(info.Size()), logger.Reset)
+			}
 		}
-		if c.LogFilePath != "" {
-			hints = append([]string{fmt.Sprintf("cat %s  # full scan log", c.LogFilePath)}, hints...)
-		}
-		logger.NextSteps(hints)
 	}
 }
 

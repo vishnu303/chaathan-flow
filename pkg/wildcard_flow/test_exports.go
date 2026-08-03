@@ -36,5 +36,5 @@ func (c *Ctx) FilterSubsToScope(filePath string) {
 }
 
 func StepTakeoverDetection(c *Ctx) bool {
-	return stepTakeoverDetection(c)
+	return stepTakeoverDetection(c).Cancelled
 }

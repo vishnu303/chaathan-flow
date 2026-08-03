@@ -17,6 +17,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/notify"
@@ -288,148 +289,17 @@ func Run(cfg RunConfig) error {
 	goCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	skipChan := make(chan struct{}, 1)
+	skipChan := startSkipListener(goCtx)
 
 	orchestrate.HandleSignals(goCtx, cancel)
 
-	// Listen for 's'/'S' on stdin — skip the currently running tool.
-	// A dedicated reader goroutine feeds bytes into a channel so the outer
-	// goroutine can exit promptly on context cancellation (os.Stdin.Read
-	// is blocking and cannot be interrupted directly).
-	stdinCh := make(chan byte, 1)
-	go func() {
-		buf := make([]byte, 1)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if err != nil || n == 0 {
-				close(stdinCh)
-				return
-			}
-			stdinCh <- buf[0]
-		}
-	}()
-	go func() {
-		for {
-			select {
-			case <-goCtx.Done():
-				return
-			case b, ok := <-stdinCh:
-				if !ok {
-					return
-				}
-				if b == 's' || b == 'S' {
-					select {
-					case skipChan <- struct{}{}:
-						// "Skip requested" is logged by runWithSkip when it receives
-						// the signal, ensuring correct message ordering.
-					default:
-						// already a skip pending; ignore
-					}
-				}
-			}
-		}
-	}()
-
 	// ── Database record & scan state ─────────────────────────
-	configJSON, _ := json.Marshal(map[string]any{
-		"skip_amass":       cfg.SkipAmass,
-		"skip_nuclei":      cfg.SkipNuclei,
-		"skip_naabu":       cfg.SkipNaabu,
-		"skip_crawl":       cfg.SkipCrawl,
-		"skip_takeovers":   cfg.SkipTakeovers,
-		"skip_dalfox":      cfg.SkipDalfox,
-		"skip_uncover":     cfg.SkipUncover,
-		"skip_tlsx":        cfg.SkipTlsx,
-		"skip_x8":          cfg.SkipX8,
-		"skip_shuffledns":  cfg.SkipShuffleDNS,
-		"skip_fingerprint": cfg.SkipFingerprint,
-		"skip_js":          cfg.SkipJS,
-		"wordlist":         cfg.WordlistPath,
-		"dns_wordlist":     cfg.DNSWordlistPath,
-		"resolvers":        cfg.ResolversPath,
-		"github":           cfg.GitHubToken != "",
-		"auto_proxy":       cfg.AutoProxy,
-		"save_log":         cfg.SaveLog,
-		"custom_cookie":    cfg.CustomCookie,
-		"custom_headers":   cfg.CustomHeaders,
-		"custom_token":     cfg.CustomToken,
-	})
+	configJSON := marshalRunConfig(cfg)
 
 	stateMgr := scan.NewManager(paths.StateDir())
-	var scanState *scan.State
-	var scanID int64
-
-	if cfg.ResumeScanID > 0 {
-		scanID = cfg.ResumeScanID
-		existingState, err := stateMgr.LoadState(scanID)
-		if err != nil {
-			return fmt.Errorf("cannot resume scan #%d: %w", scanID, err)
-		}
-		scanState = existingState
-
-		// Validate target match
-		if scanState.Target != cfg.Domain {
-			return fmt.Errorf("target mismatch for resumed scan #%d: state target is %q, but requested target is %q", scanID, scanState.Target, cfg.Domain)
-		}
-
-		// Validate result directory match
-		if scanState.ResultDir != "" && scanState.ResultDir != cfg.ResultDir {
-			logger.Warning("Result directory mismatch for resumed scan #%d: state directory is %q, but current configuration is %q. Adopting state result directory %q.",
-				scanID, scanState.ResultDir, cfg.ResultDir, scanState.ResultDir)
-			cfg.ResultDir = scanState.ResultDir
-		}
-
-		// Reconcile and compare against persisted scanState.Config
-		var persistedMap map[string]any
-		if err := json.Unmarshal(scanState.Config, &persistedMap); err == nil && persistedMap != nil {
-			checkBoolDiff := func(key string, current bool) {
-				if val, ok := persistedMap[key].(bool); ok && val != current {
-					logger.Warning("Config change detected for option %s: persisted value is %t, current is %t. Resumed scan will use the persisted state/skip config for steps.", key, val, current)
-				}
-			}
-			checkBoolDiff("skip_amass", cfg.SkipAmass)
-			checkBoolDiff("skip_nuclei", cfg.SkipNuclei)
-			checkBoolDiff("skip_naabu", cfg.SkipNaabu)
-			checkBoolDiff("skip_crawl", cfg.SkipCrawl)
-			checkBoolDiff("skip_takeovers", cfg.SkipTakeovers)
-			checkBoolDiff("skip_dalfox", cfg.SkipDalfox)
-			checkBoolDiff("skip_uncover", cfg.SkipUncover)
-			checkBoolDiff("skip_tlsx", cfg.SkipTlsx)
-			checkBoolDiff("skip_x8", cfg.SkipX8)
-			checkBoolDiff("skip_shuffledns", cfg.SkipShuffleDNS)
-			checkBoolDiff("skip_fingerprint", cfg.SkipFingerprint)
-			checkBoolDiff("skip_js", cfg.SkipJS)
-			checkBoolDiff("auto_proxy", cfg.AutoProxy)
-			checkBoolDiff("save_log", cfg.SaveLog)
-
-			checkStringDiff := func(key string, current string) {
-				if val, ok := persistedMap[key].(string); ok && val != current {
-					logger.Warning("Config change detected for option %s: persisted value is %q, current is %q.", key, val, current)
-				}
-			}
-			checkStringDiff("wordlist", cfg.WordlistPath)
-			checkStringDiff("dns_wordlist", cfg.DNSWordlistPath)
-			checkStringDiff("resolvers", cfg.ResolversPath)
-			checkStringDiff("custom_cookie", cfg.CustomCookie)
-			checkStringDiff("custom_token", cfg.CustomToken)
-		}
-
-		logger.Info("Resuming scan #%d (%.1f%% complete, %d/%d steps done)",
-			scanID, scanState.Progress(), len(scanState.CompletedSteps), scanState.TotalSteps)
-	} else {
-		dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))
-		if err != nil {
-			logger.Warning("Failed to create scan record: %v", err)
-		}
-		if dbScan != nil {
-			scanID = dbScan.ID
-		}
-
-		var errState error
-		scanState, errState = stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
-		if errState != nil {
-			return fmt.Errorf("cannot create scan state: %w", errState)
-		}
+	scanID, scanState, err := initScanRecord(&cfg, stateMgr, configJSON)
+	if err != nil {
+		return err
 	}
 
 	// ── File logging ──────────────────────────────────────
@@ -521,15 +391,191 @@ func Run(cfg RunConfig) error {
 		}
 	}
 
-	// ── Step registry ───────────────────────────────────────
-	// Each entry maps a scan.WildcardSteps name to its implementation.
-	// Order must match scan.WildcardSteps (the source of truth for
-	// step names, descriptions, and resume/progress tracking).
-	steps := []struct {
-		name  string
-		phase string
-		fn    func(*Ctx) bool
-	}{
+	if runStepPhases(c) {
+		finalizeScan(c, database.StatusCancelled)
+		return nil
+	}
+
+	finalizeScan(c, database.StatusCompleted)
+	return nil
+}
+
+// startSkipListener reads 's'/'S' keypresses from stdin and feeds them into
+// the returned skip channel. A dedicated reader goroutine feeds bytes into a
+// channel so the dispatcher goroutine can exit promptly on context
+// cancellation (os.Stdin.Read is blocking and cannot be interrupted directly).
+func startSkipListener(goCtx context.Context) chan struct{} {
+	skipChan := make(chan struct{}, 1)
+	stdinCh := make(chan byte, 1)
+	go func() {
+		buf := make([]byte, 1)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil || n == 0 {
+				close(stdinCh)
+				return
+			}
+			stdinCh <- buf[0]
+		}
+	}()
+	go func() {
+		for {
+			select {
+			case <-goCtx.Done():
+				return
+			case b, ok := <-stdinCh:
+				if !ok {
+					return
+				}
+				if b == 's' || b == 'S' {
+					select {
+					case skipChan <- struct{}{}:
+						// "Skip requested" is logged by runWithSkip when it receives
+						// the signal, ensuring correct message ordering.
+					default:
+						// already a skip pending; ignore
+					}
+				}
+			}
+		}
+	}()
+	return skipChan
+}
+
+// marshalRunConfig serialises the run options that are persisted with the
+// scan state for resume-time diffing.
+func marshalRunConfig(cfg RunConfig) []byte {
+	configJSON, _ := json.Marshal(map[string]any{
+		"skip_amass":       cfg.SkipAmass,
+		"skip_nuclei":      cfg.SkipNuclei,
+		"skip_naabu":       cfg.SkipNaabu,
+		"skip_crawl":       cfg.SkipCrawl,
+		"skip_takeovers":   cfg.SkipTakeovers,
+		"skip_dalfox":      cfg.SkipDalfox,
+		"skip_uncover":     cfg.SkipUncover,
+		"skip_tlsx":        cfg.SkipTlsx,
+		"skip_x8":          cfg.SkipX8,
+		"skip_shuffledns":  cfg.SkipShuffleDNS,
+		"skip_fingerprint": cfg.SkipFingerprint,
+		"skip_js":          cfg.SkipJS,
+		"wordlist":         cfg.WordlistPath,
+		"dns_wordlist":     cfg.DNSWordlistPath,
+		"resolvers":        cfg.ResolversPath,
+		"github":           cfg.GitHubToken != "",
+		"auto_proxy":       cfg.AutoProxy,
+		"save_log":         cfg.SaveLog,
+		"custom_cookie":    cfg.CustomCookie,
+		"custom_headers":   cfg.CustomHeaders,
+		"custom_token":     cfg.CustomToken,
+	})
+	return configJSON
+}
+
+// initScanRecord either loads and validates the persisted state of a resumed
+// scan or creates a fresh scan record plus state. On resume it may adopt the
+// persisted result directory by mutating cfg.
+func initScanRecord(cfg *RunConfig, stateMgr *scan.Manager, configJSON []byte) (int64, *scan.State, error) {
+	if cfg.ResumeScanID > 0 {
+		return resumeScanRecord(cfg, stateMgr)
+	}
+
+	var scanID int64
+	dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))
+	if err != nil {
+		logger.Warning("Failed to create scan record: %v", err)
+	}
+	if dbScan != nil {
+		scanID = dbScan.ID
+	}
+
+	scanState, errState := stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
+	if errState != nil {
+		return 0, nil, fmt.Errorf("cannot create scan state: %w", errState)
+	}
+	return scanID, scanState, nil
+}
+
+// resumeScanRecord loads the persisted state of a resumed scan and validates
+// it against the requested target and configuration.
+func resumeScanRecord(cfg *RunConfig, stateMgr *scan.Manager) (int64, *scan.State, error) {
+	scanID := cfg.ResumeScanID
+	scanState, err := stateMgr.LoadState(scanID)
+	if err != nil {
+		return 0, nil, fmt.Errorf("cannot resume scan #%d: %w", scanID, err)
+	}
+
+	// Validate target match
+	if scanState.Target != cfg.Domain {
+		return 0, nil, fmt.Errorf("target mismatch for resumed scan #%d: state target is %q, but requested target is %q", scanID, scanState.Target, cfg.Domain)
+	}
+
+	// Validate result directory match
+	if scanState.ResultDir != "" && scanState.ResultDir != cfg.ResultDir {
+		logger.Warning("Result directory mismatch for resumed scan #%d: state directory is %q, but current configuration is %q. Adopting state result directory %q.",
+			scanID, scanState.ResultDir, cfg.ResultDir, scanState.ResultDir)
+		cfg.ResultDir = scanState.ResultDir
+	}
+
+	warnResumeConfigDiffs(scanState, cfg)
+
+	logger.Info("Resuming scan #%d (%.1f%% complete, %d/%d steps done)",
+		scanID, scanState.Progress(), len(scanState.CompletedSteps), scanState.TotalSteps)
+	return scanID, scanState, nil
+}
+
+// warnResumeConfigDiffs compares the persisted run config against the current
+// CLI flags and logs a warning for every divergence.
+func warnResumeConfigDiffs(scanState *scan.State, cfg *RunConfig) {
+	var persistedMap map[string]any
+	if err := json.Unmarshal(scanState.Config, &persistedMap); err != nil || persistedMap == nil {
+		return
+	}
+
+	checkBoolDiff := func(key string, current bool) {
+		if val, ok := persistedMap[key].(bool); ok && val != current {
+			logger.Warning("Config change detected for option %s: persisted value is %t, current is %t. Resumed scan will use the persisted state/skip config for steps.", key, val, current)
+		}
+	}
+	checkBoolDiff("skip_amass", cfg.SkipAmass)
+	checkBoolDiff("skip_nuclei", cfg.SkipNuclei)
+	checkBoolDiff("skip_naabu", cfg.SkipNaabu)
+	checkBoolDiff("skip_crawl", cfg.SkipCrawl)
+	checkBoolDiff("skip_takeovers", cfg.SkipTakeovers)
+	checkBoolDiff("skip_dalfox", cfg.SkipDalfox)
+	checkBoolDiff("skip_uncover", cfg.SkipUncover)
+	checkBoolDiff("skip_tlsx", cfg.SkipTlsx)
+	checkBoolDiff("skip_x8", cfg.SkipX8)
+	checkBoolDiff("skip_shuffledns", cfg.SkipShuffleDNS)
+	checkBoolDiff("skip_fingerprint", cfg.SkipFingerprint)
+	checkBoolDiff("skip_js", cfg.SkipJS)
+	checkBoolDiff("auto_proxy", cfg.AutoProxy)
+	checkBoolDiff("save_log", cfg.SaveLog)
+
+	checkStringDiff := func(key string, current string) {
+		if val, ok := persistedMap[key].(string); ok && val != current {
+			logger.Warning("Config change detected for option %s: persisted value is %q, current is %q.", key, val, current)
+		}
+	}
+	checkStringDiff("wordlist", cfg.WordlistPath)
+	checkStringDiff("dns_wordlist", cfg.DNSWordlistPath)
+	checkStringDiff("resolvers", cfg.ResolversPath)
+	checkStringDiff("custom_cookie", cfg.CustomCookie)
+	checkStringDiff("custom_token", cfg.CustomToken)
+}
+
+// stepEntry pairs a scan step name with its phase label and implementation.
+type stepEntry struct {
+	name  string
+	phase string
+	fn    flowkit.StepFunc[Ctx]
+}
+
+// wildcardStepRegistry returns the ordered step list for the wildcard
+// workflow. Each entry maps a scan.WildcardSteps name to its implementation.
+// Order must match scan.WildcardSteps (the source of truth for step names,
+// descriptions, and resume/progress tracking).
+func wildcardStepRegistry() []stepEntry {
+	return []stepEntry{
 		// Phase 0 — Proxy Scraping (Step 1)
 		{"proxy_scraping", "Proxy Scraping", stepProxyScraping},
 
@@ -563,7 +609,13 @@ func Run(cfg RunConfig) error {
 		// Phase 5 — Fingerprinting (Step 21)
 		{"tech_waf_fingerprinting", "Fingerprinting", stepFingerprinting},
 	}
+}
 
+// runStepPhases executes every registered step in order, emitting phase
+// banners when the phase changes, and returns true when the scan was
+// cancelled.
+func runStepPhases(c *Ctx) bool {
+	steps := wildcardStepRegistry()
 	phaseNum := -1
 	lastPhase := ""
 	var phaseStart time.Time
@@ -592,13 +644,10 @@ func Run(cfg RunConfig) error {
 			logger.PhaseBanner(phaseNum, step.phase, stepRangeLabel(first, last), elapsed)
 		}
 		if executeStep(c, step.name, step.fn) {
-			finalizeScan(c, "cancelled")
-			return nil
+			return true
 		}
 	}
-
-	finalizeScan(c, "completed")
-	return nil
+	return false
 }
 
 // stepRangeLabel formats an inclusive step-number range for phase banners,
@@ -610,9 +659,12 @@ func stepRangeLabel(first, last int) string {
 	return fmt.Sprintf("Steps %d–%d", first, last)
 }
 
-func executeStep(c *Ctx, stepName string, fn func(*Ctx) bool) bool {
+func executeStep(c *Ctx, stepName string, fn flowkit.StepFunc[Ctx]) bool {
 	alreadyCompleted := c.State != nil && c.State.IsStepCompleted(stepName)
-	cancelled := fn(c)
+	// Wildcard steps maintain their own resume-aware state marking, so
+	// flowkit.ExecuteStep is called with a nil state (run-only contract).
+	res := flowkit.ExecuteStep(c, stepName, fn, nil, nil)
+	cancelled := res.Cancelled
 	if !alreadyCompleted && c.State != nil {
 		if c.State.IsStepCompleted(stepName) {
 			notifyStepCompletion(c, stepName, false)
@@ -663,68 +715,60 @@ func notifyStepCompletion(c *Ctx, stepName string, failed bool) {
 }
 
 func countFindingsForStep(c *Ctx, stepName string) int {
-	countLines := func(files ...string) int {
-		total := 0
-		for _, file := range files {
-			if cnt, err := utils.CountFileLines(file); err == nil {
-				total += cnt
-			}
-		}
-		return total
-	}
-
 	switch stepName {
 	case "proxy_scraping":
 		return c.ProxyTotalValid // WAF-passed proxies ready for rotation
-	case "passive_enum":
-		// Rather than raw lists, the best representation of this step is often the raw results concatenated.
-		// Subdomains are consolidated later, but we can count the underlying outputs.
-		return countLines(c.F.SubfinderOut, c.F.AssetfinderOut, c.F.Sublist3rOut)
-	case "active_enum":
-		return countLines(c.F.AmassOut)
-	case "github_recon":
-		return countLines(c.F.GithubSubsOut)
-	case "search_engine_recon":
-		return countLines(c.F.UncoverOut)
 	case "dns_resolution":
 		if cnt, err := utils.CountUniqueDNSxHosts(c.F.DnsxOut); err == nil {
 			return cnt
 		}
 		return 0
-	case "dns_bruteforce":
-		return countLines(c.F.ShufflednsOut)
-	case "http_probing":
-		return countLines(c.F.HttpxLiveHosts)
-	case "tls_analysis":
-		return countLines(c.F.TlsxOut)
-	case "port_scanning":
-		return countLines(c.F.NaabuOut)
-	case "url_discovery":
-		return countLines(c.F.WaybackOut, c.F.GauOut)
-	case "web_crawling":
-		return countLines(c.F.KatanaOut, c.F.GospiderOut)
-	case "js_deep_analysis":
-		return countLines(c.F.JSEndpointsOut, c.F.JSSecretsOut)
-	case "js_subdomain_discovery":
-		return 0 // deprecated step — kept for resume compat
-	case "param_discovery":
-		return countLines(c.F.X8URLsOut)
-	case "url_consolidation":
-		return countLines(c.F.AllURLsLive)
 	case "dir_fuzzing":
 		return c.FfufTotalFindings // Uses properly parsed JSON array count, not lines
-	case "vuln_scanning":
-		return countLines(c.F.NucleiOut, c.F.NucleiMisconfigOut)
-	case "vuln_scanning_urls":
-		return countLines(c.F.NucleiDASTOut)
-	case "takeover_detection":
-		return countLines(c.F.SubjackOut)
-	case "xss_scanning":
-		return countLines(c.F.DalfoxOut)
-	case "tech_waf_fingerprinting":
-		return countLines(c.F.NucleiWafOut)
-	default:
-		return 0
+	case "js_subdomain_discovery":
+		return 0 // deprecated step — kept for resume compat
+	}
+	if files, ok := c.stepFindingFiles()[stepName]; ok {
+		return countFindingLines(files...)
+	}
+	return 0
+}
+
+// countFindingLines sums line counts across files, ignoring read errors.
+func countFindingLines(files ...string) int {
+	total := 0
+	for _, file := range files {
+		if cnt, err := utils.CountFileLines(file); err == nil {
+			total += cnt
+		}
+	}
+	return total
+}
+
+// stepFindingFiles maps step names to the output files whose line counts
+// represent that step's findings.
+func (c *Ctx) stepFindingFiles() map[string][]string {
+	return map[string][]string{
+		"passive_enum": {c.F.SubfinderOut, c.F.AssetfinderOut, c.F.Sublist3rOut},
+		// Rather than raw lists, the best representation of this step is often the raw results concatenated.
+		// Subdomains are consolidated later, but we can count the underlying outputs.
+		"active_enum":             {c.F.AmassOut},
+		"github_recon":            {c.F.GithubSubsOut},
+		"search_engine_recon":     {c.F.UncoverOut},
+		"dns_bruteforce":          {c.F.ShufflednsOut},
+		"http_probing":            {c.F.HttpxLiveHosts},
+		"tls_analysis":            {c.F.TlsxOut},
+		"port_scanning":           {c.F.NaabuOut},
+		"url_discovery":           {c.F.WaybackOut, c.F.GauOut},
+		"web_crawling":            {c.F.KatanaOut, c.F.GospiderOut},
+		"js_deep_analysis":        {c.F.JSEndpointsOut, c.F.JSSecretsOut},
+		"param_discovery":         {c.F.X8URLsOut},
+		"url_consolidation":       {c.F.AllURLsLive},
+		"vuln_scanning":           {c.F.NucleiOut, c.F.NucleiMisconfigOut},
+		"vuln_scanning_urls":      {c.F.NucleiDASTOut},
+		"takeover_detection":      {c.F.SubjackOut},
+		"xss_scanning":            {c.F.DalfoxOut},
+		"tech_waf_fingerprinting": {c.F.NucleiWafOut},
 	}
 }
 
@@ -750,106 +794,138 @@ func finalizeScan(c *Ctx, status string) {
 		logger.Info("Rotating proxy server stopped")
 	}
 	if c.ScanID > 0 {
-		database.UpdateScanStatus(c.ScanID, status)
+		if err := database.UpdateScanStatus(c.ScanID, status); err != nil {
+			logger.Warning("Failed to update scan status: %v", err)
+		}
 	}
 
 	// Clean up state file for completed scans
-	if status == "completed" && c.StateMgr != nil && c.State != nil {
-		c.StateMgr.DeleteState(c.State.ScanID)
+	if status == database.StatusCompleted && c.StateMgr != nil && c.State != nil {
+		_ = c.StateMgr.DeleteState(c.State.ScanID)
 	}
 
-	stats := make([]logger.Stat, 0, 8)
+	stats := finalizeScanStats(c, duration)
+
 	if c.ScanID > 0 {
-		dbStats, err := database.GetScanStats(c.ScanID)
-		if err == nil {
-			stats = append(stats,
-				logger.Stat{Label: "Subdomains", Value: fmt.Sprintf("%d (Live: %d)", dbStats.TotalSubdomains, dbStats.LiveSubdomains)},
-				logger.Stat{Label: "Open Ports", Value: fmt.Sprintf("%d", dbStats.TotalPorts)},
-				logger.Stat{Label: "URLs", Value: fmt.Sprintf("%d", dbStats.TotalURLs)},
-				logger.Stat{Label: "Endpoints", Value: fmt.Sprintf("%d", dbStats.TotalEndpoints)},
-			)
-			// Canonical severity order first, then any non-standard ones.
-			printed := make(map[string]bool, len(dbStats.Vulnerabilities))
-			for _, sev := range utils.SeverityOrder() {
-				if count, ok := dbStats.Vulnerabilities[sev]; ok {
-					stats = append(stats, logger.Stat{Label: "Vuln (" + sev + ")", Value: fmt.Sprintf("%d", count)})
-					printed[sev] = true
-				}
-			}
-			for sev, count := range dbStats.Vulnerabilities {
-				if printed[sev] {
-					continue
-				}
-				label := sev
-				if label == "" {
-					label = "unknown"
-				}
-				stats = append(stats, logger.Stat{Label: "Vuln (" + label + ")", Value: fmt.Sprintf("%d", count)})
-			}
-
-			if c.Notifier != nil {
-				if err := c.Notifier.SendScanComplete(notify.ScanComplete{
-					Target:   c.Domain,
-					ScanID:   c.ScanID,
-					Duration: duration,
-					Stats: map[string]int{
-						"subdomains": dbStats.TotalSubdomains,
-						"ports":      dbStats.TotalPorts,
-						"vulns":      totalVulnCount(dbStats.Vulnerabilities),
-					},
-				}); err != nil {
-					logger.Warning("Failed to send scan complete notification: %v", err)
-				}
-			}
-		}
-
 		logger.ScanSummary(status, c.Domain, c.ScanID, duration, stats)
 		logger.Success("Results saved in: %s", c.ResultDir)
 
 		// Export results into final_files/
-		if status == "completed" || status == "cancelled" {
-			finalDir := filepath.Join(c.ResultDir, "final_files")
-			logger.Print("\n")
-			logger.Info("Exporting results to final_files/...")
-			if err := ingest.ExportResults(c.ScanID, finalDir); err != nil {
-				logger.Warning("Failed to export some results: %v", err)
-			} else {
-				logger.Success("Results exported to final_files/")
-			}
-			if err := ingest.ExportSummary(c.ScanID, finalDir, c.Domain); err != nil {
-				logger.Warning("Failed to create summary: %v", err)
-			}
-		}
+		exportFinalResults(c, status)
 
 		// Generate report
-		if c.GenerateReport && status == "completed" {
-			logger.Print("\n")
-			logger.Info("Generating report...")
-			rpt, err := report.Generate(c.ScanID)
-			if err == nil {
-				reportPath := filepath.Join(paths.ReportsDir(), fmt.Sprintf("scan_%d.md", c.ScanID))
-				if err := rpt.Export(report.FormatMarkdown, reportPath); err == nil {
-					logger.Success("Report saved: %s", reportPath)
-				}
-				localReportPath := filepath.Join(c.ResultDir, "REPORT.md")
-				if err := rpt.Export(report.FormatMarkdown, localReportPath); err == nil {
-					logger.Success("Report also saved: %s", localReportPath)
-				}
-			}
-		}
+		generateFinalReport(c, status)
 	}
 
-	if c.ScanID > 0 {
-		hints := []string{
-			fmt.Sprintf("chaathan scans show %d       # View scan details", c.ScanID),
-			fmt.Sprintf("chaathan query vulns %d      # List vulnerabilities", c.ScanID),
-			fmt.Sprintf("chaathan report generate %d  # Generate full report", c.ScanID),
-		}
-		if c.LogFilePath != "" {
-			hints = append([]string{fmt.Sprintf("cat %s  # full scan log", c.LogFilePath)}, hints...)
-		}
-		logger.NextSteps(hints)
+	printNextStepHints(c)
+}
+
+// finalizeScanStats builds the summary stat rows from DB stats and sends the
+// scan-complete notification.
+func finalizeScanStats(c *Ctx, duration time.Duration) []logger.Stat {
+	stats := make([]logger.Stat, 0, 8)
+	if c.ScanID <= 0 {
+		return stats
 	}
+	dbStats, err := database.GetScanStats(c.ScanID)
+	if err != nil {
+		return stats
+	}
+	stats = append(stats,
+		logger.Stat{Label: "Subdomains", Value: fmt.Sprintf("%d (Live: %d)", dbStats.TotalSubdomains, dbStats.LiveSubdomains)},
+		logger.Stat{Label: "Open Ports", Value: fmt.Sprintf("%d", dbStats.TotalPorts)},
+		logger.Stat{Label: "URLs", Value: fmt.Sprintf("%d", dbStats.TotalURLs)},
+		logger.Stat{Label: "Endpoints", Value: fmt.Sprintf("%d", dbStats.TotalEndpoints)},
+	)
+	// Canonical severity order first, then any non-standard ones.
+	printed := make(map[string]bool, len(dbStats.Vulnerabilities))
+	for _, sev := range utils.SeverityOrder() {
+		if count, ok := dbStats.Vulnerabilities[sev]; ok {
+			stats = append(stats, logger.Stat{Label: "Vuln (" + sev + ")", Value: fmt.Sprintf("%d", count)})
+			printed[sev] = true
+		}
+	}
+	for sev, count := range dbStats.Vulnerabilities {
+		if printed[sev] {
+			continue
+		}
+		label := sev
+		if label == "" {
+			label = "unknown"
+		}
+		stats = append(stats, logger.Stat{Label: "Vuln (" + label + ")", Value: fmt.Sprintf("%d", count)})
+	}
+
+	if c.Notifier != nil {
+		if err := c.Notifier.SendScanComplete(notify.ScanComplete{
+			Target:   c.Domain,
+			ScanID:   c.ScanID,
+			Duration: duration,
+			Stats: map[string]int{
+				"subdomains": dbStats.TotalSubdomains,
+				"ports":      dbStats.TotalPorts,
+				"vulns":      totalVulnCount(dbStats.Vulnerabilities),
+			},
+		}); err != nil {
+			logger.Warning("Failed to send scan complete notification: %v", err)
+		}
+	}
+	return stats
+}
+
+// exportFinalResults exports scan results and summary into final_files/.
+func exportFinalResults(c *Ctx, status string) {
+	if status != database.StatusCompleted && status != database.StatusCancelled {
+		return
+	}
+	finalDir := filepath.Join(c.ResultDir, "final_files")
+	logger.Print("\n")
+	logger.Info("Exporting results to final_files/...")
+	if err := ingest.ExportResults(c.ScanID, finalDir); err != nil {
+		logger.Warning("Failed to export some results: %v", err)
+	} else {
+		logger.Success("Results exported to final_files/")
+	}
+	if err := ingest.ExportSummary(c.ScanID, finalDir, c.Domain); err != nil {
+		logger.Warning("Failed to create summary: %v", err)
+	}
+}
+
+// generateFinalReport renders and saves the markdown report.
+func generateFinalReport(c *Ctx, status string) {
+	if !c.GenerateReport || status != database.StatusCompleted {
+		return
+	}
+	logger.Print("\n")
+	logger.Info("Generating report...")
+	rpt, err := report.Generate(c.ScanID)
+	if err != nil {
+		return
+	}
+	reportPath := filepath.Join(paths.ReportsDir(), fmt.Sprintf("scan_%d.md", c.ScanID))
+	if err := rpt.Export(report.FormatMarkdown, reportPath); err == nil {
+		logger.Success("Report saved: %s", reportPath)
+	}
+	localReportPath := filepath.Join(c.ResultDir, "REPORT.md")
+	if err := rpt.Export(report.FormatMarkdown, localReportPath); err == nil {
+		logger.Success("Report also saved: %s", localReportPath)
+	}
+}
+
+// printNextStepHints shows follow-up commands for the finished scan.
+func printNextStepHints(c *Ctx) {
+	if c.ScanID <= 0 {
+		return
+	}
+	hints := []string{
+		fmt.Sprintf("chaathan scans show %d       # View scan details", c.ScanID),
+		fmt.Sprintf("chaathan query vulns %d      # List vulnerabilities", c.ScanID),
+		fmt.Sprintf("chaathan report generate %d  # Generate full report", c.ScanID),
+	}
+	if c.LogFilePath != "" {
+		hints = append([]string{fmt.Sprintf("cat %s  # full scan log", c.LogFilePath)}, hints...)
+	}
+	logger.NextSteps(hints)
 }
 
 // SetupResolvers ensures that a valid resolvers file exists.

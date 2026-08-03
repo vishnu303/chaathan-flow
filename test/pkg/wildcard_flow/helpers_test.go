@@ -227,8 +227,7 @@ func TestPurgeUnconsolidatedSubdomains(t *testing.T) {
 		t.Fatalf("failed to create scan: %v", err)
 	}
 
-	_ = database.AddSubdomain(scanRecord.ID, "in.example.com", "subfinder")
-	_ = database.AddSubdomain(scanRecord.ID, "out.example.com", "subfinder")
+	_ = database.AddSubdomains(scanRecord.ID, []string{"in.example.com", "out.example.com"}, "subfinder")
 
 	subs, _ := database.GetSubdomains(scanRecord.ID)
 	if len(subs) != 2 {

@@ -35,7 +35,7 @@ func TestDatabaseOperations(t *testing.T) {
 	}
 
 	// 4. Add Subdomain
-	err = database.AddSubdomain(scan.ID, "sub.testdomain.com", "subfinder")
+	err = database.AddSubdomains(scan.ID, []string{"sub.testdomain.com"}, "subfinder")
 	if err != nil {
 		t.Errorf("failed to add subdomain: %v", err)
 	}
@@ -59,25 +59,25 @@ func TestDatabaseOperations(t *testing.T) {
 	}
 
 	// 7. Add Port
-	err = database.AddPort(scan.ID, "sub.testdomain.com", 80, "tcp", "http")
+	err = database.AddPorts(scan.ID, []database.Port{{Host: "sub.testdomain.com", Port: 80, Protocol: "tcp", Service: "http"}})
 	if err != nil {
 		t.Errorf("failed to add port: %v", err)
 	}
 
 	// 8. Add URL
-	err = database.AddURL(scan.ID, "http://sub.testdomain.com/index.html", 200, "text/html", "Home Page", `["jquery"]`, "httpx")
+	err = database.AddURL(scan.ID, database.URLRecord{RawURL: "http://sub.testdomain.com/index.html", StatusCode: 200, ContentType: "text/html", Title: "Home Page", Tech: `["jquery"]`, Source: "httpx"})
 	if err != nil {
 		t.Errorf("failed to add URL: %v", err)
 	}
 
 	// 9. Add Endpoint
-	err = database.AddEndpoint(scan.ID, "http://sub.testdomain.com/api/v1", "GET", "katana")
+	err = database.AddEndpoints(scan.ID, []database.Endpoint{{URL: "http://sub.testdomain.com/api/v1", Method: "GET", Source: "katana"}})
 	if err != nil {
 		t.Errorf("failed to add endpoint: %v", err)
 	}
 
 	// 10. Add Vulnerability
-	err = database.AddVulnerability(scan.ID, "sub.testdomain.com", "http://sub.testdomain.com/index.html", "xss", "Reflected XSS", "medium", "XSS vulnerability", "matcher", "evidence")
+	err = database.AddVulnerability(scan.ID, database.VulnRecord{Host: "sub.testdomain.com", URL: "http://sub.testdomain.com/index.html", TemplateID: "xss", Name: "Reflected XSS", Severity: "medium", Description: "XSS vulnerability", Matcher: "matcher", Evidence: "evidence"})
 	if err != nil {
 		t.Errorf("failed to add vulnerability: %v", err)
 	}

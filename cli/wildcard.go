@@ -124,7 +124,7 @@ func init() {
 	wildcardCmd.Flags().StringSliceVarP(&customHeaders, "header", "H", nil, "Custom request header (can be repeated, e.g. -H 'Authorization: Bearer token')")
 	wildcardCmd.Flags().StringVar(&customToken, "token", "", "Bearer token shorthand (injects 'Authorization: Bearer <token>')")
 	wildcardCmd.Flags().BoolVar(&autoProxy, "auto-proxy", false, "Auto-scrape free proxies, validate against target, and rotate IPs during scan")
-	wildcardCmd.MarkFlagRequired("domain")
+	_ = wildcardCmd.MarkFlagRequired("domain")
 	rootCmd.AddCommand(wildcardCmd)
 }
 

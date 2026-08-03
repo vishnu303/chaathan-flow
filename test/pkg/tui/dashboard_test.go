@@ -86,7 +86,7 @@ func TestGetTopTechnologiesAggregation(t *testing.T) {
 	}
 
 	for _, mu := range mockURLs {
-		err := database.AddURL(scanID, mu.url, 200, "text/html", "Title", mu.tech, "test")
+		err := database.AddURL(scanID, database.URLRecord{RawURL: mu.url, StatusCode: 200, ContentType: "text/html", Title: "Title", Tech: mu.tech, Source: "test"})
 		if err != nil {
 			t.Fatalf("failed to insert URL: %v", err)
 		}

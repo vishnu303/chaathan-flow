@@ -2,6 +2,14 @@ package utils
 
 import "slices"
 
+// UI layout constants shared by CLI presentation code.
+const (
+	// UITruncLen is the standard display width for truncated columns (targets, etc.).
+	UITruncLen = 30
+	// ProgressBarWidth is the character width of rendered progress bars.
+	ProgressBarWidth = 30
+)
+
 // junkDomains are 3rd-party domains that should never be scanned.
 var junkDomains = []string{
 	"googleapis.com",

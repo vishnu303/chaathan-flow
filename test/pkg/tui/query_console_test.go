@@ -37,7 +37,7 @@ func TestQueryConsoleLoadAndCapping(t *testing.T) {
 
 	for i := 1; i <= 5005; i++ {
 		domain := fmt.Sprintf("sub%d.example.com", i)
-		err := database.AddSubdomain(scanID, domain, "test")
+		err := database.AddSubdomains(scanID, []string{domain}, "test")
 		if err != nil {
 			t.Fatalf("failed to insert subdomain %d: %v", i, err)
 		}
@@ -47,7 +47,7 @@ func TestQueryConsoleLoadAndCapping(t *testing.T) {
 		}
 	}
 
-	err = database.AddURL(scanID, "https://example.com/api", 200, "application/json", "API Title", `["Node.js","Express"]`, "test")
+	err = database.AddURL(scanID, database.URLRecord{RawURL: "https://example.com/api", StatusCode: 200, ContentType: "application/json", Title: "API Title", Tech: `["Node.js","Express"]`, Source: "test"})
 	if err != nil {
 		t.Fatalf("failed to insert URL: %v", err)
 	}

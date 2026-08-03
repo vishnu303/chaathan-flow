@@ -6,6 +6,7 @@ package company_flow
 import (
 	"path/filepath"
 
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/utils"
 )
@@ -15,8 +16,8 @@ import (
 // ─────────────────────────────────────────────────────────────
 
 // stepMetabigor discovers ASN/network ranges for the target organisation.
-// Returns (cancelled, error).
-func stepMetabigor(c *Ctx) (bool, error) {
+// Returns a flowkit.StepResult.
+func stepMetabigor(c *Ctx) flowkit.StepResult {
 	c.Total++
 
 	if !c.SkipMetabigor {
@@ -27,7 +28,7 @@ func stepMetabigor(c *Ctx) (bool, error) {
 		if err := c.Tb.RunMetabigorNet(c.GoCtx, c.Company, asnOut); err != nil {
 			logger.ToolFail("Metabigor", err.Error())
 			c.Failed++
-			return c.cancelled(), err
+			return flowkit.StepResult{Cancelled: c.cancelled(), Err: err}
 		} else {
 			count, _ := utils.CountFileLines(asnOut)
 			logger.Result(count, "ASN/network ranges found")
@@ -38,5 +39,5 @@ func stepMetabigor(c *Ctx) (bool, error) {
 		c.Completed++
 	}
 
-	return c.cancelled(), nil
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }

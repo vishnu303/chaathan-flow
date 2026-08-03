@@ -253,7 +253,6 @@ var (
 	scanUIMu       sync.Mutex
 	currentStep    int
 	totalSteps     int
-	scanStartTime  time.Time
 	lastStepPrefix string
 	stepStartTime  time.Time // when the current step header was printed
 )
@@ -264,7 +263,6 @@ func InitScanUI(total int) {
 	defer scanUIMu.Unlock()
 	currentStep = 0
 	totalSteps = total
-	scanStartTime = time.Now()
 	lastStepPrefix = ""
 	stepStartTime = time.Time{}
 }

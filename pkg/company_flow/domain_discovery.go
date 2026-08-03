@@ -6,6 +6,7 @@ package company_flow
 import (
 	"path/filepath"
 
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/utils"
 )
@@ -15,8 +16,8 @@ import (
 // ─────────────────────────────────────────────────────────────
 
 // stepAmassIntel uses Amass Intel reverse-whois to find root domains owned by the org.
-// Returns (cancelled, error).
-func stepAmassIntel(c *Ctx) (bool, error) {
+// Returns a flowkit.StepResult.
+func stepAmassIntel(c *Ctx) flowkit.StepResult {
 	c.Total++
 
 	if !c.SkipAmassIntel {
@@ -28,7 +29,7 @@ func stepAmassIntel(c *Ctx) (bool, error) {
 			logger.ToolFail("Amass Intel", err.Error())
 			logger.Info("  This is common — amass intel requires WHOIS data access")
 			c.Failed++
-			return c.cancelled(), err
+			return flowkit.StepResult{Cancelled: c.cancelled(), Err: err}
 		} else {
 			count, _ := utils.CountFileLines(amassIntelOut)
 			logger.Result(count, "root domains discovered")
@@ -39,5 +40,5 @@ func stepAmassIntel(c *Ctx) (bool, error) {
 		c.Completed++
 	}
 
-	return c.cancelled(), nil
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }

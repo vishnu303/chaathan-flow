@@ -38,6 +38,21 @@ func (r ResumeSignal) Error() string {
 	return fmt.Sprintf("resume scan: %d", r.ScanID)
 }
 
+// dashboard holds the tview components and state for the status dashboard.
+type dashboard struct {
+	app        *tview.Application
+	pages      *tview.Pages
+	topStats   *tview.TextView
+	leftList   *tview.List
+	middleText *tview.TextView
+	rightText  *tview.TextView
+
+	// scansList mirrors the fetched scan rows to resolve list indices.
+	scansList []database.Scan
+
+	resumeScanID int64
+}
+
 // StartDashboard boots up the interactive tview dashboard.
 func StartDashboard() error {
 	// Configure global tview styles to use terminal transparent background
@@ -48,7 +63,7 @@ func StartDashboard() error {
 	tview.Styles.GraphicsColor = tcell.GetColor(ColorActive)
 	tview.Styles.TitleColor = tcell.GetColor(ColorSapphire)
 
-	app := tview.NewApplication()
+	d := &dashboard{app: tview.NewApplication()}
 
 	// 1. Header View
 	headerText := tview.NewTextView().
@@ -60,36 +75,28 @@ func StartDashboard() error {
 	))
 
 	// 2. Global Metrics Bar
-	topStats := tview.NewTextView().
+	d.topStats = tview.NewTextView().
 		SetDynamicColors(true).
 		SetTextAlign(tview.AlignLeft)
 
-	// Border style helpers
-	borderStyle := func(box *tview.Box, title string) {
-		box.SetBorder(true).
-			SetTitle(" " + title + " ").
-			SetTitleColor(tcell.GetColor(ColorSapphire)).
-			SetBorderColor(tcell.GetColor(ColorActive))
-	}
-
 	// 3. Left Column: Scan Runs List
-	leftList := tview.NewList().
+	d.leftList = tview.NewList().
 		ShowSecondaryText(true)
-	borderStyle(leftList.Box, "SCAN RUNS")
-	leftList.SetSelectedTextColor(tcell.GetColor(ColorActive)).
+	dashboardBorderStyle(d.leftList.Box, "SCAN RUNS")
+	d.leftList.SetSelectedTextColor(tcell.GetColor(ColorActive)).
 		SetSelectedBackgroundColor(tcell.GetColor("#313244"))
 
 	// 4. Middle Column: Details & Open Ports
-	middleText := tview.NewTextView().
+	d.middleText = tview.NewTextView().
 		SetDynamicColors(true).
 		SetWrap(true)
-	borderStyle(middleText.Box, "PROPERTIES & OPEN PORTS")
+	dashboardBorderStyle(d.middleText.Box, "PROPERTIES & OPEN PORTS")
 
 	// 5. Right Column: Scope Metrics & Vulnerabilities
-	rightText := tview.NewTextView().
+	d.rightText = tview.NewTextView().
 		SetDynamicColors(true).
 		SetWrap(true)
-	borderStyle(rightText.Box, "FINDINGS & VULNERABILITIES")
+	dashboardBorderStyle(d.rightText.Box, "FINDINGS & VULNERABILITIES")
 
 	// 6. Footer Help Bar
 	footerHelp := tview.NewTextView().
@@ -100,6 +107,42 @@ func StartDashboard() error {
 		ColorActive, ColorActive, ColorActive, ColorActive, ColorActive,
 	))
 
+	d.pages = buildDashboardLayout(headerText, d.topStats, d.leftList, d.middleText, d.rightText, footerHelp)
+
+	// Update details pane when a scan is selected
+	d.leftList.SetChangedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
+		if index < 0 || index >= len(d.scansList) {
+			return
+		}
+		d.showScanDetails(d.scansList[index])
+	})
+
+	// Setup input captures (Global hotkeys)
+	d.app.SetInputCapture(d.dashboardKeys)
+
+	// Initial data reload
+	d.reloadData()
+
+	// Draw full screen layout container
+	if err := d.app.SetRoot(d.pages, true).EnableMouse(true).Run(); err != nil {
+		return err
+	}
+	if d.resumeScanID > 0 {
+		return ResumeSignal{ScanID: d.resumeScanID}
+	}
+	return nil
+}
+
+// dashboardBorderStyle applies the shared border/title styling to a dashboard pane.
+func dashboardBorderStyle(box *tview.Box, title string) {
+	box.SetBorder(true).
+		SetTitle(" " + title + " ").
+		SetTitleColor(tcell.GetColor(ColorSapphire)).
+		SetBorderColor(tcell.GetColor(ColorActive))
+}
+
+// buildDashboardLayout assembles the 3-pane dashboard screen layout.
+func buildDashboardLayout(headerText, topStats *tview.TextView, leftList *tview.List, middleText, rightText *tview.TextView, footerHelp *tview.TextView) *tview.Pages {
 	// 3-pane horizontal flex column layout
 	mainFlex := tview.NewFlex().
 		SetDirection(tview.FlexColumn).
@@ -115,333 +158,324 @@ func StartDashboard() error {
 		AddItem(mainFlex, 0, 1, true).
 		AddItem(footerHelp, 1, 0, false)
 
-	pages := tview.NewPages().
-		AddPage("main", layout, true, true)
+	return tview.NewPages().AddPage("main", layout, true, true)
+}
 
-	var resumeScanID int64 = 0
+// reloadData refreshes the global stats bar and scan list from the database.
+func (d *dashboard) reloadData() {
+	go func() {
+		totalScans, _ := database.GetTotalScansCount()
+		totalSubs, _ := database.GetTotalSubdomainsCount()
+		totalPorts, _ := database.GetTotalPortsCount()
+		totalVulns, _ := database.GetTotalVulnerabilitiesCount()
+		scans, err := database.GetRecentScans(15)
 
-	// Keep track of fetched scans list to resolve indices
-	var scansList []database.Scan
+		d.app.QueueUpdateDraw(func() {
+			statsText := fmt.Sprintf(
+				" GLOBAL STATS: [%s]Scans ran:[-] [#cdd6f4]%d[-]    [%s]Domains found:[-] [#cdd6f4]%d[-]    [%s]Ports open:[-] [#cdd6f4]%d[-]    [%s]Vulnerabilities:[-] [#cdd6f4]%d[-]",
+				ColorBlue, totalScans, ColorBlue, totalSubs, ColorBlue, totalPorts, ColorBlue, totalVulns,
+			)
+			d.topStats.SetText(statsText)
 
-	// Function to reload data from database
-	reloadData := func() {
-		go func() {
-			totalScans, _ := database.GetTotalScansCount()
-			totalSubs, _ := database.GetTotalSubdomainsCount()
-			totalPorts, _ := database.GetTotalPortsCount()
-			totalVulns, _ := database.GetTotalVulnerabilitiesCount()
-			scans, err := database.GetRecentScans(15)
+			if err != nil {
+				d.middleText.SetText(fmt.Sprintf(" [red]Database error: %v[-]", err))
+				return
+			}
+			d.scansList = scans
 
-			app.QueueUpdateDraw(func() {
-				statsText := fmt.Sprintf(
-					" GLOBAL STATS: [%s]Scans ran:[-] [#cdd6f4]%d[-]    [%s]Domains found:[-] [#cdd6f4]%d[-]    [%s]Ports open:[-] [#cdd6f4]%d[-]    [%s]Vulnerabilities:[-] [#cdd6f4]%d[-]",
-					ColorBlue, totalScans, ColorBlue, totalSubs, ColorBlue, totalPorts, ColorBlue, totalVulns,
-				)
-				topStats.SetText(statsText)
+			d.leftList.Clear()
+			if len(d.scansList) == 0 {
+				d.leftList.AddItem("No scans recorded.", "Run a scan first.", 0, nil)
+				d.middleText.SetText(" Select a scan run to view properties.")
+				d.rightText.SetText(" Select a scan to inspect findings.")
+				return
+			}
 
-				if err != nil {
-					middleText.SetText(fmt.Sprintf(" [red]Database error: %v[-]", err))
-					return
-				}
-				scansList = scans
+			for _, s := range d.scansList {
+				statusSymbol, statusColor := dashboardStatusBadge(s.Status)
 
-				leftList.Clear()
-				if len(scansList) == 0 {
-					leftList.AddItem("No scans recorded.", "Run a scan first.", 0, nil)
-					middleText.SetText(" Select a scan run to view properties.")
-					rightText.SetText(" Select a scan to inspect findings.")
-					return
-				}
-
-				for _, s := range scansList {
-					statusSymbol := "[ ]"
-					var statusColor string
-					switch s.Status {
-					case "completed":
-						statusSymbol = "[+]"
-						statusColor = ColorGreen
-					case "failed":
-						statusSymbol = "[-]"
-						statusColor = ColorRed
-					case "running":
-						statusSymbol = "[*]"
-						statusColor = ColorYellow
-					case "cancelled":
-						statusSymbol = "[ ]"
-						statusColor = ColorBlue
-					}
-
-					age := time.Since(s.StartedAt).Round(time.Minute)
-					ageStr := fmt.Sprintf("%dm ago", int(age.Minutes()))
-					if age.Hours() >= 24 {
-						ageStr = fmt.Sprintf("%.0fd ago", age.Hours()/24)
-					} else if age.Hours() >= 1 {
-						ageStr = fmt.Sprintf("%.0fh ago", age.Hours())
-					}
-
-					rowText := fmt.Sprintf("[%s]%s[-] #%d %s", statusColor, statusSymbol, s.ID, s.Target)
-					leftList.AddItem(rowText, "Started "+ageStr, 0, nil)
+				age := time.Since(s.StartedAt).Round(time.Minute)
+				ageStr := fmt.Sprintf("%dm ago", int(age.Minutes()))
+				if age.Hours() >= 24 {
+					ageStr = fmt.Sprintf("%.0fd ago", age.Hours()/24)
+				} else if age.Hours() >= 1 {
+					ageStr = fmt.Sprintf("%.0fh ago", age.Hours())
 				}
 
-				if leftList.GetItemCount() > 0 {
-					leftList.SetCurrentItem(0)
-				}
-			})
-		}()
+				rowText := fmt.Sprintf("[%s]%s[-] #%d %s", statusColor, statusSymbol, s.ID, s.Target)
+				d.leftList.AddItem(rowText, "Started "+ageStr, 0, nil)
+			}
+
+			if d.leftList.GetItemCount() > 0 {
+				d.leftList.SetCurrentItem(0)
+			}
+		})
+	}()
+}
+
+// dashboardStatusBadge maps a scan status to its list symbol and color.
+func dashboardStatusBadge(status string) (string, string) {
+	switch status {
+	case "completed":
+		return "[+]", ColorGreen
+	case "failed":
+		return "[-]", ColorRed
+	case "running":
+		return "[*]", ColorYellow
+	case "cancelled":
+		return "[ ]", ColorBlue
+	default:
+		return "[ ]", ""
+	}
+}
+
+// showScanDetails fetches details for the selected scan and renders both panes.
+func (d *dashboard) showScanDetails(s database.Scan) {
+	d.middleText.SetText("  Loading details...")
+	d.rightText.SetText("  Loading findings...")
+
+	go func(sID int64, sType string, sStatus string, sTarget string, sStartedAt time.Time, sCompletedAt *time.Time, sResultDir string) {
+		ports, errPorts := database.GetPorts(sID)
+		stats, errStats := database.GetScanStats(sID)
+		techs := getTopTechnologies(sID)
+		vulns, errVulns := database.GetVulnerabilities(sID)
+		runtimeProgressText := dashboardRuntimeProgress(sID, sType, sStatus)
+
+		d.app.QueueUpdateDraw(func() {
+			// Verify selection hasn't changed
+			currIdx := d.leftList.GetCurrentItem()
+			if currIdx < 0 || currIdx >= len(d.scansList) || d.scansList[currIdx].ID != sID {
+				return
+			}
+			d.middleText.SetText(buildDashboardDetails(sType, sStatus, sTarget, sStartedAt, sCompletedAt, sResultDir, runtimeProgressText, ports, errPorts))
+			d.rightText.SetText(buildDashboardFindings(stats, errStats, techs, vulns, errVulns))
+		})
+	}(s.ID, s.Type, s.Status, s.Target, s.StartedAt, s.CompletedAt, s.ResultDir)
+}
+
+// dashboardRuntimeProgress renders the live step progress block for running scans.
+func dashboardRuntimeProgress(sID int64, sType string, sStatus string) string {
+	if sStatus != "running" {
+		return ""
+	}
+	stateMgr := scan.NewManager(paths.StateDir())
+	state, err := stateMgr.LoadState(sID)
+	if err != nil {
+		return ""
 	}
 
-	// Function to update details when scan is selected
-	leftList.SetChangedFunc(func(index int, mainText string, secondaryText string, shortcut rune) {
-		if index < 0 || index >= len(scansList) {
-			return
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("  [%s::b]RUNTIME PROGRESS[-]\n", ColorYellow))
+	completed := len(state.CompletedSteps)
+	total := state.TotalSteps
+	if total == 0 {
+		total = 1
+	}
+	pct := float64(completed) / float64(total) * 100
+
+	sb.WriteString(fmt.Sprintf("  [%s]%.0f%%[-] Current: %d/%d steps\n", ColorYellow, pct, completed, total))
+	steps := pickStepsForType(sType)
+	if state.CurrentStep < len(steps) {
+		sb.WriteString(fmt.Sprintf("  Current: %s\n\n", steps[state.CurrentStep].Description))
+	} else {
+		sb.WriteString("  Current: Finalizing...\n\n")
+	}
+	return sb.String()
+}
+
+// buildDashboardDetails renders the middle pane (scan properties and open ports).
+func buildDashboardDetails(sType string, sStatus string, sTarget string, sStartedAt time.Time, sCompletedAt *time.Time, sResultDir string, runtimeProgressText string, ports []database.Port, errPorts error) string {
+	var midSB strings.Builder
+	statusColor := ColorBlue
+	switch sStatus {
+	case "completed":
+		statusColor = ColorGreen
+	case "failed":
+		statusColor = ColorRed
+	case "running":
+		statusColor = ColorYellow
+	}
+	statusBadge := fmt.Sprintf("[%s::b] %s [-]", statusColor, strings.ToUpper(sStatus))
+
+	midSB.WriteString(fmt.Sprintf("  [%s::b]Target: %s[-]\n\n", ColorLavender, sTarget))
+	midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Type:", strings.ToUpper(sType)))
+	midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Status:", statusBadge))
+	midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Started:", sStartedAt.Format("15:04:05")))
+
+	var durStr string
+	switch {
+	case sCompletedAt != nil:
+		durStr = sCompletedAt.Sub(sStartedAt).Round(time.Second).String()
+	case sStatus != "running":
+		durStr = "Unknown"
+	default:
+		durStr = time.Since(sStartedAt).Round(time.Second).String()
+	}
+	midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Duration:", durStr))
+	midSB.WriteString(fmt.Sprintf("  [%s]Folder:[-] %s\n\n", ColorSubtle, sResultDir))
+
+	if runtimeProgressText != "" {
+		midSB.WriteString(runtimeProgressText)
+	}
+
+	midSB.WriteString(fmt.Sprintf("  [%s::b]DISCOVERED OPEN PORTS[-]\n", ColorSapphire))
+	if errPorts == nil && len(ports) > 0 {
+		midSB.WriteString(fmt.Sprintf("  [%s]Host                Port/Proto  Service[-]\n", ColorSubtle))
+		displayLimit := 8
+		if len(ports) < displayLimit {
+			displayLimit = len(ports)
 		}
-		s := scansList[index]
-
-		middleText.SetText("  Loading details...")
-		rightText.SetText("  Loading findings...")
-
-		go func(sID int64, sType string, sStatus string, sTarget string, sStartedAt time.Time, sCompletedAt *time.Time, sResultDir string) {
-			ports, errPorts := database.GetPorts(sID)
-			stats, errStats := database.GetScanStats(sID)
-			techs := getTopTechnologies(sID)
-			vulns, errVulns := database.GetVulnerabilities(sID)
-
-			var runtimeProgressText string
-			if sStatus == "running" {
-				stateMgr := scan.NewManager(paths.StateDir())
-				if state, err := stateMgr.LoadState(sID); err == nil {
-					var midSB strings.Builder
-					midSB.WriteString(fmt.Sprintf("  [%s::b]RUNTIME PROGRESS[-]\n", ColorYellow))
-					completed := len(state.CompletedSteps)
-					total := state.TotalSteps
-					if total == 0 {
-						total = 1
-					}
-					pct := float64(completed) / float64(total) * 100
-
-					barWidth := 20
-					filled := int(float64(barWidth) * pct / 100)
-					bar := ""
-					for i := 0; i < barWidth; i++ {
-						if i < filled {
-							bar += "█"
-						} else {
-							bar += "░"
-						}
-					}
-					midSB.WriteString(fmt.Sprintf("  [%s]%.0f%%[-] Current: %d/%d steps\n", ColorYellow, pct, completed, total))
-					steps := pickStepsForType(sType)
-					if state.CurrentStep < len(steps) {
-						midSB.WriteString(fmt.Sprintf("  Current: %s\n\n", steps[state.CurrentStep].Description))
-					} else {
-						midSB.WriteString("  Current: Finalizing...\n\n")
-					}
-					runtimeProgressText = midSB.String()
-				}
+		for i := 0; i < displayLimit; i++ {
+			p := ports[i]
+			proto := p.Protocol
+			if proto == "" {
+				proto = "tcp"
 			}
-
-			app.QueueUpdateDraw(func() {
-				// Verify selection hasn't changed
-				currIdx := leftList.GetCurrentItem()
-				if currIdx < 0 || currIdx >= len(scansList) || scansList[currIdx].ID != sID {
-					return
-				}
-
-				var midSB strings.Builder
-				statusColor := ColorBlue
-				switch sStatus {
-				case "completed":
-					statusColor = ColorGreen
-				case "failed":
-					statusColor = ColorRed
-				case "running":
-					statusColor = ColorYellow
-				}
-				statusBadge := fmt.Sprintf("[%s::b] %s [-]", statusColor, strings.ToUpper(sStatus))
-
-				midSB.WriteString(fmt.Sprintf("  [%s::b]Target: %s[-]\n\n", ColorLavender, sTarget))
-				midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Type:", strings.ToUpper(sType)))
-				midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Status:", statusBadge))
-				midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Started:", sStartedAt.Format("15:04:05")))
-
-				durStr := "Active..."
-				if sCompletedAt != nil {
-					durStr = sCompletedAt.Sub(sStartedAt).Round(time.Second).String()
-				} else if sStatus != "running" {
-					durStr = "Unknown"
-				} else {
-					durStr = time.Since(sStartedAt).Round(time.Second).String()
-				}
-				midSB.WriteString(fmt.Sprintf("  %-12s %s\n", "Duration:", durStr))
-				midSB.WriteString(fmt.Sprintf("  [%s]Folder:[-] %s\n\n", ColorSubtle, sResultDir))
-
-				if runtimeProgressText != "" {
-					midSB.WriteString(runtimeProgressText)
-				}
-
-				midSB.WriteString(fmt.Sprintf("  [%s::b]DISCOVERED OPEN PORTS[-]\n", ColorSapphire))
-				if errPorts == nil && len(ports) > 0 {
-					midSB.WriteString(fmt.Sprintf("  [%s]Host                Port/Proto  Service[-]\n", ColorSubtle))
-					displayLimit := 8
-					if len(ports) < displayLimit {
-						displayLimit = len(ports)
-					}
-					for i := 0; i < displayLimit; i++ {
-						p := ports[i]
-						proto := p.Protocol
-						if proto == "" {
-							proto = "tcp"
-						}
-						portStr := fmt.Sprintf("%d/%s", p.Port, proto)
-						srv := p.Service
-						if srv == "" {
-							srv = "unknown"
-						}
-						midSB.WriteString(fmt.Sprintf("  %-19s %-11s %s\n", truncateText(p.Host, 18), portStr, truncateText(srv, 8)))
-					}
-					if len(ports) > displayLimit {
-						midSB.WriteString(fmt.Sprintf("  [%s::i]...and %d more ports[-]\n", ColorSubtle, len(ports)-displayLimit))
-					}
-				} else {
-					midSB.WriteString(fmt.Sprintf("  [%s]No open ports discovered.[-]\n", ColorSubtle))
-				}
-				middleText.SetText(midSB.String())
-
-				var rightSB strings.Builder
-				rightSB.WriteString(fmt.Sprintf("  [%s::b]SCOPE COUNTS[-]\n", ColorSapphire))
-				if errStats == nil && stats != nil {
-					colSub := fmt.Sprintf("%d", stats.TotalSubdomains)
-					colLive := fmt.Sprintf("%d", stats.LiveSubdomains)
-					rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%s[-]\n", "Subdomains:", ColorSapphire, colSub))
-					rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%s[-]\n", "Live Hosts:", ColorSapphire, colLive))
-					rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%d[-]\n", "URLs Crawled:", ColorSapphire, stats.TotalURLs))
-					rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%d[-]\n\n", "Endpoints:", ColorSapphire, stats.TotalEndpoints))
-				} else {
-					rightSB.WriteString(fmt.Sprintf("  [%s]No counters compiled.[-]\n\n", ColorSubtle))
-				}
-
-				if len(techs) > 0 {
-					rightSB.WriteString(fmt.Sprintf("  [%s::b]TOP TECHNOLOGIES DETECTED[-]\n", ColorSapphire))
-					for _, t := range techs {
-						rightSB.WriteString(fmt.Sprintf("  • %s\n", t))
-					}
-					rightSB.WriteString("\n")
-				}
-
-				rightSB.WriteString(fmt.Sprintf("  [%s::b]VULNERABILITY DISCOVERIES[-]\n", ColorActive))
-				if errVulns == nil && len(vulns) > 0 {
-					displayLimit := 5
-					if len(vulns) < displayLimit {
-						displayLimit = len(vulns)
-					}
-					for i := 0; i < displayLimit; i++ {
-						v := vulns[i]
-						var badge string
-						switch strings.ToLower(v.Severity) {
-						case "critical":
-							badge = fmt.Sprintf("[%s][CRIT][-]", ColorRed)
-						case "high":
-							badge = fmt.Sprintf("[%s][HIGH][-]", ColorOrange)
-						case "medium":
-							badge = fmt.Sprintf("[%s][MED ][-]", ColorYellow)
-						case "low":
-							badge = fmt.Sprintf("[%s][LOW ][-]", ColorGreen)
-						default:
-							badge = fmt.Sprintf("[%s][INFO][-]", ColorBlue)
-						}
-
-						vTitle := truncateText(v.Name, 26)
-						vHost := truncateText(v.Host, 14)
-						rightSB.WriteString(fmt.Sprintf("  %s %s [%s]%s[-]\n", badge, vHost, ColorSubtle, vTitle))
-						if v.URL != "" {
-							rightSB.WriteString(fmt.Sprintf("    [%s]↳ URL: %s[-]\n", ColorSubtle, truncateText(v.URL, 80)))
-						}
-					}
-					if len(vulns) > displayLimit {
-						rightSB.WriteString(fmt.Sprintf("  [%s::i]...and %d more vulnerabilities[-]\n", ColorSubtle, len(vulns)-displayLimit))
-					}
-				} else {
-					rightSB.WriteString(fmt.Sprintf("\n  [%s]Clean Scan - No vulnerabilities found.[-]\n", ColorGreen))
-				}
-				rightText.SetText(rightSB.String())
-			})
-		}(s.ID, s.Type, s.Status, s.Target, s.StartedAt, s.CompletedAt, s.ResultDir)
-	})
-
-	// Setup input captures (Global hotkeys)
-	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if pages.HasPage("delete_confirm") {
-			return event
-		}
-
-		switch event.Rune() {
-		case 'q', 'Q':
-			app.Stop()
-			return nil
-		case 'd', 'D':
-			idx := leftList.GetCurrentItem()
-			if idx >= 0 && idx < len(scansList) {
-				s := scansList[idx]
-				modal := tview.NewModal().
-					SetText(fmt.Sprintf("Are you sure you want to delete scan #%d for %s?\nThis action cannot be undone.", s.ID, s.Target)).
-					AddButtons([]string{"Yes", "No"}).
-					SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-						if buttonLabel == "Yes" {
-							if err := database.DeleteScan(s.ID); err == nil {
-								reloadData()
-							} else {
-								logger.FileDebug("failed to delete scan %d: %v", s.ID, err)
-								errorModal := tview.NewModal().
-									SetText(fmt.Sprintf("Failed to delete scan #%d: %v", s.ID, err)).
-									AddButtons([]string{"OK"}).
-									SetDoneFunc(func(bIdx int, bLabel string) {
-										pages.RemovePage("delete_error")
-										app.SetFocus(leftList)
-									})
-								pages.AddPage("delete_error", errorModal, true, true)
-								return
-							}
-						}
-						pages.RemovePage("delete_confirm")
-						app.SetFocus(leftList)
-					})
-				pages.AddPage("delete_confirm", modal, true, true)
+			portStr := fmt.Sprintf("%d/%s", p.Port, proto)
+			srv := p.Service
+			if srv == "" {
+				srv = "unknown"
 			}
-			return nil
-		case 'r', 'R':
-			idx := leftList.GetCurrentItem()
-			if idx >= 0 && idx < len(scansList) {
-				s := scansList[idx]
-				resumeScanID = s.ID
-				app.Stop()
+			midSB.WriteString(fmt.Sprintf("  %-19s %-11s %s\n", truncateText(p.Host, 18), portStr, truncateText(srv, 8)))
+		}
+		if len(ports) > displayLimit {
+			midSB.WriteString(fmt.Sprintf("  [%s::i]...and %d more ports[-]\n", ColorSubtle, len(ports)-displayLimit))
+		}
+	} else {
+		midSB.WriteString(fmt.Sprintf("  [%s]No open ports discovered.[-]\n", ColorSubtle))
+	}
+	return midSB.String()
+}
+
+// buildDashboardFindings renders the right pane (scope counts, techs, vulnerabilities).
+func buildDashboardFindings(stats *database.ScanStats, errStats error, techs []string, vulns []database.Vulnerability, errVulns error) string {
+	var rightSB strings.Builder
+	rightSB.WriteString(fmt.Sprintf("  [%s::b]SCOPE COUNTS[-]\n", ColorSapphire))
+	if errStats == nil && stats != nil {
+		colSub := fmt.Sprintf("%d", stats.TotalSubdomains)
+		colLive := fmt.Sprintf("%d", stats.LiveSubdomains)
+		rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%s[-]\n", "Subdomains:", ColorSapphire, colSub))
+		rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%s[-]\n", "Live Hosts:", ColorSapphire, colLive))
+		rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%d[-]\n", "URLs Crawled:", ColorSapphire, stats.TotalURLs))
+		rightSB.WriteString(fmt.Sprintf("  %-14s [%s]%d[-]\n\n", "Endpoints:", ColorSapphire, stats.TotalEndpoints))
+	} else {
+		rightSB.WriteString(fmt.Sprintf("  [%s]No counters compiled.[-]\n\n", ColorSubtle))
+	}
+
+	if len(techs) > 0 {
+		rightSB.WriteString(fmt.Sprintf("  [%s::b]TOP TECHNOLOGIES DETECTED[-]\n", ColorSapphire))
+		for _, t := range techs {
+			rightSB.WriteString(fmt.Sprintf("  • %s\n", t))
+		}
+		rightSB.WriteString("\n")
+	}
+
+	rightSB.WriteString(fmt.Sprintf("  [%s::b]VULNERABILITY DISCOVERIES[-]\n", ColorActive))
+	if errVulns == nil && len(vulns) > 0 {
+		displayLimit := 5
+		if len(vulns) < displayLimit {
+			displayLimit = len(vulns)
+		}
+		for i := 0; i < displayLimit; i++ {
+			v := vulns[i]
+			badge := dashboardSeverityBadge(v.Severity)
+
+			vTitle := truncateText(v.Name, 26)
+			vHost := truncateText(v.Host, 14)
+			rightSB.WriteString(fmt.Sprintf("  %s %s [%s]%s[-]\n", badge, vHost, ColorSubtle, vTitle))
+			if v.URL != "" {
+				rightSB.WriteString(fmt.Sprintf("    [%s]↳ URL: %s[-]\n", ColorSubtle, truncateText(v.URL, 80)))
 			}
-			return nil
 		}
+		if len(vulns) > displayLimit {
+			rightSB.WriteString(fmt.Sprintf("  [%s::i]...and %d more vulnerabilities[-]\n", ColorSubtle, len(vulns)-displayLimit))
+		}
+	} else {
+		rightSB.WriteString(fmt.Sprintf("\n  [%s]Clean Scan - No vulnerabilities found.[-]\n", ColorGreen))
+	}
+	return rightSB.String()
+}
 
-		if event.Key() == tcell.KeyCtrlR || event.Key() == tcell.KeyF5 {
-			reloadData()
-			return nil
-		}
+// dashboardSeverityBadge maps a vulnerability severity to its colored badge.
+func dashboardSeverityBadge(severity string) string {
+	switch strings.ToLower(severity) {
+	case "critical":
+		return fmt.Sprintf("[%s][CRIT][-]", ColorRed)
+	case "high":
+		return fmt.Sprintf("[%s][HIGH][-]", ColorOrange)
+	case "medium":
+		return fmt.Sprintf("[%s][MED ][-]", ColorYellow)
+	case "low":
+		return fmt.Sprintf("[%s][LOW ][-]", ColorGreen)
+	default:
+		return fmt.Sprintf("[%s][INFO][-]", ColorBlue)
+	}
+}
 
-		// Also support Escape and Ctrl+C to quit
-		if event.Key() == tcell.KeyCtrlC || event.Key() == tcell.KeyEscape {
-			app.Stop()
-			return nil
-		}
+// dashboardKeys handles the global dashboard hotkeys.
+func (d *dashboard) dashboardKeys(event *tcell.EventKey) *tcell.EventKey {
+	if d.pages.HasPage("delete_confirm") {
 		return event
-	})
-
-	// Initial data reload
-	reloadData()
-
-	// Draw full screen layout container
-	if err := app.SetRoot(pages, true).EnableMouse(true).Run(); err != nil {
-		return err
 	}
-	if resumeScanID > 0 {
-		return ResumeSignal{ScanID: resumeScanID}
+
+	switch event.Rune() {
+	case 'q', 'Q':
+		d.app.Stop()
+		return nil
+	case 'd', 'D':
+		idx := d.leftList.GetCurrentItem()
+		if idx >= 0 && idx < len(d.scansList) {
+			d.showDeleteConfirm(d.scansList[idx])
+		}
+		return nil
+	case 'r', 'R':
+		idx := d.leftList.GetCurrentItem()
+		if idx >= 0 && idx < len(d.scansList) {
+			d.resumeScanID = d.scansList[idx].ID
+			d.app.Stop()
+		}
+		return nil
 	}
-	return nil
+
+	if event.Key() == tcell.KeyCtrlR || event.Key() == tcell.KeyF5 {
+		d.reloadData()
+		return nil
+	}
+
+	// Also support Escape and Ctrl+C to quit
+	if event.Key() == tcell.KeyCtrlC || event.Key() == tcell.KeyEscape {
+		d.app.Stop()
+		return nil
+	}
+	return event
+}
+
+// showDeleteConfirm opens the scan deletion confirmation modal.
+func (d *dashboard) showDeleteConfirm(s database.Scan) {
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("Are you sure you want to delete scan #%d for %s?\nThis action cannot be undone.", s.ID, s.Target)).
+		AddButtons([]string{"Yes", "No"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			if buttonLabel == "Yes" {
+				if err := database.DeleteScan(s.ID); err == nil {
+					d.reloadData()
+				} else {
+					logger.FileDebug("failed to delete scan %d: %v", s.ID, err)
+					errorModal := tview.NewModal().
+						SetText(fmt.Sprintf("Failed to delete scan #%d: %v", s.ID, err)).
+						AddButtons([]string{"OK"}).
+						SetDoneFunc(func(bIdx int, bLabel string) {
+							d.pages.RemovePage("delete_error")
+							d.app.SetFocus(d.leftList)
+						})
+					d.pages.AddPage("delete_error", errorModal, true, true)
+					return
+				}
+			}
+			d.pages.RemovePage("delete_confirm")
+			d.app.SetFocus(d.leftList)
+		})
+	d.pages.AddPage("delete_confirm", modal, true, true)
 }
 
 func getTopTechnologies(scanID int64) []string {

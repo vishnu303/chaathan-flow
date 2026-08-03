@@ -6,6 +6,7 @@ package company_flow
 import (
 	"path/filepath"
 
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/logger"
 )
 
@@ -15,8 +16,8 @@ import (
 
 // stepCloudEnum enumerates cloud infrastructure (S3, GCS, Azure Blob, etc.)
 // associated with the target keyword.
-// Returns (cancelled, error).
-func stepCloudEnum(c *Ctx) (bool, error) {
+// Returns a flowkit.StepResult.
+func stepCloudEnum(c *Ctx) flowkit.StepResult {
 	c.Total++
 
 	if !c.SkipCloudEnum {
@@ -27,7 +28,7 @@ func stepCloudEnum(c *Ctx) (bool, error) {
 		if err := c.Tb.RunCloudEnum(c.GoCtx, c.Company, cloudOut); err != nil {
 			logger.ToolFail("Cloud Enum", err.Error())
 			c.Failed++
-			return c.cancelled(), err
+			return flowkit.StepResult{Cancelled: c.cancelled(), Err: err}
 		} else {
 			logger.ToolDone("Cloud Enum")
 			c.Completed++
@@ -37,5 +38,5 @@ func stepCloudEnum(c *Ctx) (bool, error) {
 		c.Completed++
 	}
 
-	return c.cancelled(), nil
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }

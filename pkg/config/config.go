@@ -351,11 +351,6 @@ type ProxyScrapingConfig struct {
 	RotateEvery int `yaml:"rotate_every"`
 }
 
-// Cfg is the process-wide configuration instance, set by Load/LoadOrCreate.
-// It is the single sanctioned mutable global in the codebase: commands and
-// workflows read it, but only the config package may assign it.
-var Cfg *Config
-
 // expectedKeys maps each config path ("" for root, "general",
 // "tools.nuclei", ...) to the set of valid YAML keys at that level. It is
 // generated from the Config struct's yaml tags, so new fields are validated
@@ -459,7 +454,6 @@ func Load(path string) (*Config, error) {
 	resolveWordlists(cfg)
 	migrateJSLimit(cfg)
 
-	Cfg = cfg
 	return cfg, nil
 }
 
@@ -471,7 +465,6 @@ func LoadOrCreate(path string) (*Config, error) {
 		if err := Save(cfg, path); err != nil {
 			return nil, fmt.Errorf("failed to create default config: %w", err)
 		}
-		Cfg = cfg
 		return cfg, nil
 	}
 
@@ -505,6 +498,21 @@ func Save(cfg *Config, path string) error {
 	return nil
 }
 
+// Default tool tuning values used when seeding DefaultConfig. All timeouts
+// are in seconds unless noted.
+const (
+	// DefaultThreads is the default concurrency for discovery tools.
+	DefaultThreads = 30
+	// DefaultHTTPTimeout caps long-running HTTP analysis steps (minutes scale).
+	DefaultHTTPTimeout = 120
+	// DefaultToolTimeout caps crawling/spidering tool runs.
+	DefaultToolTimeout = 300
+	// DefaultStepTimeout caps very long discovery steps (30 minutes).
+	DefaultStepTimeout = 1800
+	// DefaultMaxURLs caps URLs handed to a single fuzzing run.
+	DefaultMaxURLs = 500
+)
+
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	chaathanDir := paths.ChaathanHome()
@@ -530,7 +538,7 @@ func DefaultConfig() *Config {
 				MaxFileMB:      15,
 				MapMaxMB:       20,
 				ValidateLimit:  50,
-				MaxTimeout:     120, // 2 hours for entire JS analysis step
+				MaxTimeout:     DefaultHTTPTimeout, // 2 hours for entire JS analysis step
 				SkipValidation: false,
 			},
 			ProxyScraping: ProxyScrapingConfig{
@@ -547,12 +555,12 @@ func DefaultConfig() *Config {
 		},
 		Tools: ToolsConfig{
 			Subfinder: SubfinderConfig{
-				Threads:    30,
+				Threads:    DefaultThreads,
 				Timeout:    30,
 				MaxTimeout: 15,
 			},
 			Assetfinder: AssetfinderConfig{
-				Timeout: 1800, // 30 minutes
+				Timeout: DefaultStepTimeout, // 30 minutes
 			},
 			Amass: AmassConfig{
 				Timeout: 60,
@@ -587,18 +595,18 @@ func DefaultConfig() *Config {
 				MaxTimeout: 180,
 			},
 			Dalfox: DalfoxConfig{
-				MaxURLs:        500,
+				MaxURLs:        DefaultMaxURLs,
 				SkipThirdParty: newBool(true),
-				MaxTimeout:     120,
+				MaxTimeout:     DefaultHTTPTimeout,
 			},
 			Katana: KatanaConfig{
-				Timeout: 300,
+				Timeout: DefaultToolTimeout,
 			},
 			GoSpider: GoSpiderConfig{
-				Timeout: 300,
+				Timeout: DefaultToolTimeout,
 			},
 			Uncover: UncoverConfig{
-				Timeout: 120,
+				Timeout: DefaultHTTPTimeout,
 			},
 			Tlsx: TlsxConfig{
 				MaxTimeout: 30,
@@ -610,7 +618,7 @@ func DefaultConfig() *Config {
 				MaxTimeout: 60,
 			},
 			X8: X8Config{
-				MaxTimeout: 120,
+				MaxTimeout: DefaultHTTPTimeout,
 			},
 			Sublist3r: Sublist3rConfig{
 				MaxTimeout: 15,
@@ -704,52 +712,66 @@ var apiKeyEnvMap = map[string]string{
 // Censys "id:secret" shorthand).
 func (c *Config) GetAPIKey(name string) string {
 	nameLower := strings.ToLower(name)
-	var val string
-	switch nameLower {
-	case "github":
-		val = c.APIKeys.GitHub
-	case "shodan":
-		val = c.APIKeys.Shodan
-	case "securitytrails":
-		val = c.APIKeys.SecurityTrails
-	case "virustotal":
-		val = c.APIKeys.VirusTotal
-	case "chaos":
-		val = c.APIKeys.Chaos
-	case "censys":
-		val = c.APIKeys.Censys
-		if val == "" && c.APIKeys.CensysID != "" && c.APIKeys.CensysSecret != "" {
-			val = c.APIKeys.CensysID + ":" + c.APIKeys.CensysSecret
-		}
-	case "fofa":
-		val = c.APIKeys.Fofa
-		if val != "" && c.APIKeys.FofaEmail != "" {
-			val = val + ":" + c.APIKeys.FofaEmail
-		}
-	case "fofa_email":
-		val = c.APIKeys.FofaEmail
-	case "quake":
-		val = c.APIKeys.Quake
-		if val != "" && c.APIKeys.QuakeEmail != "" {
-			val = val + ":" + c.APIKeys.QuakeEmail
-		}
-	case "quake_email":
-		val = c.APIKeys.QuakeEmail
-	case "zoomeye":
-		val = c.APIKeys.ZoomEye
-		if val != "" && c.APIKeys.ZoomEyeEmail != "" {
-			val = val + ":" + c.APIKeys.ZoomEyeEmail
-		}
-	case "zoomeye_email":
-		val = c.APIKeys.ZoomEyeEmail
-	}
-	if val != "" {
+	if val := c.lookupConfiguredKey(nameLower); val != "" {
 		return val
 	}
 	if envVar, exists := apiKeyEnvMap[nameLower]; exists {
 		return os.Getenv(envVar)
 	}
 	return ""
+}
+
+// lookupConfiguredKey resolves a key from the config file only (no env
+// fallback), applying the per-provider combination rules.
+func (c *Config) lookupConfiguredKey(nameLower string) string {
+	switch nameLower {
+	case "github":
+		return c.APIKeys.GitHub
+	case "shodan":
+		return c.APIKeys.Shodan
+	case "securitytrails":
+		return c.APIKeys.SecurityTrails
+	case "virustotal":
+		return c.APIKeys.VirusTotal
+	case "chaos":
+		return c.APIKeys.Chaos
+	case "censys":
+		return c.censysKey()
+	case "fofa":
+		return joinKeyEmail(c.APIKeys.Fofa, c.APIKeys.FofaEmail)
+	case "fofa_email":
+		return c.APIKeys.FofaEmail
+	case "quake":
+		return joinKeyEmail(c.APIKeys.Quake, c.APIKeys.QuakeEmail)
+	case "quake_email":
+		return c.APIKeys.QuakeEmail
+	case "zoomeye":
+		return joinKeyEmail(c.APIKeys.ZoomEye, c.APIKeys.ZoomEyeEmail)
+	case "zoomeye_email":
+		return c.APIKeys.ZoomEyeEmail
+	}
+	return ""
+}
+
+// censysKey resolves the Censys credential: the combined shorthand wins;
+// otherwise id:secret is assembled when both halves are configured.
+func (c *Config) censysKey() string {
+	if c.APIKeys.Censys != "" {
+		return c.APIKeys.Censys
+	}
+	if c.APIKeys.CensysID != "" && c.APIKeys.CensysSecret != "" {
+		return c.APIKeys.CensysID + ":" + c.APIKeys.CensysSecret
+	}
+	return ""
+}
+
+// joinKeyEmail returns "<key>:<email>" when both halves are configured,
+// otherwise the bare key.
+func joinKeyEmail(key, email string) string {
+	if key != "" && email != "" {
+		return key + ":" + email
+	}
+	return key
 }
 
 // ResolveSecListsBase returns the seclists installation base directory.

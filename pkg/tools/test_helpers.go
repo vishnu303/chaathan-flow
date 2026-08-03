@@ -1,6 +1,11 @@
 package tools
 
-import "github.com/vishnu303/chaathan/utils"
+import (
+	"context"
+	"fmt"
+
+	"github.com/vishnu303/chaathan/utils"
+)
 
 // RunFfufArgsTestHelper exports buildFfufArgs for testing.
 func (t *ToolBox) RunFfufArgsTestHelper(url string, wordlist string, outputFile string) []string {
@@ -21,4 +26,19 @@ func (t *ToolBox) AppendCommonTestHelper(args []string, uaHeader bool, tlsOpSec 
 // WriteToFileTestHelper exports writeToFile for testing.
 func (t *ToolBox) WriteToFileTestHelper(path string, content string) error {
 	return utils.WriteToFile(path, content)
+}
+
+// RunFfuf is a test-only convenience wrapper around buildFfufArgs + Runner.Run.
+func (t *ToolBox) RunFfuf(ctx context.Context, url string, wordlist string, outputFile string) error {
+	if wordlist == "" {
+		return fmt.Errorf("ffuf requires a wordlist path")
+	}
+	args := t.buildFfufArgs(url, wordlist, outputFile)
+	_, err := t.Runner.Run(ctx, ToolFfuf, args)
+	return err
+}
+
+// RunX8 is a test-only convenience wrapper around RunX8WithWordlist.
+func (t *ToolBox) RunX8(ctx context.Context, inputFile string, outputFile string) error {
+	return t.RunX8WithWordlist(ctx, inputFile, outputFile, "")
 }

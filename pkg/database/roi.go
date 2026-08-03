@@ -66,6 +66,27 @@ type mergedMetadata struct {
 	ParamCount          int
 }
 
+// roiData holds every dataset GetRankedURLs needs to score URLs.
+type roiData struct {
+	urls         []URL
+	endpoints    []Endpoint
+	vulns        []Vulnerability
+	ports        []Port
+	hostMetadata []HostMetadata
+	urlMetadata  []URLMetadata
+	gfMatches    map[string][]GFMatchResult
+}
+
+// roiIndex holds lookup tables built from roiData for O(1) access during scoring.
+type roiIndex struct {
+	hostMetadata    map[string]HostMetadata
+	urlMetadata     map[string]URLMetadata
+	endpointsByHost map[string]*endpointStats
+	exactVulnsByURL map[string]map[string]int
+	hostVulnsByHost map[string]map[string]int
+	portsByHost     map[string]int
+}
+
 // TODO(roi-scaling): GetRankedURLs loads the full scan into memory;
 // for >100k-URL scans this should be rewritten to stream via rows.Next() and score incrementally.
 // GetRankedURLs computes ROI scores from persisted scan data without requiring
@@ -74,6 +95,24 @@ func GetRankedURLs(scanID int64, limit int) ([]URLROI, error) {
 	if DB == nil {
 		return nil, ErrDBNotInitialized
 	}
+
+	data, err := loadROIData(scanID)
+	if err != nil {
+		return nil, err
+	}
+
+	idx := buildROIIndex(data)
+
+	results := make([]URLROI, 0, len(data.urls))
+	for _, u := range data.urls {
+		results = append(results, scoreURL(u, idx, data.gfMatches))
+	}
+
+	return dedupeAndRank(results, limit), nil
+}
+
+// loadROIData fetches every dataset needed for ROI scoring.
+func loadROIData(scanID int64) (*roiData, error) {
 	urls, err := GetURLs(scanID)
 	if err != nil {
 		return nil, err
@@ -109,18 +148,31 @@ func GetRankedURLs(scanID int64, limit int) ([]URLROI, error) {
 		return nil, err
 	}
 
-	hostMetadataMap := make(map[string]HostMetadata, len(hostMetadata))
-	for _, meta := range hostMetadata {
+	return &roiData{
+		urls:         urls,
+		endpoints:    endpoints,
+		vulns:        vulns,
+		ports:        ports,
+		hostMetadata: hostMetadata,
+		urlMetadata:  urlMetadata,
+		gfMatches:    gfMatches,
+	}, nil
+}
+
+// buildROIIndex builds lookup tables keyed by host or normalized URL.
+func buildROIIndex(data *roiData) *roiIndex {
+	hostMetadataMap := make(map[string]HostMetadata, len(data.hostMetadata))
+	for _, meta := range data.hostMetadata {
 		hostMetadataMap[strings.ToLower(strings.TrimSpace(meta.Host))] = meta
 	}
 
-	urlMetadataMap := make(map[string]URLMetadata, len(urlMetadata))
-	for _, meta := range urlMetadata {
+	urlMetadataMap := make(map[string]URLMetadata, len(data.urlMetadata))
+	for _, meta := range data.urlMetadata {
 		urlMetadataMap[normalizeComparableURL(meta.URL)] = meta
 	}
 
 	endpointsByHost := make(map[string]*endpointStats)
-	for _, ep := range endpoints {
+	for _, ep := range data.endpoints {
 		host := extractHost(ep.URL)
 		if host == "" {
 			continue
@@ -136,7 +188,7 @@ func GetRankedURLs(scanID int64, limit int) ([]URLROI, error) {
 
 	exactVulnsByURL := make(map[string]map[string]int)
 	hostVulnsByHost := make(map[string]map[string]int)
-	for _, vuln := range vulns {
+	for _, vuln := range data.vulns {
 		sev := normalizeSeverity(vuln.Severity)
 		if sev == "" {
 			sev = "info"
@@ -165,7 +217,7 @@ func GetRankedURLs(scanID int64, limit int) ([]URLROI, error) {
 	}
 
 	portsByHost := make(map[string]int)
-	for _, p := range ports {
+	for _, p := range data.ports {
 		host := strings.ToLower(strings.TrimSpace(p.Host))
 		if host == "" {
 			continue
@@ -173,353 +225,441 @@ func GetRankedURLs(scanID int64, limit int) ([]URLROI, error) {
 		portsByHost[host]++
 	}
 
-	results := make([]URLROI, 0, len(urls))
-	for _, u := range urls {
-		host := extractHost(u.URL)
-		techs := parseTechList(u.Tech)
-		endpointData := endpointsByHost[host]
-		exactCounts := cloneStringIntMap(exactVulnsByURL[normalizeComparableURL(u.URL)])
-		hostCounts := subtractSeverityMaps(hostVulnsByHost[host], exactCounts)
-		meta := mergeMetadata(urlMetadataMap[normalizeComparableURL(u.URL)], hostMetadataMap[host])
+	return &roiIndex{
+		hostMetadata:    hostMetadataMap,
+		urlMetadata:     urlMetadataMap,
+		endpointsByHost: endpointsByHost,
+		exactVulnsByURL: exactVulnsByURL,
+		hostVulnsByHost: hostVulnsByHost,
+		portsByHost:     portsByHost,
+	}
+}
 
-		roi := URLROI{
-			URL:             u.URL,
-			Host:            host,
-			StatusCode:      u.StatusCode,
-			Title:           u.Title,
-			ContentType:     u.ContentType,
-			Source:          u.Source,
-			Tech:            techs,
-			Score:           0,
-			Reasons:         nil,
-			ExactVulnCounts: exactCounts,
-			HostVulnCounts:  hostCounts,
-		}
+// scoreURL computes the ROI score, reasons, and confidence for a single URL.
+func scoreURL(u URL, idx *roiIndex, gfMatches map[string][]GFMatchResult) URLROI {
+	host := extractHost(u.URL)
+	techs := parseTechList(u.Tech)
+	endpointData := idx.endpointsByHost[host]
+	exactCounts := cloneStringIntMap(idx.exactVulnsByURL[normalizeComparableURL(u.URL)])
+	hostCounts := subtractSeverityMaps(idx.hostVulnsByHost[host], exactCounts)
+	meta := mergeMetadata(idx.urlMetadata[normalizeComparableURL(u.URL)], idx.hostMetadata[host])
 
-		addPoints := func(points int, reason string) {
-			if points <= 0 {
-				return
-			}
-			roi.Score += points
-			roi.Reasons = append(roi.Reasons, fmt.Sprintf("+%d %s", points, reason))
-		}
-
-		// signalCategories tracks which broad categories contributed to the score.
-		// Used for confidence computation.
-		signalCategories := make(map[string]bool)
-
-		switch {
-		case u.StatusCode == 200:
-			addPoints(40, "200 OK live application")
-			signalCategories["status"] = true
-		case u.StatusCode == 401 || u.StatusCode == 403:
-			addPoints(35, fmt.Sprintf("%d protected surface", u.StatusCode))
-			signalCategories["status"] = true
-		case u.StatusCode >= 300 && u.StatusCode < 400:
-			addPoints(15, "redirecting surface")
-			signalCategories["status"] = true
-		case u.StatusCode >= 500 && u.StatusCode < 600:
-			addPoints(25, "server error behavior")
-			signalCategories["status"] = true
-		case u.StatusCode > 0:
-			addPoints(8, fmt.Sprintf("responds with status %d", u.StatusCode))
-			signalCategories["status"] = true
-		}
-
-		// Phase 3.1: Tech Detection Tiering
-		if len(techs) > 0 {
-			totalTechPoints := 0
-			var highValueMatches []string
-			for _, t := range techs {
-				if pts, ok := highValueTech[strings.ToLower(t)]; ok {
-					totalTechPoints += pts
-					highValueMatches = append(highValueMatches, t)
-				} else {
-					totalTechPoints += 2
-				}
-			}
-			capped := min(40, totalTechPoints)
-			if len(highValueMatches) > 0 {
-				addPoints(capped, fmt.Sprintf("%d techs (%s)", len(techs), strings.Join(highValueMatches, ", ")))
-			} else {
-				addPoints(capped, fmt.Sprintf("%d technologies detected", len(techs)))
-			}
-			signalCategories["tech"] = true
-		}
-
-		if endpointData != nil {
-			signalCategories["endpoints"] = true
-			roi.EndpointCount = endpointData.Total
-			roi.KatanaCount = endpointData.BySource["katana"]
-			roi.GoSpiderCount = endpointData.BySource["gospider"]
-			roi.LinkFinderCount = endpointData.BySource["golinkfinder"]
-			roi.FfufCount = endpointData.BySource["ffuf"]
-
-			addPoints(min(20, endpointData.Total), fmt.Sprintf("%d discovered endpoints on host", endpointData.Total))
-			if roi.FfufCount > 0 {
-				addPoints(min(16, roi.FfufCount*4), fmt.Sprintf("%d ffuf hits", roi.FfufCount))
-			}
-			if roi.LinkFinderCount > 0 {
-				addPoints(min(12, roi.LinkFinderCount*3), fmt.Sprintf("%d JS-extracted endpoints", roi.LinkFinderCount))
-			}
-			crawlCount := roi.KatanaCount + roi.GoSpiderCount
-			if crawlCount > 0 {
-				addPoints(min(14, crawlCount*2), fmt.Sprintf("%d crawler-discovered endpoints", crawlCount))
-			}
-		}
-
-		roi.OpenPortCount = portsByHost[host]
-		if roi.OpenPortCount > 0 {
-			addPoints(min(10, roi.OpenPortCount*2), fmt.Sprintf("%d open ports on host", roi.OpenPortCount))
-			signalCategories["ports"] = true
-		}
-
-		exactPoints, exactSummary := severityScore(exactCounts, true)
-		if exactPoints > 0 {
-			addPoints(exactPoints, "exact URL vulnerabilities: "+exactSummary)
-			signalCategories["vulns"] = true
-		}
-
-		hostPoints, hostSummary := severityScore(hostCounts, false)
-		if hostPoints > 0 {
-			addPoints(hostPoints, "host vulnerabilities: "+hostSummary)
-			signalCategories["vulns"] = true
-		}
-
-		if strings.Contains(u.URL, "?") && strings.Contains(u.URL, "=") {
-			roi.IsParameterized = true
-			paramCount := countURLParams(u.URL)
-			baseParamPoints := min(30, paramCount*8)
-			addPoints(baseParamPoints, fmt.Sprintf("%d URL parameters", paramCount))
-			sensitiveCount := countSensitiveParams(u.URL)
-			if sensitiveCount > 0 {
-				addPoints(min(20, sensitiveCount*10), fmt.Sprintf("%d sensitive param names", sensitiveCount))
-			}
-		}
-
-		keywords := extractInterestingKeywords(u.URL + " " + u.Title)
-		if len(keywords) > 0 {
-			roi.InterestingTerms = keywords
-			addPoints(min(18, len(keywords)*4), "interesting keywords: "+strings.Join(keywords, ", "))
-		}
-
-		// Multi-source URL confirmation (Phase 4.5)
-		if strings.Contains(u.Source, ",") {
-			sources := strings.Split(u.Source, ",")
-			hasHistorical := false
-			hasCrawler := false
-			hasHTTPX := false
-			for _, s := range sources {
-				s = strings.ToLower(strings.TrimSpace(s))
-				if s == "waybackurls" || s == "gau" {
-					hasHistorical = true
-				}
-				if s == "katana" || s == "gospider" {
-					hasCrawler = true
-				}
-				if s == "httpx" {
-					hasHTTPX = true
-				}
-			}
-			if hasHistorical && hasCrawler {
-				addPoints(10, "confirmed by both historical + active crawler")
-			} else if hasHistorical && hasHTTPX {
-				addPoints(8, "historical URL confirmed live by httpx")
-			} else if len(sources) >= 2 {
-				addPoints(5, fmt.Sprintf("discovered by %d sources", len(sources)))
-			}
-		} else {
-			if isHistoricalSource(u.Source) {
-				addPoints(4, fmt.Sprintf("discovered via historical source %s", u.Source))
-			}
-			if isCrawlerSource(u.Source) {
-				addPoints(5, fmt.Sprintf("discovered via crawler %s", u.Source))
-			}
-		}
-
-		if strings.Contains(strings.ToLower(u.ContentType), "json") {
-			addPoints(8, "JSON response surface")
-		}
-
-		if meta.HasHostData || meta.HasURLData {
-			signalCategories["metadata"] = true
-			if !meta.HasCSP {
-				if meta.HasURLData {
-					addPoints(10, "selected URL metadata shows missing CSP")
-				} else {
-					addPoints(8, "host metadata shows missing CSP")
-				}
-			}
-			if meta.HasCacheHeaders {
-				addPoints(6, "cache-related headers exposed")
-			}
-			if meta.LoginSurface {
-				addPoints(12, "authentication or login surface detected")
-			}
-			if meta.SSLExpired {
-				addPoints(14, "expired SSL certificate")
-			}
-			if meta.SSLSelfSigned {
-				addPoints(10, "self-signed SSL certificate")
-			}
-			if meta.SSLMismatch {
-				addPoints(12, "SSL hostname mismatch")
-			}
-			if meta.WeakTLS {
-				addPoints(10, "weak TLS version detected")
-			}
-			if meta.HasJSSecrets {
-				addPoints(25, "host has exposed secrets in JavaScript")
-			}
-			if meta.FormCount > 0 {
-				addPoints(min(15, meta.FormCount*5), fmt.Sprintf("%d HTML forms (input surfaces)", meta.FormCount))
-			}
-			if meta.HasFileUpload {
-				addPoints(20, "file upload form detected")
-			}
-			if meta.HiddenInputCount > 3 {
-				addPoints(8, fmt.Sprintf("%d hidden inputs (potential IDOR/CSRF)", meta.HiddenInputCount))
-			}
-
-			// Phase 4.1: CORS Misconfiguration
-			if meta.CORSWildcard {
-				addPoints(10, "CORS allows wildcard origin (*)")
-			}
-
-			// Phase 4.2: Cookie Security Flags
-			if meta.HasSessionCookie && meta.HasInsecureCookies {
-				addPoints(15, "session cookie without Secure/HttpOnly flags")
-			} else if meta.HasInsecureCookies {
-				addPoints(6, "cookies missing security flags")
-			}
-
-			// Phase 4.3: Dangerous HTTP Methods
-			if meta.HasDangerousMethods {
-				addPoints(15, "dangerous HTTP methods (PUT/DELETE) allowed")
-			}
-
-			// Phase 4.4: Hidden Parameters
-			if meta.ParamCount > 0 {
-				addPoints(min(25, meta.ParamCount*5), fmt.Sprintf("%d hidden params discovered by x8", meta.ParamCount))
-			}
-		}
-
-		// Phase 3.2: Subdomain Depth & Naming Signal
-		if host != "" {
-			subdomainDepth := strings.Count(host, ".") - 1 // e.g., a.b.example.com = depth 2
-			if subdomainDepth >= 3 {
-				addPoints(10, fmt.Sprintf("deep subdomain (depth %d, likely internal)", subdomainDepth))
-			}
-			if revealingPrefix := matchRevealingPrefix(host); revealingPrefix != "" {
-				addPoints(12, fmt.Sprintf("revealing subdomain name: %s", revealingPrefix))
-			}
-		}
-
-		// Phase 3.3: HeadersJSON Parsing
-		headerSignals := scoreHeaders(meta.URLHeadersJSON, meta.HostHeadersJSON)
-		for _, sig := range headerSignals {
-			if sig.points > 0 {
-				addPoints(sig.points, sig.reason)
-			}
-		}
-
-		// Non-standard port bonus
-		if parsed, parseErr := url.Parse(u.URL); parseErr == nil && parsed.Port() != "" {
-			port := parsed.Port()
-			if port != "80" && port != "443" {
-				addPoints(12, fmt.Sprintf("non-standard port :%s", port))
-				if isDevPort(port) {
-					addPoints(8, fmt.Sprintf("known dev/admin port :%s", port))
-				}
-			}
-		}
-
-		// GF pattern match scoring
-		if matches, ok := gfMatches[u.URL]; ok {
-			signalCategories["gf_matches"] = true
-			for _, m := range matches {
-				// Confirmed secrets get a significant boost
-				confirmedBoost := 0
-				if m.Status == "confirmed" {
-					confirmedBoost = 20
-				}
-				switch m.Pattern {
-				case "rce", "rce-2":
-					addPoints(30+confirmedBoost, "gf matched: RCE pattern")
-				case "sqli", "sqli-error":
-					addPoints(25+confirmedBoost, "gf matched: SQLi pattern")
-				case "ssrf":
-					addPoints(25+confirmedBoost, "gf matched: SSRF pattern")
-				case "ssti":
-					addPoints(25+confirmedBoost, "gf matched: SSTI pattern")
-				case "lfi":
-					addPoints(20+confirmedBoost, "gf matched: LFI pattern")
-				case "idor":
-					addPoints(20+confirmedBoost, "gf matched: IDOR pattern")
-				case "xss":
-					addPoints(15+confirmedBoost, "gf matched: XSS pattern")
-				case "redirect":
-					addPoints(12+confirmedBoost, "gf matched: open redirect pattern")
-				case "debug_logic":
-					addPoints(10+confirmedBoost, "gf matched: debug logic pattern")
-				default:
-					addPoints(8+confirmedBoost, fmt.Sprintf("gf matched: %s pattern", m.Pattern))
-				}
-			}
-		}
-
-		// ResponseBytes scoring (only when metadata was collected)
-		if (meta.HasHostData || meta.HasURLData) && meta.ResponseBytes > 0 {
-			switch {
-			case meta.ResponseBytes > 100000:
-				addPoints(12, "large response body (rich application)")
-			case meta.ResponseBytes > 30000:
-				addPoints(8, "substantial response body")
-			case meta.ResponseBytes > 5000:
-				addPoints(4, "moderate response body")
-			case meta.ResponseBytes < 500:
-				roi.Score -= 10
-				roi.Reasons = append(roi.Reasons, "-10 tiny response (likely default/error page)")
-			}
-		}
-
-		// Penalty: default/parked pages
-		if isDefaultPage(u.Title) {
-			roi.Score -= 30
-			roi.Reasons = append(roi.Reasons, "-30 default/parked page: "+u.Title)
-		}
-
-		// Penalty: WAF/CDN block pages
-		if isWAFBlock(u.StatusCode, u.Title) {
-			roi.Score -= 15
-			roi.Reasons = append(roi.Reasons, "-15 likely WAF/CDN block page")
-		}
-
-		// Penalty: static asset URLs
-		if isStaticAsset(u.URL) {
-			roi.Score -= 20
-			roi.Reasons = append(roi.Reasons, "-20 static asset URL")
-		}
-
-		// Penalty: extremely long URLs (tracking/analytics noise)
-		if len(u.URL) > 500 {
-			roi.Score -= 10
-			roi.Reasons = append(roi.Reasons, "-10 extremely long URL (likely noise)")
-		}
-
-		// Floor: don't let score go negative
-		if roi.Score < 0 {
-			roi.Score = 0
-		}
-
-		// Compute confidence and attack surfaces from the signals collected
-		roi.SignalCount = len(signalCategories)
-		roi.Confidence = computeConfidence(signalCategories)
-		roi.AttackSurfaces = computeAttackSurfaces(&roi, meta, gfMatches[u.URL])
-
-		results = append(results, roi)
+	roi := URLROI{
+		URL:             u.URL,
+		Host:            host,
+		StatusCode:      u.StatusCode,
+		Title:           u.Title,
+		ContentType:     u.ContentType,
+		Source:          u.Source,
+		Tech:            techs,
+		Score:           0,
+		Reasons:         nil,
+		ExactVulnCounts: exactCounts,
+		HostVulnCounts:  hostCounts,
 	}
 
+	addPoints := func(points int, reason string) {
+		if points <= 0 {
+			return
+		}
+		roi.Score += points
+		roi.Reasons = append(roi.Reasons, fmt.Sprintf("+%d %s", points, reason))
+	}
+
+	// signalCategories tracks which broad categories contributed to the score.
+	// Used for confidence computation.
+	signalCategories := make(map[string]bool)
+
+	scoreStatusCode(u.StatusCode, addPoints, signalCategories)
+	scoreTech(techs, addPoints, signalCategories)
+	scoreEndpoints(&roi, endpointData, addPoints, signalCategories)
+	scorePorts(&roi, idx.portsByHost[host], addPoints, signalCategories)
+	scoreVulns(exactCounts, hostCounts, addPoints, signalCategories)
+	scoreParameters(&roi, u.URL, addPoints)
+	scoreKeywords(&roi, u.URL+" "+u.Title, addPoints)
+	scoreSources(u.Source, addPoints)
+	if strings.Contains(strings.ToLower(u.ContentType), "json") {
+		addPoints(8, "JSON response surface")
+	}
+	scoreMetadata(meta, addPoints, signalCategories)
+	scoreSubdomainDepth(host, addPoints)
+
+	// Phase 3.3: HeadersJSON Parsing
+	for _, sig := range scoreHeaders(meta.URLHeadersJSON, meta.HostHeadersJSON) {
+		if sig.points > 0 {
+			addPoints(sig.points, sig.reason)
+		}
+	}
+
+	scoreNonStandardPort(u.URL, addPoints)
+	scoreGFMatches(gfMatches[u.URL], addPoints, signalCategories)
+	scoreResponseBytes(meta, &roi, addPoints)
+	applyPenalties(&roi, u)
+
+	// Floor: don't let score go negative
+	if roi.Score < 0 {
+		roi.Score = 0
+	}
+
+	// Compute confidence and attack surfaces from the signals collected
+	roi.SignalCount = len(signalCategories)
+	roi.Confidence = computeConfidence(signalCategories)
+	roi.AttackSurfaces = computeAttackSurfaces(&roi, meta, gfMatches[u.URL])
+
+	return roi
+}
+
+// pointAdder adds positive points with a reason to a URL's ROI score.
+type pointAdder func(points int, reason string)
+
+func scoreStatusCode(statusCode int, addPoints pointAdder, signalCategories map[string]bool) {
+	switch {
+	case statusCode == 200:
+		addPoints(40, "200 OK live application")
+	case statusCode == 401 || statusCode == 403:
+		addPoints(35, fmt.Sprintf("%d protected surface", statusCode))
+	case statusCode >= 300 && statusCode < 400:
+		addPoints(15, "redirecting surface")
+	case statusCode >= 500 && statusCode < 600:
+		addPoints(25, "server error behavior")
+	case statusCode > 0:
+		addPoints(8, fmt.Sprintf("responds with status %d", statusCode))
+	default:
+		return
+	}
+	signalCategories["status"] = true
+}
+
+// scoreTech implements Phase 3.1: Tech Detection Tiering.
+func scoreTech(techs []string, addPoints pointAdder, signalCategories map[string]bool) {
+	if len(techs) == 0 {
+		return
+	}
+	totalTechPoints := 0
+	var highValueMatches []string
+	for _, t := range techs {
+		if pts, ok := highValueTech[strings.ToLower(t)]; ok {
+			totalTechPoints += pts
+			highValueMatches = append(highValueMatches, t)
+		} else {
+			totalTechPoints += 2
+		}
+	}
+	capped := min(40, totalTechPoints)
+	if len(highValueMatches) > 0 {
+		addPoints(capped, fmt.Sprintf("%d techs (%s)", len(techs), strings.Join(highValueMatches, ", ")))
+	} else {
+		addPoints(capped, fmt.Sprintf("%d technologies detected", len(techs)))
+	}
+	signalCategories["tech"] = true
+}
+
+func scoreEndpoints(roi *URLROI, endpointData *endpointStats, addPoints pointAdder, signalCategories map[string]bool) {
+	if endpointData == nil {
+		return
+	}
+	signalCategories["endpoints"] = true
+	roi.EndpointCount = endpointData.Total
+	roi.KatanaCount = endpointData.BySource["katana"]
+	roi.GoSpiderCount = endpointData.BySource["gospider"]
+	roi.LinkFinderCount = endpointData.BySource["golinkfinder"]
+	roi.FfufCount = endpointData.BySource["ffuf"]
+
+	addPoints(min(20, endpointData.Total), fmt.Sprintf("%d discovered endpoints on host", endpointData.Total))
+	if roi.FfufCount > 0 {
+		addPoints(min(16, roi.FfufCount*4), fmt.Sprintf("%d ffuf hits", roi.FfufCount))
+	}
+	if roi.LinkFinderCount > 0 {
+		addPoints(min(12, roi.LinkFinderCount*3), fmt.Sprintf("%d JS-extracted endpoints", roi.LinkFinderCount))
+	}
+	crawlCount := roi.KatanaCount + roi.GoSpiderCount
+	if crawlCount > 0 {
+		addPoints(min(14, crawlCount*2), fmt.Sprintf("%d crawler-discovered endpoints", crawlCount))
+	}
+}
+
+func scorePorts(roi *URLROI, portCount int, addPoints pointAdder, signalCategories map[string]bool) {
+	roi.OpenPortCount = portCount
+	if portCount > 0 {
+		addPoints(min(10, portCount*2), fmt.Sprintf("%d open ports on host", portCount))
+		signalCategories["ports"] = true
+	}
+}
+
+func scoreVulns(exactCounts, hostCounts map[string]int, addPoints pointAdder, signalCategories map[string]bool) {
+	exactPoints, exactSummary := severityScore(exactCounts, true)
+	if exactPoints > 0 {
+		addPoints(exactPoints, "exact URL vulnerabilities: "+exactSummary)
+		signalCategories["vulns"] = true
+	}
+
+	hostPoints, hostSummary := severityScore(hostCounts, false)
+	if hostPoints > 0 {
+		addPoints(hostPoints, "host vulnerabilities: "+hostSummary)
+		signalCategories["vulns"] = true
+	}
+}
+
+func scoreParameters(roi *URLROI, rawURL string, addPoints pointAdder) {
+	if !strings.Contains(rawURL, "?") || !strings.Contains(rawURL, "=") {
+		return
+	}
+	roi.IsParameterized = true
+	paramCount := countURLParams(rawURL)
+	addPoints(min(30, paramCount*8), fmt.Sprintf("%d URL parameters", paramCount))
+	sensitiveCount := countSensitiveParams(rawURL)
+	if sensitiveCount > 0 {
+		addPoints(min(20, sensitiveCount*10), fmt.Sprintf("%d sensitive param names", sensitiveCount))
+	}
+}
+
+func scoreKeywords(roi *URLROI, text string, addPoints pointAdder) {
+	keywords := extractInterestingKeywords(text)
+	if len(keywords) > 0 {
+		roi.InterestingTerms = keywords
+		addPoints(min(18, len(keywords)*4), "interesting keywords: "+strings.Join(keywords, ", "))
+	}
+}
+
+// scoreSources implements Phase 4.5: multi-source URL confirmation.
+func scoreSources(source string, addPoints pointAdder) {
+	if !strings.Contains(source, ",") {
+		if isHistoricalSource(source) {
+			addPoints(4, fmt.Sprintf("discovered via historical source %s", source))
+		}
+		if isCrawlerSource(source) {
+			addPoints(5, fmt.Sprintf("discovered via crawler %s", source))
+		}
+		return
+	}
+
+	sources := strings.Split(source, ",")
+	hasHistorical := false
+	hasCrawler := false
+	hasHTTPX := false
+	for _, s := range sources {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "waybackurls" || s == "gau" {
+			hasHistorical = true
+		}
+		if s == "katana" || s == "gospider" {
+			hasCrawler = true
+		}
+		if s == "httpx" {
+			hasHTTPX = true
+		}
+	}
+	switch {
+	case hasHistorical && hasCrawler:
+		addPoints(10, "confirmed by both historical + active crawler")
+	case hasHistorical && hasHTTPX:
+		addPoints(8, "historical URL confirmed live by httpx")
+	case len(sources) >= 2:
+		addPoints(5, fmt.Sprintf("discovered by %d sources", len(sources)))
+	}
+}
+
+// scoreMetadata scores collected host/URL metadata signals
+// (Phases 4.1–4.4: CORS, cookies, methods, hidden params).
+func scoreMetadata(meta mergedMetadata, addPoints pointAdder, signalCategories map[string]bool) {
+	if !meta.HasHostData && !meta.HasURLData {
+		return
+	}
+	signalCategories["metadata"] = true
+	if !meta.HasCSP {
+		if meta.HasURLData {
+			addPoints(10, "selected URL metadata shows missing CSP")
+		} else {
+			addPoints(8, "host metadata shows missing CSP")
+		}
+	}
+	if meta.HasCacheHeaders {
+		addPoints(6, "cache-related headers exposed")
+	}
+	if meta.LoginSurface {
+		addPoints(12, "authentication or login surface detected")
+	}
+	scoreTLSMetadata(meta, addPoints)
+	if meta.HasJSSecrets {
+		addPoints(25, "host has exposed secrets in JavaScript")
+	}
+	if meta.FormCount > 0 {
+		addPoints(min(15, meta.FormCount*5), fmt.Sprintf("%d HTML forms (input surfaces)", meta.FormCount))
+	}
+	if meta.HasFileUpload {
+		addPoints(20, "file upload form detected")
+	}
+	if meta.HiddenInputCount > 3 {
+		addPoints(8, fmt.Sprintf("%d hidden inputs (potential IDOR/CSRF)", meta.HiddenInputCount))
+	}
+
+	// Phase 4.1: CORS Misconfiguration
+	if meta.CORSWildcard {
+		addPoints(10, "CORS allows wildcard origin (*)")
+	}
+
+	// Phase 4.2: Cookie Security Flags
+	if meta.HasSessionCookie && meta.HasInsecureCookies {
+		addPoints(15, "session cookie without Secure/HttpOnly flags")
+	} else if meta.HasInsecureCookies {
+		addPoints(6, "cookies missing security flags")
+	}
+
+	// Phase 4.3: Dangerous HTTP Methods
+	if meta.HasDangerousMethods {
+		addPoints(15, "dangerous HTTP methods (PUT/DELETE) allowed")
+	}
+
+	// Phase 4.4: Hidden Parameters
+	if meta.ParamCount > 0 {
+		addPoints(min(25, meta.ParamCount*5), fmt.Sprintf("%d hidden params discovered by x8", meta.ParamCount))
+	}
+}
+
+// scoreTLSMetadata scores SSL/TLS certificate issues.
+func scoreTLSMetadata(meta mergedMetadata, addPoints pointAdder) {
+	if meta.SSLExpired {
+		addPoints(14, "expired SSL certificate")
+	}
+	if meta.SSLSelfSigned {
+		addPoints(10, "self-signed SSL certificate")
+	}
+	if meta.SSLMismatch {
+		addPoints(12, "SSL hostname mismatch")
+	}
+	if meta.WeakTLS {
+		addPoints(10, "weak TLS version detected")
+	}
+}
+
+// scoreSubdomainDepth implements Phase 3.2: Subdomain Depth & Naming Signal.
+func scoreSubdomainDepth(host string, addPoints pointAdder) {
+	if host == "" {
+		return
+	}
+	subdomainDepth := strings.Count(host, ".") - 1 // e.g., a.b.example.com = depth 2
+	if subdomainDepth >= 3 {
+		addPoints(10, fmt.Sprintf("deep subdomain (depth %d, likely internal)", subdomainDepth))
+	}
+	if revealingPrefix := matchRevealingPrefix(host); revealingPrefix != "" {
+		addPoints(12, fmt.Sprintf("revealing subdomain name: %s", revealingPrefix))
+	}
+}
+
+func scoreNonStandardPort(rawURL string, addPoints pointAdder) {
+	parsed, parseErr := url.Parse(rawURL)
+	if parseErr != nil || parsed.Port() == "" {
+		return
+	}
+	port := parsed.Port()
+	if port == "80" || port == "443" {
+		return
+	}
+	addPoints(12, fmt.Sprintf("non-standard port :%s", port))
+	if isDevPort(port) {
+		addPoints(8, fmt.Sprintf("known dev/admin port :%s", port))
+	}
+}
+
+// gfPatternPoints maps gf pattern names to base points; confirmed matches
+// get a boost on top.
+var gfPatternPoints = map[string]int{
+	"rce":         30,
+	"rce-2":       30,
+	"sqli":        25,
+	"sqli-error":  25,
+	"ssrf":        25,
+	"ssti":        25,
+	"lfi":         20,
+	"idor":        20,
+	"xss":         15,
+	"redirect":    12,
+	"debug_logic": 10,
+}
+
+// gfPatternLabels describes known gf patterns in reasons.
+var gfPatternLabels = map[string]string{
+	"rce":         "RCE pattern",
+	"rce-2":       "RCE pattern",
+	"sqli":        "SQLi pattern",
+	"sqli-error":  "SQLi pattern",
+	"ssrf":        "SSRF pattern",
+	"ssti":        "SSTI pattern",
+	"lfi":         "LFI pattern",
+	"idor":        "IDOR pattern",
+	"xss":         "XSS pattern",
+	"redirect":    "open redirect pattern",
+	"debug_logic": "debug logic pattern",
+}
+
+func scoreGFMatches(matches []GFMatchResult, addPoints pointAdder, signalCategories map[string]bool) {
+	if len(matches) == 0 {
+		return
+	}
+	signalCategories["gf_matches"] = true
+	for _, m := range matches {
+		// Confirmed secrets get a significant boost
+		confirmedBoost := 0
+		if m.Status == "confirmed" {
+			confirmedBoost = 20
+		}
+		base, known := gfPatternPoints[m.Pattern]
+		if !known {
+			addPoints(8+confirmedBoost, fmt.Sprintf("gf matched: %s pattern", m.Pattern))
+			continue
+		}
+		addPoints(base+confirmedBoost, "gf matched: "+gfPatternLabels[m.Pattern])
+	}
+}
+
+// scoreResponseBytes scores response size (only when metadata was collected).
+func scoreResponseBytes(meta mergedMetadata, roi *URLROI, addPoints pointAdder) {
+	if (!meta.HasHostData && !meta.HasURLData) || meta.ResponseBytes <= 0 {
+		return
+	}
+	switch {
+	case meta.ResponseBytes > 100000:
+		addPoints(12, "large response body (rich application)")
+	case meta.ResponseBytes > 30000:
+		addPoints(8, "substantial response body")
+	case meta.ResponseBytes > 5000:
+		addPoints(4, "moderate response body")
+	case meta.ResponseBytes < 500:
+		roi.Score -= 10
+		roi.Reasons = append(roi.Reasons, "-10 tiny response (likely default/error page)")
+	}
+}
+
+// applyPenalties subtracts points for low-value or noisy URLs.
+func applyPenalties(roi *URLROI, u URL) {
+	// Penalty: default/parked pages
+	if isDefaultPage(u.Title) {
+		roi.Score -= 30
+		roi.Reasons = append(roi.Reasons, "-30 default/parked page: "+u.Title)
+	}
+
+	// Penalty: WAF/CDN block pages
+	if isWAFBlock(u.StatusCode, u.Title) {
+		roi.Score -= 15
+		roi.Reasons = append(roi.Reasons, "-15 likely WAF/CDN block page")
+	}
+
+	// Penalty: static asset URLs
+	if isStaticAsset(u.URL) {
+		roi.Score -= 20
+		roi.Reasons = append(roi.Reasons, "-20 static asset URL")
+	}
+
+	// Penalty: extremely long URLs (tracking/analytics noise)
+	if len(u.URL) > 500 {
+		roi.Score -= 10
+		roi.Reasons = append(roi.Reasons, "-10 extremely long URL (likely noise)")
+	}
+}
+
+// dedupeAndRank sorts results by score, diversifies by host, normalizes scores
+// to a 0–100 scale, and applies the result limit.
+func dedupeAndRank(results []URLROI, limit int) []URLROI {
 	slices.SortFunc(results, func(a, b URLROI) int {
 		if a.Score != b.Score {
 			return cmp.Compare(b.Score, a.Score)
@@ -540,7 +680,7 @@ func GetRankedURLs(scanID int64, limit int) ([]URLROI, error) {
 		results = results[:limit]
 	}
 
-	return results, nil
+	return results
 }
 
 func parseTechList(raw string) []string {

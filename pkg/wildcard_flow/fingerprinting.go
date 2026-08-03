@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/notify"
@@ -22,15 +23,15 @@ import (
 // to prevent WAF blocks from affecting prior discovery or vulnerability scanning.
 
 // stepFingerprinting runs httpx for tech-detect and nuclei for WAF detection.
-func stepFingerprinting(c *Ctx) bool {
+func stepFingerprinting(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("tech_waf_fingerprinting", "Step 21: Technology & WAF Fingerprinting"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	if c.SkipFingerprint {
 		logger.StepHeader("Step 21: Skipping Fingerprinting (--skip-fingerprint)")
 		c.markStepCompleteIfNoFailure("tech_waf_fingerprinting")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	// 1. HTTPX Tech Detection
@@ -90,7 +91,7 @@ func stepFingerprinting(c *Ctx) bool {
 	logFingerprintSummary(c)
 
 	c.markStepCompleteIfNoFailure("tech_waf_fingerprinting")
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // sendWafNotifications sends alerts explicitly for WAF findings

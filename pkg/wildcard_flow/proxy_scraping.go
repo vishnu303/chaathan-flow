@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/proxy_scraping"
 	"github.com/vishnu303/chaathan/utils"
@@ -24,21 +25,21 @@ import (
 
 // stepProxyScraping scrapes free proxies, validates them, and starts a mubeng rotating proxy server.
 // Returns true if the scan should be cancelled.
-func stepProxyScraping(c *Ctx) bool {
+func stepProxyScraping(c *Ctx) flowkit.StepResult {
 	const stepName = "proxy_scraping"
 
 	// ── Skip if --proxy was explicitly set (manual always wins) ──
 	if c.Proxy != "" {
 		logger.StepHeader("Proxy Scraping — skipped (--proxy already set: %s)", c.Proxy)
 		c.markStepCompleteIfNoFailure(stepName)
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	// ── Skip if --auto-proxy not requested ──────────────────
 	if !c.AutoProxy {
 		logger.StepHeader("Proxy Scraping — skipped (use --auto-proxy to enable)")
 		c.markStepCompleteIfNoFailure(stepName)
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	// ── Resume check ────────────────────────────────────────
@@ -46,13 +47,13 @@ func stepProxyScraping(c *Ctx) bool {
 		if c.AutoProxy && c.Proxy == "" {
 			c.restoreProxyRotatorOnResume()
 		}
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	c.runProxyScrapingAndRotation()
 
 	c.markStepCompleteIfNoFailure(stepName)
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // runProxyScrapingAndRotation scrapes proxies, validates them against the target,

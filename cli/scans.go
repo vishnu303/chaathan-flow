@@ -95,12 +95,12 @@ func runScansList(cmd *cobra.Command, args []string) {
 		duration := "-"
 		if s.CompletedAt != nil {
 			duration = s.CompletedAt.Sub(s.StartedAt).Round(time.Second).String()
-		} else if s.Status == "running" {
+		} else if s.Status == database.StatusRunning {
 			duration = time.Since(s.StartedAt).Round(time.Second).String() + " (running)"
 		}
 
 		status := logger.ColorStatus(s.Status)
-		if s.Status == "running" {
+		if s.Status == database.StatusRunning {
 			if mgr == nil {
 				mgr = scan.NewManager(paths.StateDir())
 			}
@@ -112,7 +112,7 @@ func runScansList(cmd *cobra.Command, args []string) {
 
 		logger.TableRow(w,
 			fmt.Sprintf("%d", s.ID),
-			utils.Truncate(s.Target, 30),
+			utils.Truncate(s.Target, utils.UITruncLen),
 			s.Type,
 			status,
 			s.StartedAt.Format("2006-01-02 15:04"),

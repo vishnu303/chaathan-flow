@@ -13,6 +13,7 @@ import (
 	"github.com/vishnu303/chaathan/pkg/paths"
 	"github.com/vishnu303/chaathan/pkg/scan"
 	"github.com/vishnu303/chaathan/pkg/tui"
+	"github.com/vishnu303/chaathan/utils"
 )
 
 var showPlainStatus bool
@@ -89,7 +90,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 			pct := float64(completed) / float64(total) * 100
 
 			logger.Info("Scan #%d — %s", state.ScanID, state.Target)
-			logger.Info("  Progress: %s %.0f%% (%d/%d steps)", logger.Bar(pct, 30), pct, completed, total)
+			logger.Info("  Progress: %s %.0f%% (%d/%d steps)", logger.Bar(pct, utils.ProgressBarWidth), pct, completed, total)
 
 			// Show current step index
 			if state.CurrentStep < len(scan.WildcardSteps) {

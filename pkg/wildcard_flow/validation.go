@@ -22,6 +22,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/metadata"
@@ -34,9 +35,9 @@ import (
 
 // stepDNSConsolidation merges all passive sources and resolves them with DNSx.
 // Returns true if the scan should be cancelled.
-func stepDNSConsolidation(c *Ctx) bool {
+func stepDNSConsolidation(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("dns_resolution", "Step 6: Subdomain Consolidation & DNS Validation"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 	writeEmptyFile(c.F.DnsxOut)
 
@@ -56,7 +57,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 	if err := utils.MergeAndDeduplicate(passiveSources, c.F.ConsolidatedSubs); err != nil {
 		c.markStepFailedSafe("dns_resolution", err)
 		logger.Error("Failed to consolidate: %v", err)
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	// Filter out invalid domains and ensure they belong to the target domain
@@ -96,7 +97,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 	if subCount == 0 {
 		logger.Warning("No valid in-scope subdomains found for target %s — skipping dependent steps", c.Domain)
 		c.markStepCompleteIfNoFailure("dns_resolution")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	// Sync consolidated subdomains to DB
@@ -136,7 +137,7 @@ func stepDNSConsolidation(c *Ctx) bool {
 	}
 
 	c.markStepCompleteIfNoFailure("dns_resolution")
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -145,16 +146,16 @@ func stepDNSConsolidation(c *Ctx) bool {
 
 // stepDNSBruteforce runs ShuffleDNS when a dns-wordlist is provided.
 // Returns true if the scan should be cancelled.
-func stepDNSBruteforce(c *Ctx) bool {
+func stepDNSBruteforce(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("dns_bruteforce", "Step 7: DNS Brute-force (ShuffleDNS)"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	if c.SkipShuffleDNS {
 		logger.StepHeader("Step 7: Skipping ShuffleDNS (--skip-shuffledns)")
 		logger.FileDebug("shuffledns skipped via --skip-shuffledns flag")
 		c.markStepCompleteIfNoFailure("dns_bruteforce")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	if c.DNSWordlistPath == "" {
@@ -166,7 +167,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 			logger.Info("Use --dns-wordlist or run 'chaathan setup' to install SecLists")
 			logger.FileDebug("shuffledns skipped: no --dns-wordlist provided and SecLists not found on device")
 			c.markStepCompleteIfNoFailure("dns_bruteforce")
-			return c.cancelled()
+			return flowkit.StepResult{Cancelled: c.cancelled()}
 		}
 	}
 
@@ -178,7 +179,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 		logger.Info("Install seclists (apt install seclists / pacman -S seclists) or provide a valid --dns-wordlist path")
 		logger.FileDebug("shuffledns skipped: wordlist does not exist at %s", c.DNSWordlistPath)
 		c.markStepCompleteIfNoFailure("dns_bruteforce")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	if c.ResolversPath != "" && !utils.FileExists(c.ResolversPath) {
@@ -187,7 +188,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 		logger.Info("Provide a valid --resolvers file path")
 		logger.FileDebug("shuffledns skipped: resolvers file does not exist at %s", c.ResolversPath)
 		c.markStepCompleteIfNoFailure("dns_bruteforce")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	logger.ToolStart("ShuffleDNS")
@@ -209,10 +210,12 @@ func stepDNSBruteforce(c *Ctx) bool {
 	} else {
 		beforeMerge, _ = utils.CountFileLines(c.F.ConsolidatedSubs)
 		// Merge brute-forced subs back into the consolidated list
-		utils.MergeAndDeduplicate(
+		if err := utils.MergeAndDeduplicate(
 			[]string{c.F.ConsolidatedSubs, c.F.ShufflednsOut},
 			c.F.ConsolidatedSubs,
-		)
+		); err != nil {
+			logger.Warning("Failed to merge brute-force results: %v", err)
+		}
 		// Filter out invalid domains and ensure they belong to the target domain
 		_ = utils.FilterFileLines(c.F.ConsolidatedSubs, func(line string) bool {
 			line = strings.ToLower(strings.TrimSpace(line))
@@ -243,7 +246,7 @@ func stepDNSBruteforce(c *Ctx) bool {
 	}
 
 	c.markStepCompleteIfNoFailure("dns_bruteforce")
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -252,9 +255,9 @@ func stepDNSBruteforce(c *Ctx) bool {
 
 // stepHTTPProbing probes all consolidated subdomains with Httpx.
 // Returns true if the scan should be cancelled.
-func stepHTTPProbing(c *Ctx) bool {
+func stepHTTPProbing(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("http_probing", "Step 9: HTTP Probing & Liveness Check"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 	writeEmptyFile(c.F.HttpxOut)
 	writeEmptyFile(c.F.HttpxLiveHosts)
@@ -267,7 +270,7 @@ func stepHTTPProbing(c *Ctx) bool {
 	if err := utils.MergeAndDeduplicate(sources, c.F.HttpxInput); err != nil {
 		c.markStepFailedSafe("http_probing", err)
 		logger.Error("Failed to prepare Httpx input: %v", err)
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	logger.ToolStart("httpx")
@@ -301,7 +304,7 @@ func stepHTTPProbing(c *Ctx) bool {
 	}
 
 	c.markStepCompleteIfNoFailure("http_probing")
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -310,178 +313,209 @@ func stepHTTPProbing(c *Ctx) bool {
 
 // stepTLSAnalysis examines TLS certificates and enriches host metadata.
 // Returns true if the scan should be cancelled.
-func stepTLSAnalysis(c *Ctx) bool {
+func stepTLSAnalysis(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("tls_analysis", "Step 10: TLS Certificate Analysis (tlsx)"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	if c.SkipTlsx {
 		logger.StepHeader("Step 10: Skipping tlsx (--skip-tlsx)")
 		c.markStepCompleteIfNoFailure("tls_analysis")
 	} else {
-		writeEmptyFile(c.F.TlsxOut)
-		logger.ToolStart("tlsx")
-		inputCount, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
-		logger.FileDebug("tlsx input: %s (%d hosts) out=%s", c.F.ConsolidatedSubs, inputCount, c.F.TlsxOut)
-
-		var tlsxSkipped bool
-		if err := runWithSkip(c, "tlsx", func(sCtx context.Context) error {
-			return c.Tb.RunTlsx(sCtx, c.F.ConsolidatedSubs, c.F.TlsxOut)
-		}); err != nil {
-			if err == ErrToolSkipped {
-				tlsxSkipped = true
-			} else {
-				c.markStepFailedSafe("tls_analysis", err)
-				logger.ToolFail("tlsx", err.Error())
-			}
-		}
-
-		if c.ScanID > 0 && utils.FileExists(c.F.TlsxOut) {
-			newSubs, certVulns, _ := ingest.ParseTlsxOutput(c.ScanID, c.F.TlsxOut, c.Domain)
-			label := ""
-			if tlsxSkipped {
-				label = " (partial)"
-			}
-			logger.Result(newSubs, "new subdomains from certificate SANs%s", label)
-			if newSubs > 0 {
-				// Re-merge SANs back to ConsolidatedSubs and re-probe
-				// 1. Read existing ConsolidatedSubs
-				existingSubs := make(map[string]bool)
-				if fExisting, err := os.Open(c.F.ConsolidatedSubs); err == nil {
-					scanner := bufio.NewScanner(fExisting)
-					for scanner.Scan() {
-						line := strings.TrimSpace(scanner.Text())
-						if line != "" {
-							existingSubs[strings.ToLower(line)] = true
-						}
-					}
-					fExisting.Close()
-				}
-
-				// 2. Read tlsx output and find unique new SANs
-				var newSANs []string
-				if f, err := os.Open(c.F.TlsxOut); err == nil {
-					defer f.Close()
-					type tlsxJSON struct {
-						SANs      []string `json:"san"`
-						SubjectAN []string `json:"subject_an"`
-					}
-					scanner := bufio.NewScanner(f)
-					seen := make(map[string]bool)
-					for scanner.Scan() {
-						var res tlsxJSON
-						if err := json.Unmarshal(scanner.Bytes(), &res); err == nil {
-							sans := res.SANs
-							if len(sans) == 0 {
-								sans = res.SubjectAN
-							}
-							for _, san := range sans {
-								san = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(san, "*.")))
-								if san == "" || seen[san] {
-									continue
-								}
-								seen[san] = true
-								if utils.ValidateDomain(san) == nil {
-									if (san == c.Domain || strings.HasSuffix(san, "."+c.Domain)) && !existingSubs[san] {
-										if c.ScopeFilter == nil || (c.ScopeFilter.IsInScope(san) && !c.ScopeFilter.IsOutOfScope(san)) {
-											newSANs = append(newSANs, san)
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-
-				if len(newSANs) > 0 {
-					logger.SubStep("Re-probing %d new SAN-discovered subdomains...", len(newSANs))
-					sanSubsInputFile := c.F.TlsSanNewSubs
-					sanHttpxOutFile := c.F.TlsSanHttpxOut
-					sanHttpxLiveFile := c.F.TlsSanHttpxLive
-
-					if fSan, err := os.Create(sanSubsInputFile); err == nil {
-						for _, san := range newSANs {
-							_, _ = fSan.WriteString(san + "\n")
-						}
-						fSan.Close()
-
-						// Run httpx on the new SAN subs. Wrapped in runWithSkip so
-						// the user can interrupt a slow SAN re-probe with the 's' key.
-						reprobeSkipped := false
-						if err := runWithSkip(c, "httpx (SAN re-probe)", func(sCtx context.Context) error {
-							return c.Tb.RunHttpx(sCtx, sanSubsInputFile, sanHttpxOutFile)
-						}); err == ErrToolSkipped {
-							reprobeSkipped = true
-						}
-
-						// Process whatever output httpx produced — partial output may
-						// exist even when the run was skipped before completion.
-						if utils.FileExists(sanHttpxOutFile) {
-							if _, err := ingest.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
-								logger.Warning("Failed to parse SAN httpx output: %v", err)
-							}
-
-							// Extract live hosts
-							sanLiveCount := collectLiveHostTargetsFromHttpx(sanHttpxOutFile, sanHttpxLiveFile)
-							if sanLiveCount > 0 {
-								reprobeLabel := ""
-								if reprobeSkipped {
-									reprobeLabel = " (partial)"
-								}
-								logger.Result(sanLiveCount, "live hosts from SAN subdomains%s", reprobeLabel)
-								// Merge live hosts back
-								_ = utils.MergeAndDeduplicate([]string{c.F.HttpxLiveHosts, sanHttpxLiveFile}, c.F.HttpxLiveHosts)
-							}
-
-							// Append sanHttpxOutFile contents to c.F.HttpxOut
-							if fIn, err := os.Open(sanHttpxOutFile); err == nil {
-								fOut, openErr := os.OpenFile(c.F.HttpxOut, os.O_APPEND|os.O_WRONLY, 0644)
-								if openErr == nil {
-									_, _ = io.Copy(fOut, fIn)
-									fOut.Close()
-								}
-								fIn.Close()
-							}
-						}
-
-						// Merge new SANs back into ConsolidatedSubs
-						_ = utils.MergeAndDeduplicate([]string{c.F.ConsolidatedSubs, sanSubsInputFile}, c.F.ConsolidatedSubs)
-					}
-				}
-			}
-			logger.Result(certVulns, "certificate issues (expired/self-signed/mismatch)%s", label)
-		}
-
-		c.markStepCompleteIfNoFailure("tls_analysis")
+		runTLSAnalysisTool(c)
 	}
 
 	// Host metadata enrichment (always attempted after step 9)
-	if c.ScanID > 0 && utils.FileExists(c.F.HttpxOut) {
-		hostTargetCount := collectLiveHostTargetsFromHttpx(c.F.HttpxOut, c.F.HttpxLiveHosts)
-		if hostTargetCount > 0 {
-			// Mark ALL live hosts in DB (uncapped) — accuracy
-			allLive := loadLineSlice(c.F.HttpxLiveHosts, 0)
-			liveHosts := make([]string, 0, len(allLive))
-			for _, h := range allLive {
-				if parsed, err := neturl.Parse(h); err == nil && parsed.Hostname() != "" {
-					liveHosts = append(liveHosts, strings.ToLower(parsed.Hostname()))
-				}
-			}
-			if err := database.UpdateSubdomainsLiveBulk(c.ScanID, liveHosts); err != nil {
-				logger.FileDebug("UpdateSubdomainsLiveBulk failed: %v", err)
-			}
+	enrichHostMetadata(c)
 
-			logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
-			hostTargets := loadLineSlice(c.F.HttpxLiveHosts, metadataHostCap)
-			if count, err := metadata.CollectHostMetadata(c.GoCtx, c.ScanID, hostTargets, c.Proxy); err != nil {
-				logger.Warning("Host metadata enrichment failed: %v", err)
-			} else if count > 0 {
-				logger.Result(count, "live hosts enriched with metadata")
-			}
+	return flowkit.StepResult{Cancelled: c.cancelled()}
+}
+
+// runTLSAnalysisTool executes tlsx, parses its output, and re-probes any new
+// subdomains discovered via certificate SANs.
+func runTLSAnalysisTool(c *Ctx) {
+	writeEmptyFile(c.F.TlsxOut)
+	logger.ToolStart("tlsx")
+	inputCount, _ := utils.CountFileLines(c.F.ConsolidatedSubs)
+	logger.FileDebug("tlsx input: %s (%d hosts) out=%s", c.F.ConsolidatedSubs, inputCount, c.F.TlsxOut)
+
+	var tlsxSkipped bool
+	if err := runWithSkip(c, "tlsx", func(sCtx context.Context) error {
+		return c.Tb.RunTlsx(sCtx, c.F.ConsolidatedSubs, c.F.TlsxOut)
+	}); err != nil {
+		if err == ErrToolSkipped {
+			tlsxSkipped = true
+		} else {
+			c.markStepFailedSafe("tls_analysis", err)
+			logger.ToolFail("tlsx", err.Error())
 		}
 	}
 
-	return c.cancelled()
+	if c.ScanID > 0 && utils.FileExists(c.F.TlsxOut) {
+		newSubs, certVulns, _ := ingest.ParseTlsxOutput(c.ScanID, c.F.TlsxOut, c.Domain)
+		label := ""
+		if tlsxSkipped {
+			label = " (partial)"
+		}
+		logger.Result(newSubs, "new subdomains from certificate SANs%s", label)
+		if newSubs > 0 {
+			// Re-merge SANs back to ConsolidatedSubs and re-probe
+			newSANs := extractNewTlsxSANs(c)
+			if len(newSANs) > 0 {
+				reprobeSANSubdomains(c, newSANs)
+			}
+		}
+		logger.Result(certVulns, "certificate issues (expired/self-signed/mismatch)%s", label)
+	}
+
+	c.markStepCompleteIfNoFailure("tls_analysis")
+}
+
+// extractNewTlsxSANs reads tlsx output and returns unique, in-scope SANs that
+// are not already part of ConsolidatedSubs.
+func extractNewTlsxSANs(c *Ctx) []string {
+	// 1. Read existing ConsolidatedSubs
+	existingSubs := make(map[string]bool)
+	if fExisting, err := os.Open(c.F.ConsolidatedSubs); err == nil {
+		scanner := bufio.NewScanner(fExisting)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" {
+				existingSubs[strings.ToLower(line)] = true
+			}
+		}
+		fExisting.Close()
+	}
+
+	// 2. Read tlsx output and find unique new SANs
+	var newSANs []string
+	if f, err := os.Open(c.F.TlsxOut); err == nil {
+		defer f.Close()
+		type tlsxJSON struct {
+			SANs      []string `json:"san"`
+			SubjectAN []string `json:"subject_an"`
+		}
+		scanner := bufio.NewScanner(f)
+		seen := make(map[string]bool)
+		for scanner.Scan() {
+			var res tlsxJSON
+			if err := json.Unmarshal(scanner.Bytes(), &res); err == nil {
+				sans := res.SANs
+				if len(sans) == 0 {
+					sans = res.SubjectAN
+				}
+				for _, san := range sans {
+					san = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(san, "*.")))
+					if san == "" || seen[san] {
+						continue
+					}
+					seen[san] = true
+					if utils.ValidateDomain(san) == nil {
+						if (san == c.Domain || strings.HasSuffix(san, "."+c.Domain)) && !existingSubs[san] {
+							if c.ScopeFilter == nil || (c.ScopeFilter.IsInScope(san) && !c.ScopeFilter.IsOutOfScope(san)) {
+								newSANs = append(newSANs, san)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return newSANs
+}
+
+// reprobeSANSubdomains runs httpx on new SAN-discovered subdomains and merges
+// the results back into the consolidated outputs.
+func reprobeSANSubdomains(c *Ctx, newSANs []string) {
+	logger.SubStep("Re-probing %d new SAN-discovered subdomains...", len(newSANs))
+	sanSubsInputFile := c.F.TlsSanNewSubs
+	sanHttpxOutFile := c.F.TlsSanHttpxOut
+	sanHttpxLiveFile := c.F.TlsSanHttpxLive
+
+	fSan, err := os.Create(sanSubsInputFile)
+	if err != nil {
+		return
+	}
+	for _, san := range newSANs {
+		_, _ = fSan.WriteString(san + "\n")
+	}
+	fSan.Close()
+
+	// Run httpx on the new SAN subs. Wrapped in runWithSkip so
+	// the user can interrupt a slow SAN re-probe with the 's' key.
+	reprobeSkipped := false
+	if err := runWithSkip(c, "httpx (SAN re-probe)", func(sCtx context.Context) error {
+		return c.Tb.RunHttpx(sCtx, sanSubsInputFile, sanHttpxOutFile)
+	}); err == ErrToolSkipped {
+		reprobeSkipped = true
+	}
+
+	// Process whatever output httpx produced — partial output may
+	// exist even when the run was skipped before completion.
+	if utils.FileExists(sanHttpxOutFile) {
+		if _, err := ingest.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
+			logger.Warning("Failed to parse SAN httpx output: %v", err)
+		}
+
+		// Extract live hosts
+		sanLiveCount := collectLiveHostTargetsFromHttpx(sanHttpxOutFile, sanHttpxLiveFile)
+		if sanLiveCount > 0 {
+			reprobeLabel := ""
+			if reprobeSkipped {
+				reprobeLabel = " (partial)"
+			}
+			logger.Result(sanLiveCount, "live hosts from SAN subdomains%s", reprobeLabel)
+			// Merge live hosts back
+			_ = utils.MergeAndDeduplicate([]string{c.F.HttpxLiveHosts, sanHttpxLiveFile}, c.F.HttpxLiveHosts)
+		}
+
+		// Append sanHttpxOutFile contents to c.F.HttpxOut
+		if fIn, err := os.Open(sanHttpxOutFile); err == nil {
+			fOut, openErr := os.OpenFile(c.F.HttpxOut, os.O_APPEND|os.O_WRONLY, 0644)
+			if openErr == nil {
+				_, _ = io.Copy(fOut, fIn)
+				fOut.Close()
+			}
+			fIn.Close()
+		}
+	}
+
+	// Merge new SANs back into ConsolidatedSubs
+	_ = utils.MergeAndDeduplicate([]string{c.F.ConsolidatedSubs, sanSubsInputFile}, c.F.ConsolidatedSubs)
+}
+
+// enrichHostMetadata marks all live hosts in the DB and collects lightweight
+// metadata for ROI scoring.
+func enrichHostMetadata(c *Ctx) {
+	if c.ScanID <= 0 || !utils.FileExists(c.F.HttpxOut) {
+		return
+	}
+	hostTargetCount := collectLiveHostTargetsFromHttpx(c.F.HttpxOut, c.F.HttpxLiveHosts)
+	if hostTargetCount <= 0 {
+		return
+	}
+	// Mark ALL live hosts in DB (uncapped) — accuracy
+	allLive, _ := utils.ReadNonEmptyLines(c.F.HttpxLiveHosts)
+	liveHosts := make([]string, 0, len(allLive))
+	for _, h := range allLive {
+		if parsed, err := neturl.Parse(h); err == nil && parsed.Hostname() != "" {
+			liveHosts = append(liveHosts, strings.ToLower(parsed.Hostname()))
+		}
+	}
+	if err := database.UpdateSubdomainsLiveBulk(c.ScanID, liveHosts); err != nil {
+		logger.FileDebug("UpdateSubdomainsLiveBulk failed: %v", err)
+	}
+
+	logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
+	hostTargets := allLive
+	if len(hostTargets) > metadataHostCap {
+		hostTargets = hostTargets[:metadataHostCap]
+	}
+	if count, err := metadata.CollectHostMetadata(c.GoCtx, c.ScanID, hostTargets, c.Proxy); err != nil {
+		logger.Warning("Host metadata enrichment failed: %v", err)
+	} else if count > 0 {
+		logger.Result(count, "live hosts enriched with metadata")
+	}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -490,9 +524,9 @@ func stepTLSAnalysis(c *Ctx) bool {
 
 // stepPortScanning runs Naabu against all discovered subdomains.
 // Returns true if the scan should be cancelled.
-func stepPortScanning(c *Ctx) bool {
+func stepPortScanning(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("port_scanning", "Step 8: Port Scanning"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	if c.SkipNaabu {
@@ -527,7 +561,7 @@ func stepPortScanning(c *Ctx) bool {
 
 		c.markStepCompleteIfNoFailure("port_scanning")
 	}
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 func (c *Ctx) filterSubsToScope(filePath string) {

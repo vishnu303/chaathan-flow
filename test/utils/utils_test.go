@@ -412,7 +412,7 @@ func TestParseNucleiOutput(t *testing.T) {
 func TestParseHttpxOutput(t *testing.T) {
 	scanID, tempDir := setupTestDB(t)
 
-	if err := database.AddSubdomain(scanID, "example.com", "test"); err != nil {
+	if err := database.AddSubdomains(scanID, []string{"example.com"}, "test"); err != nil {
 		t.Fatalf("failed to add subdomain: %v", err)
 	}
 
@@ -520,8 +520,10 @@ func TestExportVulnerabilities_CaseInsensitiveSeverity(t *testing.T) {
 	scanID, tempDir := setupTestDB(t)
 
 	err := database.AddVulnerability(
-		scanID, "example.com", "https://example.com", "rce",
-		"Remote Code Execution", "CrItIcAl", "rce finding", "", "",
+		scanID, database.VulnRecord{
+			Host: "example.com", URL: "https://example.com", TemplateID: "rce",
+			Name: "Remote Code Execution", Severity: "CrItIcAl", Description: "rce finding",
+		},
 	)
 	if err != nil {
 		t.Fatalf("failed to insert vulnerability: %v", err)

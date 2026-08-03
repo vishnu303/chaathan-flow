@@ -3,6 +3,12 @@
 // subdomains, ports, URLs, endpoints, and vulnerabilities into the SQLite
 // database via pkg/database.
 //
+// The package is split into two layers:
+//   - parser.go  — pure parsing: reads tool output files and returns typed
+//     structs. Never writes to the database or the logger.
+//   - persist.go — orchestration: takes parsed structs and writes them to
+//     the database via pkg/database.
+//
 // This package was extracted from utils/ (IMPROVEMENT_PLAN §3.4 — leaf-package
 // inversion) so utils could remain a pure leaf package with no database or
 // logger dependency. The public surface of every Parse* function and result
@@ -21,12 +27,10 @@ import (
 	"net"
 	neturl "net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/vishnu303/chaathan/pkg/database"
-	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/utils"
 )
 
@@ -75,45 +79,6 @@ func scanTextLines(filePath string, fn func(line string)) error {
 		fn(line)
 	}
 	return scanner.Err()
-}
-
-// writeLines writes a slice of strings to a file using buffered I/O.
-// Close errors on the success path are returned so a failed final
-// flush-to-disk is not silently dropped.
-func writeLines(filePath string, lines []string) error {
-	f, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-
-	w := bufio.NewWriter(f)
-	for _, line := range lines {
-		if _, err := w.WriteString(line + "\n"); err != nil {
-			_ = f.Close()
-			return err
-		}
-	}
-	if err := w.Flush(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-// getTargetDomain gets the target domain of a scan from database if it's a valid domain
-func getTargetDomain(scanID int64) string {
-	if scanID <= 0 {
-		return ""
-	}
-	scan, err := database.GetScan(scanID)
-	if err != nil || scan == nil {
-		return ""
-	}
-	t := strings.ToLower(strings.TrimSpace(scan.Target))
-	if utils.ValidateDomain(t) == nil {
-		return t
-	}
-	return ""
 }
 
 // isDomainInScope checks if a given domain/hostname is within the target domain scope
@@ -166,16 +131,14 @@ func extractDomainsFromLine(line string) []string {
 	return found
 }
 
-// ParseSubdomainsFile reads a file with one subdomain per line, extracts valid domains
-// (including from Amass relationship lines), inserts them into the database,
-// and rewrites the file in-place to only contain the unique, validated subdomains.
-func ParseSubdomainsFile(scanID int64, filePath, source string) (int, error) {
-	targetDomain := getTargetDomain(scanID)
+// parseSubdomainLines extracts unique, in-scope subdomains from a file with
+// one subdomain (or Amass relation line) per line.
+func parseSubdomainLines(filePath, targetDomain string) ([]string, error) {
 	var domains []string
 	seen := make(map[string]bool)
 
 	err := scanTextLines(filePath, func(line string) {
-		// Extract any valid domains from the line (e.g. Amass graph relation lines)
+		// Extract any valid domain from the line (e.g. Amass graph relation lines)
 		for _, d := range extractDomainsFromLine(line) {
 			if !isDomainInScope(d, targetDomain) {
 				continue
@@ -187,50 +150,22 @@ func ParseSubdomainsFile(scanID int64, filePath, source string) (int, error) {
 			}
 		}
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	// Rewrite the file in-place with clean, sorted subdomains
-	slices.Sort(domains)
-	if err := writeLines(filePath, domains); err != nil {
-		logger.Warning("failed to rewrite subdomains file %s: %v", filePath, err)
-	}
-
-	if len(domains) > 0 && scanID > 0 {
-		if err := database.AddSubdomains(scanID, domains, source); err != nil {
-			return 0, err
-		}
-	}
-
-	return len(domains), nil
+	return domains, err
 }
 
-// SyncSubdomainsWithConsolidated reads the consolidated subdomains file and purges
-// any out-of-scope/unconsolidated subdomains from the database for the given scan ID.
-func SyncSubdomainsWithConsolidated(scanID int64, consolidatedFilePath string) (int, error) {
-	if scanID <= 0 || !utils.FileExists(consolidatedFilePath) {
-		return 0, nil
-	}
-
+// parseConsolidatedSubdomains reads unique lowercase subdomains from a
+// consolidated subdomains file.
+func parseConsolidatedSubdomains(filePath string) ([]string, error) {
 	var domains []string
 	seen := make(map[string]bool)
-	err := scanTextLines(consolidatedFilePath, func(line string) {
+	err := scanTextLines(filePath, func(line string) {
 		line = strings.ToLower(strings.TrimSpace(line))
 		if line != "" && !seen[line] {
 			seen[line] = true
 			domains = append(domains, line)
 		}
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	deleted, err := database.PurgeUnconsolidatedSubdomains(scanID, domains)
-	if err != nil {
-		return 0, err
-	}
-	return int(deleted), nil
+	return domains, err
 }
 
 // HttpxResult represents a line from httpx JSON output
@@ -245,9 +180,9 @@ type HttpxResult struct {
 	ResponseTime string   `json:"response_time"`
 }
 
-// ParseHttpxOutput parses httpx JSON output and stores in database
-func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
-	targetDomain := getTargetDomain(scanID)
+// parseHttpxFile parses httpx JSON output into URL records plus the list of
+// live subdomains referenced by those URLs.
+func parseHttpxFile(filePath, targetDomain string) ([]database.URLRecord, []string, error) {
 	var urlRecords []database.URLRecord
 	var liveSubs []string
 
@@ -291,24 +226,7 @@ func ParseHttpxOutput(scanID int64, filePath string) (int, error) {
 			liveSubs = append(liveSubs, subdomain)
 		}
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	count, err := database.AddURLsBatch(scanID, urlRecords)
-	if err != nil {
-		logger.FileDebug("parser: AddURLsBatch failed for httpx: %v", err)
-		return 0, err
-	}
-
-	// Mark subdomains as live in bulk
-	if len(liveSubs) > 0 {
-		if err := database.UpdateSubdomainsLiveBulk(scanID, liveSubs); err != nil {
-			logger.FileDebug("parser: UpdateSubdomainsLiveBulk failed: %v", err)
-		}
-	}
-
-	return count, nil
+	return urlRecords, liveSubs, err
 }
 
 // NucleiResult represents a line from nuclei JSON output.
@@ -330,10 +248,10 @@ type NucleiResultInfo struct {
 	Description string `json:"description"`
 }
 
-// ParseNucleiOutput parses nuclei JSON output and stores in database.
+// parseNucleiFile parses nuclei JSON output into vulnerability records.
 // WAF detection findings are deduplicated by host (ignoring port) to avoid
 // reporting the same WAF multiple times for different ports on the same host.
-func ParseNucleiOutput(scanID int64, filePath string) (int, error) {
+func parseNucleiFile(filePath string) ([]database.Vulnerability, error) {
 	var vulns []database.Vulnerability
 	// Deduplicate WAF findings by host+template (ignore port variants).
 	wafSeen := make(map[string]bool)
@@ -392,19 +310,7 @@ func ParseNucleiOutput(scanID int64, filePath string) (int, error) {
 			Evidence:    evidence,
 		})
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	if len(vulns) == 0 {
-		return 0, nil
-	}
-	count, err := database.AddVulnerabilitiesBatch(scanID, vulns)
-	if err != nil {
-		logger.FileDebug("parser: AddVulnerabilitiesBatch failed: %v", err)
-		return 0, err
-	}
-	return count, nil
+	return vulns, err
 }
 
 // isWAFTemplate returns true if the template ID indicates a WAF detection template.
@@ -434,16 +340,9 @@ func validNaabuHost(host string) bool {
 	return utils.ValidateDomain(host) == nil
 }
 
-// FfufResult represents a single ffuf discovery item.
-type FfufResult struct {
-	Input  map[string]string `json:"input"`
-	URL    string            `json:"url"`
-	Status int               `json:"status"`
-}
-
-// ParseNaabuOutput parses naabu output and stores in database.
+// parseNaabuFile parses naabu output into port records.
 // Supports both JSON output format and standard host:port/ip:port format.
-func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
+func parseNaabuFile(filePath string) ([]database.Port, error) {
 	var ports []database.Port
 
 	err := scanTextLines(filePath, func(line string) {
@@ -483,23 +382,12 @@ func ParseNaabuOutput(scanID int64, filePath string) (int, error) {
 
 		ports = append(ports, database.Port{Host: host, Port: port, Protocol: proto})
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	if len(ports) == 0 {
-		return 0, nil
-	}
-	if err := database.AddPorts(scanID, ports); err != nil {
-		logger.FileDebug("parser: AddPorts batch failed: %v", err)
-		return 0, err
-	}
-	return len(ports), nil
+	return ports, err
 }
 
-// ParseEndpointsFile parses a file with endpoints (one per line)
-func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
-	targetDomain := getTargetDomain(scanID)
+// parseEndpointsFile parses a file with endpoints (one per line) into
+// endpoint records.
+func parseEndpointsFile(filePath, targetDomain, source string) ([]database.Endpoint, error) {
 	seen := make(map[string]struct{})
 	var endpoints []database.Endpoint
 
@@ -531,23 +419,11 @@ func ParseEndpointsFile(scanID int64, filePath, source string) (int, error) {
 
 		endpoints = append(endpoints, database.Endpoint{URL: url, Method: method, Source: source})
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	if len(endpoints) == 0 {
-		return 0, nil
-	}
-	if err := database.AddEndpoints(scanID, endpoints); err != nil {
-		logger.FileDebug("parser: AddEndpoints batch failed for source %s: %v", source, err)
-		return 0, err
-	}
-	return len(endpoints), nil
+	return endpoints, err
 }
 
-// ParseURLsFile parses a file with URLs (one per line)
-func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
-	targetDomain := getTargetDomain(scanID)
+// parseURLLines parses a file with URLs (one per line) into URL records.
+func parseURLLines(filePath, targetDomain, source string) ([]database.URLRecord, error) {
 	var records []database.URLRecord
 
 	err := scanTextLines(filePath, func(line string) {
@@ -560,28 +436,14 @@ func ParseURLsFile(scanID int64, filePath, source string) (int, error) {
 		}
 		records = append(records, database.URLRecord{RawURL: line, Source: source})
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	if len(records) == 0 {
-		return 0, nil
-	}
-
-	count, err := database.AddURLsBatch(scanID, records)
-	if err != nil {
-		logger.FileDebug("parser: AddURLsBatch failed for source %s: %v", source, err)
-		return 0, err
-	}
-	return count, nil
+	return records, err
 }
 
-// ParseLiveURLsFile parses httpx plain-text output where each line may be
+// parseLiveURLLines parses httpx plain-text output where each line may be
 // "https://url [STATUS_CODE]" (produced by -status-code without -json).
-// Only the primary URL field (before any whitespace) is stored in the DB,
-// so status suffixes never corrupt stored URLs.
-func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
-	targetDomain := getTargetDomain(scanID)
+// Only the primary URL field (before any whitespace) is kept, so status
+// suffixes never corrupt stored URLs.
+func parseLiveURLLines(filePath, targetDomain, source string) ([]database.URLRecord, error) {
 	seen := make(map[string]bool)
 	var records []database.URLRecord
 
@@ -606,28 +468,21 @@ func ParseLiveURLsFile(scanID int64, filePath, source string) (int, error) {
 		seen[key] = true
 		records = append(records, database.URLRecord{RawURL: url, Source: source})
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	if len(records) == 0 {
-		return 0, nil
-	}
-
-	count, err := database.AddURLsBatch(scanID, records)
-	if err != nil {
-		logger.FileDebug("parser: AddURLsBatch failed for source %s: %v", source, err)
-		return 0, err
-	}
-	return count, nil
+	return records, err
 }
 
-// ParseFfufOutput parses ffuf JSON output and stores discovered paths as both
-// URLs and endpoints so later ranking/reporting can use the fuzzing data.
-func ParseFfufOutput(scanID int64, filePath string) (int, error) {
+// FfufResult represents a single ffuf discovery item.
+type FfufResult struct {
+	Input  map[string]string `json:"input"`
+	URL    string            `json:"url"`
+	Status int               `json:"status"`
+}
+
+// parseFfufFile parses ffuf JSON output into URL records and GET endpoints.
+func parseFfufFile(filePath, targetDomain string) ([]database.URLRecord, []database.Endpoint, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return 0, err
+		return nil, nil, err
 	}
 	defer file.Close()
 
@@ -635,10 +490,9 @@ func ParseFfufOutput(scanID int64, filePath string) (int, error) {
 		Results []FfufResult `json:"results"`
 	}
 	if err := json.NewDecoder(file).Decode(&payload); err != nil {
-		return 0, err
+		return nil, nil, err
 	}
 
-	targetDomain := getTargetDomain(scanID)
 	var urlRecords []database.URLRecord
 	var endpoints []database.Endpoint
 
@@ -657,19 +511,7 @@ func ParseFfufOutput(scanID int64, filePath string) (int, error) {
 		})
 		endpoints = append(endpoints, database.Endpoint{URL: result.URL, Method: "GET", Source: "ffuf"})
 	}
-
-	if len(urlRecords) == 0 {
-		return 0, nil
-	}
-
-	if _, err := database.AddURLsBatch(scanID, urlRecords); err != nil {
-		logger.FileDebug("parser: AddURLsBatch failed for ffuf: %v", err)
-	}
-	if err := database.AddEndpoints(scanID, endpoints); err != nil {
-		logger.FileDebug("parser: AddEndpoints batch failed for ffuf: %v", err)
-	}
-
-	return len(urlRecords), nil
+	return urlRecords, endpoints, nil
 }
 
 // TlsxResult represents a line from tlsx JSON output
@@ -690,24 +532,29 @@ type TlsxResult struct {
 	CipherSuite string   `json:"cipher"`
 }
 
-// ParseTlsxOutput parses tlsx JSON output.
-// Extracts SANs as new subdomains and flags expired/weak certs as vulnerabilities.
-func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSubs int, vulns int, err error) {
-	seenSANs := make(map[string]bool)
-	var sanBatch []string
-	var metaBatch []database.HostMetadata
+// tlsxParseResult carries the parsed output of a tlsx JSONL file: unique
+// in-scope SANs, per-host TLS metadata, and a count of certificate issues.
+type tlsxParseResult struct {
+	SANs       []string
+	Metadata   []database.HostMetadata
+	CertIssues int
+}
 
-	err = scanJSONLines(filePath, func(line string) {
+// parseTlsxFile parses tlsx JSON output. Newer tlsx JSON uses subject_an,
+// while older probe-driven output may still emit san. newSubs counts the
+// unique in-scope SANs discovered (INSERT OR IGNORE may store fewer if the
+// DB already holds them from a prior source).
+func parseTlsxFile(filePath, targetDomain string) (*tlsxParseResult, error) {
+	res := &tlsxParseResult{}
+	seenSANs := make(map[string]bool)
+
+	err := scanJSONLines(filePath, func(line string) {
 		var result TlsxResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
 			return
 		}
 
-		// Extract SANs as new subdomains. Newer tlsx JSON uses subject_an,
-		// while older probe-driven output may still emit san. Collect them
-		// and insert once after the scan; newSubs counts the unique in-scope
-		// SANs discovered (INSERT OR IGNORE may store fewer if the DB
-		// already holds them from a prior source).
+		// Extract SANs as new subdomains.
 		sans := result.SANs
 		if len(sans) == 0 {
 			sans = result.SubjectAN
@@ -722,19 +569,18 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 				continue
 			}
 			seenSANs[san] = true
-			sanBatch = append(sanBatch, san)
-			newSubs++
+			res.SANs = append(res.SANs, san)
 		}
 
 		// Track certificate issues for host metadata and step stats without creating vulnerability findings
 		if result.Expired || result.SelfSigned || result.MisMatched {
-			vulns++
+			res.CertIssues++
 		}
 
 		host := utils.NormalizeHostValue(result.Host)
 		if host != "" {
 			weakTLS := utils.IsWeakTLSVersion(result.TLSVersion)
-			metaBatch = append(metaBatch, database.HostMetadata{
+			res.Metadata = append(res.Metadata, database.HostMetadata{
 				Host:          host,
 				SSLExpired:    result.Expired,
 				SSLSelfSigned: result.SelfSigned,
@@ -743,22 +589,7 @@ func ParseTlsxOutput(scanID int64, filePath string, targetDomain string) (newSub
 			})
 		}
 	})
-
-	// Persist all unique in-scope SANs in a single transaction.
-	if len(sanBatch) > 0 {
-		if err := database.AddSubdomains(scanID, sanBatch, "tlsx-san"); err != nil {
-			logger.FileDebug("parser: AddSubdomains batch failed for %d SANs: %v", len(sanBatch), err)
-		}
-	}
-
-	// Persist host metadata in a single transaction.
-	if len(metaBatch) > 0 {
-		if _, err := database.UpsertHostMetadataBatch(scanID, metaBatch); err != nil {
-			logger.FileDebug("parser: UpsertHostMetadataBatch failed for %d hosts: %v", len(metaBatch), err)
-		}
-	}
-
-	return newSubs, vulns, err
+	return res, err
 }
 
 // UncoverResult represents a line from uncover JSON output
@@ -771,14 +602,22 @@ type UncoverResult struct {
 	Protocol string `json:"protocol"`
 }
 
-// ParseUncoverOutput parses uncover JSON output and extracts subdomains/ports.
-func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (subs int, ports int, err error) {
-	seenHosts := make(map[string]bool)
-	// Batch subdomains by source to reduce per-host DB transactions.
-	batchBySource := make(map[string][]string)
-	var portBatch []database.Port
+// uncoverParseResult carries the parsed output of an uncover JSONL file:
+// subdomains batched by source label, port records, and their counts.
+type uncoverParseResult struct {
+	SubsBySource map[string][]string
+	Ports        []database.Port
+	SubCount     int
+	PortCount    int
+}
 
-	err = scanJSONLines(filePath, func(line string) {
+// parseUncoverFile parses uncover JSON output into subdomains (batched by
+// source) and port records.
+func parseUncoverFile(filePath, targetDomain string) (*uncoverParseResult, error) {
+	res := &uncoverParseResult{SubsBySource: make(map[string][]string)}
+	seenHosts := make(map[string]bool)
+
+	err := scanJSONLines(filePath, func(line string) {
 		var result UncoverResult
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
 			return
@@ -794,8 +633,8 @@ func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (sub
 			seenHosts[host] = true
 			if utils.ValidateDomain(host) == nil && isDomainInScope(host, targetDomain) {
 				src := "uncover-" + result.Source
-				batchBySource[src] = append(batchBySource[src], host)
-				subs++
+				res.SubsBySource[src] = append(res.SubsBySource[src], host)
+				res.SubCount++
 			}
 		}
 
@@ -805,26 +644,11 @@ func ParseUncoverOutput(scanID int64, filePath string, targetDomain string) (sub
 			if proto == "" {
 				proto = "tcp"
 			}
-			portBatch = append(portBatch, database.Port{Host: host, Port: result.Port, Protocol: proto})
-			ports++
+			res.Ports = append(res.Ports, database.Port{Host: host, Port: result.Port, Protocol: proto})
+			res.PortCount++
 		}
 	})
-
-	// Flush batched subdomains in one transaction per source.
-	for src, hosts := range batchBySource {
-		if err := database.AddSubdomains(scanID, hosts, src); err != nil {
-			logger.FileDebug("parser: AddSubdomains batch failed for source %s (%d hosts): %v", src, len(hosts), err)
-		}
-	}
-
-	// Flush batched ports in a single transaction.
-	if len(portBatch) > 0 {
-		if err := database.AddPorts(scanID, portBatch); err != nil {
-			logger.FileDebug("parser: AddPorts batch failed for uncover (%d ports): %v", len(portBatch), err)
-		}
-	}
-
-	return subs, ports, err
+	return res, err
 }
 
 // DalfoxResult represents a line from dalfox output
@@ -839,110 +663,114 @@ type DalfoxResult struct {
 	Method   string `json:"method"`
 }
 
-// ParseDalfoxOutput parses dalfox output for XSS findings.
-func ParseDalfoxOutput(scanID int64, filePath string) (int, error) {
+// dalfoxVulnFromJSON converts one parsed dalfox JSON finding into a
+// vulnerability record. Returns ok=false when the finding has no target URL.
+func dalfoxVulnFromJSON(result DalfoxResult) (database.Vulnerability, bool) {
+	targetURL := strings.TrimSpace(result.URL)
+	if targetURL == "" {
+		targetURL = strings.TrimSpace(result.Data)
+	}
+	if targetURL == "" {
+		return database.Vulnerability{}, false
+	}
+
+	severity := "medium"
+	if result.Severity != "" {
+		severity = strings.ToLower(result.Severity)
+	}
+
+	templateID := "xss"
+	if result.Type != "" {
+		templateID = "xss-" + strings.ToLower(result.Type)
+	}
+
+	name := "XSS Finding"
+	if result.Type != "" && result.Param != "" {
+		name = "XSS (" + result.Type + ") - Param: " + result.Param
+	} else if result.Type != "" {
+		name = "XSS (" + result.Type + ")"
+	} else if result.Param != "" {
+		name = "XSS - Param: " + result.Param
+	}
+
+	desc := "Potential XSS detected by Dalfox"
+	if result.Param != "" {
+		desc = "Cross-Site Scripting found via parameter: " + result.Param
+	}
+
+	var evidenceParts []string
+	if result.Payload != "" {
+		evidenceParts = append(evidenceParts, "Payload: "+result.Payload)
+	}
+	if result.Method != "" {
+		evidenceParts = append(evidenceParts, "Method: "+result.Method)
+	}
+	if result.CWE != "" {
+		evidenceParts = append(evidenceParts, "CWE: "+result.CWE)
+	}
+
+	return database.Vulnerability{
+		Host:        targetURL,
+		URL:         targetURL,
+		TemplateID:  templateID,
+		Name:        name,
+		Severity:    severity,
+		Description: desc,
+		Evidence:    strings.Join(evidenceParts, "\n"),
+	}, true
+}
+
+// dalfoxVulnFromText converts one dalfox text-format finding line into a
+// vulnerability record. Returns ok=false when no URL is present.
+func dalfoxVulnFromText(line string) (database.Vulnerability, bool) {
+	var targetURL string
+
+	// Find token starting with http:// or https://
+	if idx := strings.Index(line, "http://"); idx != -1 {
+		targetURL = extractURLFromToken(line[idx:])
+	} else if idx := strings.Index(line, "https://"); idx != -1 {
+		targetURL = extractURLFromToken(line[idx:])
+	}
+
+	if targetURL == "" {
+		return database.Vulnerability{}, false
+	}
+
+	return database.Vulnerability{
+		Host:        utils.NormalizeHostValue(targetURL),
+		URL:         targetURL,
+		TemplateID:  "xss",
+		Name:        "XSS Finding",
+		Severity:    "medium",
+		Description: "Potential XSS detected by Dalfox",
+		Evidence:    line,
+	}, true
+}
+
+// parseDalfoxFile parses dalfox output (JSONL with a text-format fallback)
+// into XSS vulnerability records.
+func parseDalfoxFile(filePath string) ([]database.Vulnerability, error) {
 	var vulns []database.Vulnerability
 
 	err := scanJSONLines(filePath, func(line string) {
 		// Try JSON first
 		var result DalfoxResult
 		if err := json.Unmarshal([]byte(line), &result); err == nil {
-			targetURL := strings.TrimSpace(result.URL)
-			if targetURL == "" {
-				targetURL = strings.TrimSpace(result.Data)
+			if v, ok := dalfoxVulnFromJSON(result); ok {
+				vulns = append(vulns, v)
 			}
-			if targetURL == "" {
-				return
+			return
+		}
+		if strings.Contains(line, "[POC]") || strings.Contains(line, "[V]") {
+			if v, ok := dalfoxVulnFromText(line); ok {
+				vulns = append(vulns, v)
 			}
-
-			severity := "medium"
-			if result.Severity != "" {
-				severity = strings.ToLower(result.Severity)
-			}
-
-			templateID := "xss"
-			if result.Type != "" {
-				templateID = "xss-" + strings.ToLower(result.Type)
-			}
-
-			name := "XSS Finding"
-			if result.Type != "" && result.Param != "" {
-				name = "XSS (" + result.Type + ") - Param: " + result.Param
-			} else if result.Type != "" {
-				name = "XSS (" + result.Type + ")"
-			} else if result.Param != "" {
-				name = "XSS - Param: " + result.Param
-			}
-
-			desc := "Potential XSS detected by Dalfox"
-			if result.Param != "" {
-				desc = "Cross-Site Scripting found via parameter: " + result.Param
-			}
-
-			var evidenceParts []string
-			if result.Payload != "" {
-				evidenceParts = append(evidenceParts, "Payload: "+result.Payload)
-			}
-			if result.Method != "" {
-				evidenceParts = append(evidenceParts, "Method: "+result.Method)
-			}
-			if result.CWE != "" {
-				evidenceParts = append(evidenceParts, "CWE: "+result.CWE)
-			}
-
-			vulns = append(vulns, database.Vulnerability{
-				Host:        targetURL,
-				URL:         targetURL,
-				TemplateID:  templateID,
-				Name:        name,
-				Severity:    severity,
-				Description: desc,
-				Evidence:    strings.Join(evidenceParts, "\n"),
-			})
-		} else if strings.Contains(line, "[POC]") || strings.Contains(line, "[V]") {
-			// Text format fallback: extract host/URL from line
-			var targetURL string
-			var host string
-
-			// Find token starting with http:// or https://
-			if idx := strings.Index(line, "http://"); idx != -1 {
-				targetURL = extractURLFromToken(line[idx:])
-			} else if idx := strings.Index(line, "https://"); idx != -1 {
-				targetURL = extractURLFromToken(line[idx:])
-			}
-
-			if targetURL != "" {
-				host = utils.NormalizeHostValue(targetURL)
-			} else {
-				return
-			}
-
-			vulns = append(vulns, database.Vulnerability{
-				Host:        host,
-				URL:         targetURL,
-				TemplateID:  "xss",
-				Name:        "XSS Finding",
-				Severity:    "medium",
-				Description: "Potential XSS detected by Dalfox",
-				Evidence:    line,
-			})
 		}
 	})
-	if err != nil {
-		return 0, err
-	}
-
-	if len(vulns) == 0 {
-		return 0, nil
-	}
-	count, err := database.AddVulnerabilitiesBatch(scanID, vulns)
-	if err != nil {
-		logger.FileDebug("parser: AddVulnerabilitiesBatch failed for dalfox: %v", err)
-		return 0, err
-	}
-	return count, nil
+	return vulns, err
 }
 
+// extractURLFromToken trims a URL token at the first whitespace or delimiter.
 func extractURLFromToken(s string) string {
 	endIdx := len(s)
 	for i, r := range s {

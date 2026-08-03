@@ -325,15 +325,17 @@ func (n *Notifier) SendStepComplete(step StepComplete) error {
 func (n *Notifier) sendDiscord(finding Finding) error {
 	color := getDiscordColor(finding.Severity)
 
+	fields := []map[string]any{
+		{"name": "Target", "value": finding.Target, "inline": true},
+		{"name": "Type", "value": finding.Type, "inline": true},
+	}
+
 	embed := map[string]any{
 		"title":       fmt.Sprintf("[%s] %s", strings.ToUpper(finding.Severity), finding.Name),
 		"description": finding.Description,
 		"color":       color,
-		"fields": []map[string]any{
-			{"name": "Target", "value": finding.Target, "inline": true},
-			{"name": "Type", "value": finding.Type, "inline": true},
-		},
-		"timestamp": finding.Timestamp.Format(time.RFC3339),
+		"fields":      fields,
+		"timestamp":   finding.Timestamp.Format(time.RFC3339),
 		"footer": map[string]string{
 			"text": "Chaathan Security Scanner",
 		},
@@ -341,14 +343,15 @@ func (n *Notifier) sendDiscord(finding Finding) error {
 
 	if finding.URL != "" {
 		embed["url"] = finding.URL
-		embed["fields"] = append(embed["fields"].([]map[string]any),
+		fields = append(fields,
 			map[string]any{"name": "URL", "value": finding.URL, "inline": false})
 	}
 
 	if finding.TemplateID != "" {
-		embed["fields"] = append(embed["fields"].([]map[string]any),
+		fields = append(fields,
 			map[string]any{"name": "Template", "value": finding.TemplateID, "inline": true})
 	}
+	embed["fields"] = fields
 
 	payload := map[string]any{
 		"embeds": []map[string]any{embed},
@@ -700,8 +703,8 @@ func (n *Notifier) postJSON(url string, payload any) error {
 		}
 
 		if resp.StatusCode < 400 {
-			io.Copy(io.Discard, resp.Body) // drain body so connection can be reused
-			resp.Body.Close()
+			_, _ = io.Copy(io.Discard, resp.Body) // drain body so connection can be reused
+			_ = resp.Body.Close()
 			return nil // success
 		}
 

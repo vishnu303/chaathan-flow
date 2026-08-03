@@ -372,18 +372,7 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if queryGrep != "" {
-		var filtered []database.URLROI
-		pattern := strings.ToLower(queryGrep)
-		for _, t := range targets {
-			if strings.Contains(strings.ToLower(t.URL), pattern) ||
-				strings.Contains(strings.ToLower(t.Title), pattern) ||
-				strings.Contains(strings.ToLower(strings.Join(t.InterestingTerms, " ")), pattern) {
-				filtered = append(filtered, t)
-			}
-		}
-		targets = filtered
-	}
+	targets = filterROITargets(targets)
 
 	if queryLimit > 0 && len(targets) > queryLimit {
 		targets = targets[:queryLimit]
@@ -395,21 +384,7 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 	}
 
 	if queryScope {
-		// Scope mode: output raw URLs only, one per line
-		var sb strings.Builder
-		for _, t := range targets {
-			sb.WriteString(t.URL)
-			sb.WriteByte('\n')
-		}
-		if queryOutputFile != "" {
-			if err := os.WriteFile(queryOutputFile, []byte(sb.String()), 0644); err != nil {
-				logger.Error("Failed to write scope file: %v", err)
-				return
-			}
-			logger.Success("Scope file saved: %s (%d URLs)", queryOutputFile, len(targets))
-			return
-		}
-		fmt.Print(sb.String())
+		printROIScope(targets)
 		return
 	}
 
@@ -418,6 +393,49 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	printROITable(targets)
+	printROIDetails(targets)
+
+	logger.Info("Showing %d ranked targets (max 3 per host)", len(targets))
+}
+
+// filterROITargets applies the --grep pattern filter to ROI targets
+func filterROITargets(targets []database.URLROI) []database.URLROI {
+	if queryGrep == "" {
+		return targets
+	}
+	var filtered []database.URLROI
+	pattern := strings.ToLower(queryGrep)
+	for _, t := range targets {
+		if strings.Contains(strings.ToLower(t.URL), pattern) ||
+			strings.Contains(strings.ToLower(t.Title), pattern) ||
+			strings.Contains(strings.ToLower(strings.Join(t.InterestingTerms, " ")), pattern) {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+// printROIScope outputs raw URLs only, one per line (scope file mode)
+func printROIScope(targets []database.URLROI) {
+	var sb strings.Builder
+	for _, t := range targets {
+		sb.WriteString(t.URL)
+		sb.WriteByte('\n')
+	}
+	if queryOutputFile != "" {
+		if err := os.WriteFile(queryOutputFile, []byte(sb.String()), 0644); err != nil {
+			logger.Error("Failed to write scope file: %v", err)
+			return
+		}
+		logger.Success("Scope file saved: %s (%d URLs)", queryOutputFile, len(targets))
+		return
+	}
+	fmt.Print(sb.String())
+}
+
+// printROITable renders the ROI summary table
+func printROITable(targets []database.URLROI) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	logger.TableHeader(w, "SCORE", "N-SCORE", "CONF", "STATUS", "URL", "SURFACES")
 	for _, t := range targets {
@@ -445,7 +463,10 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 		)
 	}
 	w.Flush()
+}
 
+// printROIDetails renders the per-target detail sections
+func printROIDetails(targets []database.URLROI) {
 	for _, t := range targets {
 		logger.Section("ROI %d (N:%d %s) - %s", t.Score, t.NormalizedScore, t.Confidence, t.URL)
 		if t.Title != "" {
@@ -465,6 +486,4 @@ func runQueryROI(cmd *cobra.Command, args []string) {
 		}
 		logger.Print("\n")
 	}
-
-	logger.Info("Showing %d ranked targets (max 3 per host)", len(targets))
 }

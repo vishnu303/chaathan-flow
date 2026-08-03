@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/utils"
@@ -26,9 +27,9 @@ import (
 
 // stepPassiveEnum runs Subfinder, Assetfinder, and Sublist3r in parallel.
 // Returns true if the scan should be cancelled.
-func stepPassiveEnum(c *Ctx) bool {
+func stepPassiveEnum(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("passive_enum", "Step 2: Passive Subdomain Enumeration"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 	writeEmptyFile(c.F.SubfinderOut)
 	writeEmptyFile(c.F.AssetfinderOut)
@@ -120,7 +121,7 @@ func stepPassiveEnum(c *Ctx) bool {
 	} else {
 		c.markStepFailedSafe("passive_enum", fmt.Errorf("all passive enumeration tools failed"))
 	}
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -129,16 +130,16 @@ func stepPassiveEnum(c *Ctx) bool {
 
 // stepActiveEnum runs Amass unless --skip-amass is set.
 // Returns true if the scan should be cancelled.
-func stepActiveEnum(c *Ctx) bool {
+func stepActiveEnum(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("active_enum", "Step 3: Active Subdomain Enumeration (Amass)"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	if c.SkipAmass {
 		logger.StepHeader("Step 3: Skipping Amass (--skip-amass)")
 		logger.FileDebug("amass skipped via --skip-amass flag")
 		c.markStepCompleteSafe("active_enum")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	writeEmptyFile(c.F.AmassOut)
@@ -167,7 +168,7 @@ func stepActiveEnum(c *Ctx) bool {
 	}
 
 	c.markStepCompleteIfNoFailure("active_enum")
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -176,17 +177,17 @@ func stepActiveEnum(c *Ctx) bool {
 
 // stepGitHubRecon runs github-subdomains when a token is available.
 // Returns true if the scan should be cancelled.
-func stepGitHubRecon(c *Ctx) bool {
+func stepGitHubRecon(c *Ctx) flowkit.StepResult {
 	if c.GitHubToken == "" {
 		logger.StepHeader("Step 4: Skipping GitHub Recon (set api_keys.github or --github-token)")
 		logger.Warning("Set api_keys.github in config.yaml or pass --github-token flag for GitHub recon")
 		logger.FileDebug("github_recon skipped: no token provided")
 		c.markStepCompleteIfNoFailure("github_recon")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	if skipped, cancelled := c.resumeOrSkip("github_recon", "Step 4: GitHub Subdomain Discovery"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	writeEmptyFile(c.F.GithubSubsOut)
@@ -217,7 +218,7 @@ func stepGitHubRecon(c *Ctx) bool {
 	}
 
 	c.markStepCompleteIfNoFailure("github_recon")
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -226,15 +227,15 @@ func stepGitHubRecon(c *Ctx) bool {
 
 // stepSearchEngineRecon runs Uncover unless --skip-uncover is set.
 // Returns true if the scan should be cancelled.
-func stepSearchEngineRecon(c *Ctx) bool {
+func stepSearchEngineRecon(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("search_engine_recon", "Step 5: Search Engine Dorking"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	if c.SkipUncover {
 		logger.StepHeader("Step 5: Skipping Uncover (--skip-uncover)")
 		c.markStepCompleteSafe("search_engine_recon")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	writeEmptyFile(c.F.UncoverOut)
@@ -268,5 +269,5 @@ func stepSearchEngineRecon(c *Ctx) bool {
 	}
 
 	c.markStepCompleteIfNoFailure("search_engine_recon")
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }

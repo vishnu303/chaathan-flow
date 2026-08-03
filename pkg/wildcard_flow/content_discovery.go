@@ -27,6 +27,7 @@ import (
 
 	"github.com/vishnu303/chaathan/pkg/config"
 	"github.com/vishnu303/chaathan/pkg/database"
+	"github.com/vishnu303/chaathan/pkg/flowkit"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/logger"
 	"github.com/vishnu303/chaathan/pkg/metadata"
@@ -39,9 +40,9 @@ import (
 
 // stepURLDiscovery runs Waybackurls and GAU in parallel on the target domain.
 // Returns true if the scan should be cancelled.
-func stepURLDiscovery(c *Ctx) bool {
+func stepURLDiscovery(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("url_discovery", "Step 11: Historical URL Discovery"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 	writeEmptyFile(c.F.WaybackOut)
 	writeEmptyFile(c.F.GauOut)
@@ -123,7 +124,7 @@ func stepURLDiscovery(c *Ctx) bool {
 	} else {
 		c.markStepFailedSafe("url_discovery", fmt.Errorf("both Waybackurls and GAU failed"))
 	}
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -132,15 +133,15 @@ func stepURLDiscovery(c *Ctx) bool {
 
 // stepWebCrawling runs Katana and GoSpider in parallel.
 // Returns true if the scan should be cancelled.
-func stepWebCrawling(c *Ctx) bool {
+func stepWebCrawling(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("web_crawling", "Step 12: Web Crawling"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	if c.SkipCrawl {
 		logger.StepHeader("Step 12: Skipping Web Crawling (--skip-crawl)")
 		c.markStepCompleteIfNoFailure("web_crawling")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 	writeEmptyFile(c.F.KatanaOut)
 	writeEmptyFile(c.F.GospiderOut)
@@ -151,7 +152,7 @@ func stepWebCrawling(c *Ctx) bool {
 	if liveHostCount == 0 {
 		logger.Warning("No live hosts found — skipping web crawling")
 		c.markStepCompleteIfNoFailure("web_crawling")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 	logger.FileDebug("web_crawling input: %s (%d live hosts)", c.F.HttpxLiveHosts, liveHostCount)
 
@@ -228,7 +229,7 @@ func stepWebCrawling(c *Ctx) bool {
 	} else {
 		c.markStepFailedSafe("web_crawling", fmt.Errorf("both Katana and GoSpider failed"))
 	}
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -240,15 +241,15 @@ func stepWebCrawling(c *Ctx) bool {
 // (written to X8URLsOut) so they flow into Step 17 consolidation and
 // downstream scanners (Nuclei/Dalfox).
 // Returns true if the scan should be cancelled.
-func stepParamDiscovery(c *Ctx) bool {
+func stepParamDiscovery(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("param_discovery", "Step 15: HTTP Parameter Discovery (x8)"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	if c.SkipX8 {
 		logger.StepHeader("Step 15: Skipping x8 (--skip-x8)")
 		c.markStepCompleteIfNoFailure("param_discovery")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	writeEmptyFile(c.F.X8Out)
@@ -259,69 +260,31 @@ func stepParamDiscovery(c *Ctx) bool {
 	if liveHostCount == 0 {
 		logger.Warning("No live hosts found — skipping x8 parameter discovery")
 		c.markStepCompleteIfNoFailure("param_discovery")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	// Merge FfufDiscoveredURLs and high-signal endpoints into a temporary input file
 	x8InputFile := c.F.X8Input
 
-	var x8Targets []string
-
-	// Add ffuf fuzzing results
-	if utils.FileExists(c.F.FfufDiscoveredURLs) {
-		x8Targets = append(x8Targets, loadLineSlice(c.F.FfufDiscoveredURLs, 0)...)
-	}
-
-	// Collect and add high-signal crawler endpoints (no limit to collect all possible targets)
-	crawlerFiles := []string{
-		c.F.WaybackOut,
-		c.F.GauOut,
-		c.F.KatanaOut,
-		c.F.GospiderOut,
-		c.F.JSEndpointsOut,
-	}
-	highSignal := collectHighSignalEndpoints(crawlerFiles)
-	x8Targets = append(x8Targets, highSignal...)
-
-	// Deduplicate targets and cap at paramDiscoveryCap (150)
-	x8Targets = utils.DeduplicateSlice(x8Targets)
-	if len(x8Targets) > paramDiscoveryCap {
-		x8Targets = x8Targets[:paramDiscoveryCap]
-	}
+	x8Targets := collectX8Targets(c)
 
 	if len(x8Targets) == 0 {
 		logger.Warning("No targets found for parameter discovery — skipping x8")
 		c.markStepCompleteIfNoFailure("param_discovery")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	// Write targets to x8InputFile
-	if fIn, err := os.Create(x8InputFile); err == nil {
-		for _, t := range x8Targets {
-			_, _ = fIn.WriteString(t + "\n")
-		}
-		fIn.Close()
-	} else {
+	if err := writeX8Input(x8InputFile, x8Targets); err != nil {
 		c.markStepFailedSafe("param_discovery", err)
 		logger.Error("Failed to prepare x8 input: %v", err)
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	logger.ToolStart("x8")
 
 	// Validate parameters wordlist if configured or available via SecLists.
-	paramWordlist := ""
-	if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" && utils.FileExists(c.Cfg.General.Wordlists.Parameters) {
-		paramWordlist = c.Cfg.General.Wordlists.Parameters
-	} else if autoWl := config.ResolveSecListFile("Discovery/Web-Content/burp-parameter-names.txt"); autoWl != "" {
-		paramWordlist = autoWl
-		logger.Info("Auto-detected SecLists parameter wordlist for x8: %s", autoWl)
-	} else {
-		if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" {
-			logger.Warning("x8 parameters wordlist not found: %s", c.Cfg.General.Wordlists.Parameters)
-		}
-		logger.Info("SecLists parameter wordlist not found on device — falling back to x8's built-in parameter list")
-	}
+	paramWordlist := resolveX8ParamWordlist(c)
 
 	var x8Skipped bool
 	if err := runWithSkip(c, "x8", func(sCtx context.Context) error {
@@ -349,7 +312,69 @@ func stepParamDiscovery(c *Ctx) bool {
 	}
 
 	c.markStepCompleteIfNoFailure("param_discovery")
-	return c.cancelled()
+	return flowkit.StepResult{Cancelled: c.cancelled()}
+}
+
+// collectX8Targets merges ffuf discoveries and high-signal crawler
+// endpoints, deduplicated and capped at paramDiscoveryCap.
+func collectX8Targets(c *Ctx) []string {
+	var x8Targets []string
+
+	// Add ffuf fuzzing results
+	if utils.FileExists(c.F.FfufDiscoveredURLs) {
+		if lines, err := utils.ReadNonEmptyLines(c.F.FfufDiscoveredURLs); err == nil {
+			x8Targets = append(x8Targets, lines...)
+		}
+	}
+
+	// Collect and add high-signal crawler endpoints (no limit to collect all possible targets)
+	crawlerFiles := []string{
+		c.F.WaybackOut,
+		c.F.GauOut,
+		c.F.KatanaOut,
+		c.F.GospiderOut,
+		c.F.JSEndpointsOut,
+	}
+	highSignal := collectHighSignalEndpoints(crawlerFiles)
+	x8Targets = append(x8Targets, highSignal...)
+
+	// Deduplicate targets and cap at paramDiscoveryCap (150)
+	x8Targets = utils.DedupeLines(x8Targets)
+	if len(x8Targets) > paramDiscoveryCap {
+		x8Targets = x8Targets[:paramDiscoveryCap]
+	}
+	return x8Targets
+}
+
+// writeX8Input writes the target list to x8's input file.
+func writeX8Input(x8InputFile string, x8Targets []string) error {
+	fIn, err := os.Create(x8InputFile)
+	if err != nil {
+		return err
+	}
+	for _, t := range x8Targets {
+		_, _ = fIn.WriteString(t + "\n")
+	}
+	fIn.Close()
+	return nil
+}
+
+// resolveX8ParamWordlist picks the x8 parameter wordlist: the configured
+// wordlist when it exists, else SecLists auto-detect, else empty to fall
+// back to x8's built-in parameter list.
+func resolveX8ParamWordlist(c *Ctx) string {
+	if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" && utils.FileExists(c.Cfg.General.Wordlists.Parameters) {
+		return c.Cfg.General.Wordlists.Parameters
+	}
+	if autoWl := config.ResolveSecListFile("Discovery/Web-Content/burp-parameter-names.txt"); autoWl != "" {
+		logger.Info("Auto-detected SecLists parameter wordlist for x8: %s", autoWl)
+		return autoWl
+	}
+	if c.Cfg != nil && c.Cfg.General.Wordlists.Parameters != "" {
+		logger.Warning("x8 parameters wordlist not found: %s", c.Cfg.General.Wordlists.Parameters)
+	}
+	logger.Info("SecLists parameter wordlist not found on device — falling back to x8's built-in parameter list")
+	return ""
 }
 
 // collectHighSignalEndpoints reads raw URLs from crawler and discovery files,
@@ -380,69 +405,70 @@ func collectHighSignalEndpoints(files []string) []string {
 			continue
 		}
 
-		scanner := bufio.NewScanner(f)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-
-			// Clean line (strip GoSpider tags if present, or spaces)
-			fields := strings.Fields(line)
-			if len(fields) == 0 {
-				continue
-			}
-			rawURL := fields[0]
-
-			// Parse URL to validate and normalize
-			parsed, err := url.Parse(rawURL)
-			if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
-				continue
-			}
-
-			// Clean/normalize path
-			pathLower := strings.ToLower(parsed.Path)
-
-			// Match criteria
-			isDynamic := false
-
-			// 1. Check extensions
-			for _, ext := range extensions {
-				if strings.HasSuffix(pathLower, ext) || strings.Contains(pathLower, ext+"/") {
-					isDynamic = true
-					break
-				}
-			}
-
-			// 2. Check keywords in path
-			if !isDynamic {
-				for _, kw := range keywords {
-					if strings.Contains(pathLower, kw) {
-						isDynamic = true
-						break
-					}
-				}
-			}
-
-			// 3. Check if it already has query parameters (high signal for dynamic behavior)
-			if !isDynamic && parsed.RawQuery != "" {
-				isDynamic = true
-			}
-
-			if isDynamic {
-				// Normalize to host+path for deduplication (strip query params and fragment)
-				dedupKey := parsed.Scheme + "://" + parsed.Host + parsed.Path
-				if !seen[dedupKey] {
-					seen[dedupKey] = true
-					// Keep the original URL
-					endpoints = append(endpoints, rawURL)
-				}
-			}
-		}
+		scanHighSignalFile(f, seen, &endpoints, extensions, keywords)
 		f.Close()
 	}
 
 	return endpoints
+}
+
+// scanHighSignalFile extracts deduplicated high-signal URLs from one file.
+func scanHighSignalFile(f *os.File, seen map[string]bool, endpoints *[]string, extensions, keywords []string) {
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Clean line (strip GoSpider tags if present, or spaces)
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		rawURL := fields[0]
+
+		// Parse URL to validate and normalize
+		parsed, err := url.Parse(rawURL)
+		if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
+			continue
+		}
+
+		// Match criteria
+		if isHighSignalURL(parsed, extensions, keywords) {
+			// Normalize to host+path for deduplication (strip query params and fragment)
+			dedupKey := parsed.Scheme + "://" + parsed.Host + parsed.Path
+			if !seen[dedupKey] {
+				seen[dedupKey] = true
+				// Keep the original URL
+				*endpoints = append(*endpoints, rawURL)
+			}
+		}
+	}
+}
+
+// isHighSignalURL reports whether the parsed URL matches dynamic-extension,
+// keyword-path, or query-parameter criteria.
+func isHighSignalURL(parsed *url.URL, extensions, keywords []string) bool {
+	// Clean/normalize path
+	pathLower := strings.ToLower(parsed.Path)
+
+	// 1. Check extensions
+	for _, ext := range extensions {
+		if strings.HasSuffix(pathLower, ext) || strings.Contains(pathLower, ext+"/") {
+			return true
+		}
+	}
+
+	// 2. Check keywords in path
+	for _, kw := range keywords {
+		if strings.Contains(pathLower, kw) {
+			return true
+		}
+	}
+
+	// 3. Check if it already has query parameters (high signal for dynamic behavior)
+	return parsed.RawQuery != ""
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -452,9 +478,9 @@ func collectHighSignalEndpoints(files []string) []string {
 // stepURLConsolidation merges all URL sources, live-checks them with Httpx,
 // and enriches ROI metadata for high-value targets.
 // Returns true if the scan should be cancelled.
-func stepURLConsolidation(c *Ctx) bool {
+func stepURLConsolidation(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("url_consolidation", "Step 16: URL Consolidation & Live Check"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 	writeEmptyFile(c.F.AllURLsRaw)
 	_ = os.Remove(c.F.AllURLsLive)
@@ -465,7 +491,7 @@ func stepURLConsolidation(c *Ctx) bool {
 	if err := utils.MergeAndDeduplicate(sources, c.F.AllURLsRaw); err != nil {
 		c.markStepFailedSafe("url_consolidation", err)
 		logger.Warning("URL merge failed: %v", err)
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	// Sanitize: unescape \uXXXX sequences, strip non-URL lines (GoSpider tags,
@@ -486,11 +512,25 @@ func stepURLConsolidation(c *Ctx) bool {
 	logger.FileDebug("url_consolidation merged %d raw URLs -> %s", rawCount, c.F.AllURLsRaw)
 
 	// Live-check all URLs with httpx
+	urlCheckSkipped, usedFallback := liveCheckConsolidatedURLs(c)
+
+	// Persist live URLs into DB so GetScanStats / query commands reflect reality.
+	// This is intentionally after the skip/fallback block so both paths populate the DB.
+	persistLiveURLs(c, urlCheckSkipped, usedFallback)
+
+	// ROI metadata enrichment (capped at per-host 5 and total metadataHostCap=250)
+	enrichROIMetadata(c)
+
+	c.markStepCompleteIfNoFailure("url_consolidation")
+	return flowkit.StepResult{Cancelled: c.cancelled()}
+}
+
+// liveCheckConsolidatedURLs runs the httpx URL live-check, falling back to
+// the raw URL set when no fresh output exists.
+func liveCheckConsolidatedURLs(c *Ctx) (urlCheckSkipped, usedFallback bool) {
 	logger.ToolStart("httpx")
 	rawCount2, _ := utils.CountFileLines(c.F.AllURLsRaw)
 	logger.FileDebug("httpx_url_check input: %s (%d URLs) out=%s", c.F.AllURLsRaw, rawCount2, c.F.AllURLsLive)
-	var urlCheckSkipped bool
-	var usedFallback bool
 	if err := runWithSkip(c, "httpx (URL check)", func(sCtx context.Context) error {
 		return c.Tb.RunHttpxURLCheck(sCtx, c.F.AllURLsRaw, c.F.AllURLsLive)
 	}); err != nil {
@@ -505,46 +545,56 @@ func stepURLConsolidation(c *Ctx) bool {
 		if !utils.FileExists(c.F.AllURLsLive) || !fileModifiedAfter(c.F.AllURLsLive, c.StartTime) {
 			usedFallback = true
 			logger.Info("Live-check unavailable — using unverified URLs")
-			copyFile(c.F.AllURLsRaw, c.F.AllURLsLive)
+			if err := copyFile(c.F.AllURLsRaw, c.F.AllURLsLive); err != nil {
+				logger.Warning("Failed to copy raw URLs as fallback: %v", err)
+			}
 		}
 	} else {
 		liveCount, _ := utils.CountFileLines(c.F.AllURLsLive)
 		logger.Success("  %d live URLs confirmed", liveCount)
 		logger.FileDebug("httpx_url_check output: %d live URLs -> %s", liveCount, c.F.AllURLsLive)
 	}
+	return urlCheckSkipped, usedFallback
+}
 
-	// Persist live URLs into DB so GetScanStats / query commands reflect reality.
-	// This is intentionally after the skip/fallback block so both paths populate the DB.
-	if c.ScanID > 0 && utils.FileExists(c.F.AllURLsLive) {
-		if dbCount, err := ingest.ParseLiveURLsFile(c.ScanID, c.F.AllURLsLive, "httpx-url-check"); err != nil {
-			logger.Warning("Failed to persist live URLs to DB: %v", err)
-		} else {
-			label := ""
-			if usedFallback {
-				label = " (from fallback)"
-			} else if urlCheckSkipped {
-				label = " (partial)"
-			}
-			logger.Result(dbCount, "verified live URLs consolidated%s", label)
-		}
+// persistLiveURLs stores the live URL set into the DB and logs the
+// consolidated count.
+func persistLiveURLs(c *Ctx, urlCheckSkipped, usedFallback bool) {
+	if c.ScanID <= 0 || !utils.FileExists(c.F.AllURLsLive) {
+		return
 	}
-
-	// ROI metadata enrichment (capped at per-host 5 and total metadataHostCap=250)
-	if c.ScanID > 0 && utils.FileExists(c.F.AllURLsLive) {
-		metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 5, metadataHostCap)
-		if metaTargetCount > 0 {
-			logger.SubStep("Collecting lightweight metadata for %d high-value URLs...", metaTargetCount)
-			metaTargets := loadLineSlice(c.F.ROIMetadataTargets, metadataHostCap)
-			if count, err := metadata.CollectURLMetadata(c.GoCtx, c.ScanID, metaTargets, c.Proxy); err != nil {
-				logger.Warning("URL metadata enrichment failed: %v", err)
-			} else if count > 0 {
-				logger.Result(count, "ROI candidate URLs enriched with metadata")
-			}
+	if dbCount, err := ingest.ParseLiveURLsFile(c.ScanID, c.F.AllURLsLive, "httpx-url-check"); err != nil {
+		logger.Warning("Failed to persist live URLs to DB: %v", err)
+	} else {
+		label := ""
+		if usedFallback {
+			label = " (from fallback)"
+		} else if urlCheckSkipped {
+			label = " (partial)"
 		}
+		logger.Result(dbCount, "verified live URLs consolidated%s", label)
 	}
+}
 
-	c.markStepCompleteIfNoFailure("url_consolidation")
-	return c.cancelled()
+// enrichROIMetadata collects lightweight metadata for high-value URLs.
+func enrichROIMetadata(c *Ctx) {
+	if c.ScanID <= 0 || !utils.FileExists(c.F.AllURLsLive) {
+		return
+	}
+	metaTargetCount := collectROIMetadataTargetsFromFile(c.F.AllURLsLive, c.F.ROIMetadataTargets, 5, metadataHostCap)
+	if metaTargetCount <= 0 {
+		return
+	}
+	logger.SubStep("Collecting lightweight metadata for %d high-value URLs...", metaTargetCount)
+	metaTargets, _ := utils.ReadNonEmptyLines(c.F.ROIMetadataTargets)
+	if len(metaTargets) > metadataHostCap {
+		metaTargets = metaTargets[:metadataHostCap]
+	}
+	if count, err := metadata.CollectURLMetadata(c.GoCtx, c.ScanID, metaTargets, c.Proxy); err != nil {
+		logger.Warning("URL metadata enrichment failed: %v", err)
+	} else if count > 0 {
+		logger.Result(count, "ROI candidate URLs enriched with metadata")
+	}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -563,21 +613,14 @@ func ffufMaxTimeout(c *Ctx) time.Duration {
 // stepDirFuzzing runs ffuf when a wordlist is provided via --wordlist.
 // A single timeout (ffuf MaxTimeout) applies to the entire step, not per-host.
 // Returns true if the scan should be cancelled.
-func stepDirFuzzing(c *Ctx) bool {
+func stepDirFuzzing(c *Ctx) flowkit.StepResult {
 	if skipped, cancelled := c.resumeOrSkip("dir_fuzzing", "Step 14: Directory Fuzzing (ffuf)"); skipped {
-		return cancelled
+		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
-	if c.WordlistPath == "" {
-		if autoWl := config.ResolveSecListFile("Discovery/Web-Content/common.txt"); autoWl != "" {
-			c.WordlistPath = autoWl
-			logger.Info("Auto-detected SecLists wordlist for ffuf: %s", autoWl)
-		} else {
-			logger.StepHeader("Step 14: Skipping Directory Fuzzing (no wordlist — run 'chaathan setup')")
-			logger.Info("Provide --wordlist or run 'chaathan setup' to install SecLists")
-			c.markStepCompleteIfNoFailure("dir_fuzzing")
-			return c.cancelled()
-		}
+	if !resolveFfufWordlist(c) {
+		c.markStepCompleteIfNoFailure("dir_fuzzing")
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
 	writeEmptyFile(c.F.FfufOut)
@@ -592,20 +635,10 @@ func stepDirFuzzing(c *Ctx) bool {
 		logger.Info("Install seclists (apt install seclists / pacman -S seclists) or provide a valid --wordlist path")
 		logger.FileDebug("ffuf skipped: wordlist does not exist at %s", c.WordlistPath)
 		c.markStepCompleteIfNoFailure("dir_fuzzing")
-		return c.cancelled()
+		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
-	liveHosts := loadLineSlice(c.F.HttpxLiveHosts, ffufHostCap)
-	if len(liveHosts) == 0 {
-		// Fallback to root domain
-		liveHosts = []string{"https://" + c.Domain}
-	}
-
-	type localFfufResult struct {
-		Input  map[string]string `json:"input"`
-		URL    string            `json:"url"`
-		Status int               `json:"status"`
-	}
+	liveHosts := ffufTargetHosts(c)
 
 	var allResults []localFfufResult
 	var resultsMu sync.Mutex
@@ -614,56 +647,7 @@ func stepDirFuzzing(c *Ctx) bool {
 
 	var ffufSkipped bool
 	if err := runWithSkip(c, "ffuf", func(sCtx context.Context) error {
-		// Apply a single timeout for the entire ffuf step (all hosts combined).
-		stepCtx, cancel := context.WithTimeout(sCtx, ffufMaxTimeout(c))
-		defer cancel()
-
-		for _, host := range liveHosts {
-			select {
-			case <-stepCtx.Done():
-				return stepCtx.Err()
-			default:
-			}
-
-			target := host
-			if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-				target = "https://" + target
-			}
-			targetURL := target
-			if !strings.HasSuffix(targetURL, "/") {
-				targetURL += "/"
-			}
-			targetURL += "FUZZ"
-
-			// Unique per-host temp file: os.CreateTemp guarantees no collision
-			// with stale files from aborted runs.
-			tmpFfuf, tmpErr := os.CreateTemp(filepath.Dir(c.F.FfufOut), "ffuf_tmp_*.json")
-			if tmpErr != nil {
-				logger.Warning("ffuf: cannot create temp output file: %v", tmpErr)
-				continue
-			}
-			tmpFfufOut := tmpFfuf.Name()
-			tmpFfuf.Close() // ffuf manages the file itself
-
-			logger.FileDebug("ffuf input: target=%s wordlist=%s out=%s", targetURL, c.WordlistPath, tmpFfufOut)
-			if err := c.Tb.RunFfufWithFUZZ(stepCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
-				if fIn, openErr := os.Open(tmpFfufOut); openErr == nil {
-					var payload struct {
-						Results []localFfufResult `json:"results"`
-					}
-					if jsonErr := json.NewDecoder(fIn).Decode(&payload); jsonErr == nil {
-						resultsMu.Lock()
-						allResults = append(allResults, payload.Results...)
-						resultsMu.Unlock()
-					}
-					fIn.Close()
-				}
-			} else if err != nil && stepCtx.Err() == nil {
-				logger.Warning("ffuf failed on host %s: %v", targetURL, err)
-			}
-			os.Remove(tmpFfufOut)
-		}
-		return nil
+		return fuzzAllHostsWithFfuf(c, sCtx, liveHosts, &allResults, &resultsMu)
 	}); err != nil {
 		if err == ErrToolSkipped {
 			ffufSkipped = true
@@ -675,6 +659,132 @@ func stepDirFuzzing(c *Ctx) bool {
 		logger.ToolDone("ffuf")
 	}
 
+	writeFfufOutputs(c, allResults)
+
+	if c.ScanID > 0 && utils.FileExists(c.F.FfufOut) {
+		count, err := ingest.ParseFfufOutput(c.ScanID, c.F.FfufOut)
+		if err != nil {
+			logger.Warning("Failed to parse ffuf results: %v", err)
+		} else {
+			c.FfufTotalFindings = count
+			label := ""
+			if ffufSkipped {
+				label = " (partial)"
+			}
+			logger.Result(count, "hidden paths discovered via fuzzing%s", label)
+		}
+	}
+
+	c.markStepCompleteIfNoFailure("dir_fuzzing")
+	return flowkit.StepResult{Cancelled: c.cancelled()}
+}
+
+// localFfufResult mirrors one hit in ffuf's JSON output.
+type localFfufResult struct {
+	Input  map[string]string `json:"input"`
+	URL    string            `json:"url"`
+	Status int               `json:"status"`
+}
+
+// resolveFfufWordlist fills c.WordlistPath from SecLists when unset and
+// returns false when no wordlist is available (step should skip).
+func resolveFfufWordlist(c *Ctx) bool {
+	if c.WordlistPath != "" {
+		return true
+	}
+	if autoWl := config.ResolveSecListFile("Discovery/Web-Content/common.txt"); autoWl != "" {
+		c.WordlistPath = autoWl
+		logger.Info("Auto-detected SecLists wordlist for ffuf: %s", autoWl)
+		return true
+	}
+	logger.StepHeader("Step 14: Skipping Directory Fuzzing (no wordlist — run 'chaathan setup')")
+	logger.Info("Provide --wordlist or run 'chaathan setup' to install SecLists")
+	return false
+}
+
+// ffufTargetHosts returns the capped live-host list, falling back to the
+// root domain when no live hosts exist.
+func ffufTargetHosts(c *Ctx) []string {
+	liveHosts, _ := utils.ReadNonEmptyLines(c.F.HttpxLiveHosts)
+	if len(liveHosts) > ffufHostCap {
+		liveHosts = liveHosts[:ffufHostCap]
+	}
+	if len(liveHosts) == 0 {
+		// Fallback to root domain
+		liveHosts = []string{"https://" + c.Domain}
+	}
+	return liveHosts
+}
+
+// fuzzAllHostsWithFfuf runs ffuf across all hosts under a single step
+// timeout, appending decoded results under resultsMu.
+func fuzzAllHostsWithFfuf(c *Ctx, sCtx context.Context, liveHosts []string, allResults *[]localFfufResult, resultsMu *sync.Mutex) error {
+	// Apply a single timeout for the entire ffuf step (all hosts combined).
+	stepCtx, cancel := context.WithTimeout(sCtx, ffufMaxTimeout(c))
+	defer cancel()
+
+	for _, host := range liveHosts {
+		select {
+		case <-stepCtx.Done():
+			return stepCtx.Err()
+		default:
+		}
+		fuzzSingleHost(c, stepCtx, host, allResults, resultsMu)
+	}
+	return nil
+}
+
+// fuzzSingleHost fuzzes one host and appends decoded ffuf results.
+func fuzzSingleHost(c *Ctx, stepCtx context.Context, host string, allResults *[]localFfufResult, resultsMu *sync.Mutex) {
+	target := host
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "https://" + target
+	}
+	targetURL := target
+	if !strings.HasSuffix(targetURL, "/") {
+		targetURL += "/"
+	}
+	targetURL += "FUZZ"
+
+	// Unique per-host temp file: os.CreateTemp guarantees no collision
+	// with stale files from aborted runs.
+	tmpFfuf, tmpErr := os.CreateTemp(filepath.Dir(c.F.FfufOut), "ffuf_tmp_*.json")
+	if tmpErr != nil {
+		logger.Warning("ffuf: cannot create temp output file: %v", tmpErr)
+		return
+	}
+	tmpFfufOut := tmpFfuf.Name()
+	tmpFfuf.Close() // ffuf manages the file itself
+
+	logger.FileDebug("ffuf input: target=%s wordlist=%s out=%s", targetURL, c.WordlistPath, tmpFfufOut)
+	if err := c.Tb.RunFfufWithFUZZ(stepCtx, targetURL, c.WordlistPath, tmpFfufOut); err == nil && utils.FileExists(tmpFfufOut) {
+		appendFfufResults(tmpFfufOut, allResults, resultsMu)
+	} else if err != nil && stepCtx.Err() == nil {
+		logger.Warning("ffuf failed on host %s: %v", targetURL, err)
+	}
+	os.Remove(tmpFfufOut)
+}
+
+// appendFfufResults decodes ffuf's JSON output and appends the hits.
+func appendFfufResults(tmpFfufOut string, allResults *[]localFfufResult, resultsMu *sync.Mutex) {
+	fIn, openErr := os.Open(tmpFfufOut)
+	if openErr != nil {
+		return
+	}
+	var payload struct {
+		Results []localFfufResult `json:"results"`
+	}
+	if jsonErr := json.NewDecoder(fIn).Decode(&payload); jsonErr == nil {
+		resultsMu.Lock()
+		*allResults = append(*allResults, payload.Results...)
+		resultsMu.Unlock()
+	}
+	fIn.Close()
+}
+
+// writeFfufOutputs writes the consolidated ffuf JSON and the discovered URL
+// list.
+func writeFfufOutputs(c *Ctx, allResults []localFfufResult) {
 	// Write consolidated results to c.F.FfufOut
 	consolidatedPayload := struct {
 		Results []localFfufResult `json:"results"`
@@ -694,23 +804,6 @@ func stepDirFuzzing(c *Ctx) bool {
 			fUrls.Close()
 		}
 	}
-
-	if c.ScanID > 0 && utils.FileExists(c.F.FfufOut) {
-		count, err := ingest.ParseFfufOutput(c.ScanID, c.F.FfufOut)
-		if err != nil {
-			logger.Warning("Failed to parse ffuf results: %v", err)
-		} else {
-			c.FfufTotalFindings = count
-			label := ""
-			if ffufSkipped {
-				label = " (partial)"
-			}
-			logger.Result(count, "hidden paths discovered via fuzzing%s", label)
-		}
-	}
-
-	c.markStepCompleteIfNoFailure("dir_fuzzing")
-	return c.cancelled()
 }
 
 // cleanupFfufTmpFiles removes leftover ffuf temp files (ffuf_tmp_*.json) from

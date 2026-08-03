@@ -166,21 +166,6 @@ func (s *Scope) FilterDomains(domains []string) []string {
 	return filtered
 }
 
-// FilterIPs filters a list of IPs to only non-excluded ones
-func (s *Scope) FilterIPs(ips []string) []string {
-	if len(s.excludeNets) == 0 {
-		return ips
-	}
-
-	var filtered []string
-	for _, ip := range ips {
-		if !s.IsIPExcluded(ip) {
-			filtered = append(filtered, ip)
-		}
-	}
-	return filtered
-}
-
 // Summary returns a string summary of the scope configuration
 func (s *Scope) Summary() string {
 	var parts []string

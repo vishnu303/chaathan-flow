@@ -168,6 +168,35 @@ func RunHarvest(ctx context.Context, cfg HarvestConfig) (*HarvestResult, error) 
 		return nil, err
 	}
 
+	if runErr := runMubengCheck(ctx, harvestCtx, cmd); runErr != nil {
+		// Log but don't strictly fail, maybe some proxies were saved
+		logger.FileDebug("mubeng check exited with error: %v", runErr)
+	}
+
+	// 6. Read valid proxies
+	allValid := readProxyLines(liveProxiesPath)
+
+	// 7. Write to pool
+	proxyListFile := filepath.Join(cfg.OutputDir, "proxy_pool.txt")
+	if len(allValid) > 0 {
+		if err := os.WriteFile(proxyListFile, []byte(strings.Join(allValid, "\n")+"\n"), 0644); err != nil {
+			return nil, fmt.Errorf("cannot write proxy pool file: %w", err)
+		}
+	}
+
+	return &HarvestResult{
+		ProxyListFile: proxyListFile,
+		TotalScraped:  totalScraped,
+		TotalValid:    len(allValid),
+		AllValid:      allValid,
+		Duration:      time.Since(start),
+	}, nil
+}
+
+// runMubengCheck waits for the mubeng process to finish, stopping it
+// gracefully on harvest timeout and hard-killing it on cancellation.
+// ctx is the parent context used to distinguish cancellation from timeout.
+func runMubengCheck(ctx, harvestCtx context.Context, cmd *exec.Cmd) error {
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
@@ -200,63 +229,36 @@ func RunHarvest(ctx context.Context, cfg HarvestConfig) (*HarvestResult, error) 
 			}
 		}
 	}
+	return runErr
+}
 
-	if runErr != nil {
-		// Log but don't strictly fail, maybe some proxies were saved
-		logger.FileDebug("mubeng check exited with error: %v", runErr)
+// readProxyLines returns the non-empty lines of the file at path.
+// Missing or unreadable files yield an empty result.
+func readProxyLines(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
 	}
-
-	// 6. Read valid proxies
-	var allValid []string
-	if data, err := os.ReadFile(liveProxiesPath); err == nil {
-		scanner := bufio.NewScanner(strings.NewReader(string(data)))
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line != "" {
-				allValid = append(allValid, line)
-			}
+	var lines []string
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			lines = append(lines, line)
 		}
 	}
+	return lines
+}
 
-	// 7. Write to pool
-	proxyListFile := filepath.Join(cfg.OutputDir, "proxy_pool.txt")
-	if len(allValid) > 0 {
-		if err := os.WriteFile(proxyListFile, []byte(strings.Join(allValid, "\n")+"\n"), 0644); err != nil {
-			return nil, fmt.Errorf("cannot write proxy pool file: %w", err)
-		}
-	}
-
-	return &HarvestResult{
-		ProxyListFile: proxyListFile,
-		TotalScraped:  totalScraped,
-		TotalValid:    len(allValid),
-		AllValid:      allValid,
-		Duration:      time.Since(start),
-	}, nil
+// proxySource pairs a proxy list URL with its protocol.
+type proxySource struct {
+	url      string
+	protocol string
 }
 
 // fetchProxySources concurrently fetches proxy lists and writes them to outPath.
 func fetchProxySources(ctx context.Context, proxyTypes []string, outPath string) (int, error) {
-	var sources []struct {
-		url      string
-		protocol string
-	}
-
-	if contains(proxyTypes, "http") {
-		for _, u := range httpSources {
-			sources = append(sources, struct{ url, protocol string }{u, "http"})
-		}
-	}
-	if contains(proxyTypes, "socks4") {
-		for _, u := range socks4Sources {
-			sources = append(sources, struct{ url, protocol string }{u, "socks4"})
-		}
-	}
-	if contains(proxyTypes, "socks5") {
-		for _, u := range socks5Sources {
-			sources = append(sources, struct{ url, protocol string }{u, "socks5"})
-		}
-	}
+	sources := collectProxySources(proxyTypes)
 
 	var mu sync.Mutex
 	uniqueProxies := make(map[string]bool)
@@ -268,46 +270,15 @@ func fetchProxySources(ctx context.Context, proxyTypes []string, outPath string)
 	var wg sync.WaitGroup
 	for _, src := range sources {
 		wg.Add(1)
-		go func(srcUrl, protocol string) {
+		go func(src proxySource) {
 			defer wg.Done()
-
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcUrl, nil)
-			if err != nil {
-				return
-			}
-			req.Header.Set("User-Agent", tools.RandomUA())
-
-			resp, err := client.Do(req)
-			if err != nil {
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusOK {
-				return
-			}
-
-			scanner := bufio.NewScanner(resp.Body)
-			var localProxies []string
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "<") {
-					continue
-				}
-				// Basic sanity check for host:port format
-				if strings.Contains(line, ":") && !strings.Contains(line, "://") {
-					localProxies = append(localProxies, fmt.Sprintf("%s://%s", protocol, line))
-				} else if strings.Contains(line, "://") {
-					localProxies = append(localProxies, line)
-				}
-			}
-
+			localProxies := fetchOneSource(ctx, client, src)
 			mu.Lock()
 			for _, p := range localProxies {
 				uniqueProxies[p] = true
 			}
 			mu.Unlock()
-		}(src.url, src.protocol)
+		}(src)
 	}
 
 	wg.Wait()
@@ -326,4 +297,65 @@ func fetchProxySources(ctx context.Context, proxyTypes []string, outPath string)
 	}
 
 	return len(all), nil
+}
+
+// collectProxySources builds the source list for the enabled proxy protocols.
+func collectProxySources(proxyTypes []string) []proxySource {
+	var sources []proxySource
+	appendSources := func(urls []string, protocol string) {
+		for _, u := range urls {
+			sources = append(sources, proxySource{u, protocol})
+		}
+	}
+	if contains(proxyTypes, "http") {
+		appendSources(httpSources, "http")
+	}
+	if contains(proxyTypes, "socks4") {
+		appendSources(socks4Sources, "socks4")
+	}
+	if contains(proxyTypes, "socks5") {
+		appendSources(socks5Sources, "socks5")
+	}
+	return sources
+}
+
+// fetchOneSource downloads a single proxy list and returns the parsed
+// proxy URLs. Failures yield an empty result.
+func fetchOneSource(ctx context.Context, client *http.Client, src proxySource) []string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src.url, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", tools.RandomUA())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	return parseProxyLines(bufio.NewScanner(resp.Body), src.protocol)
+}
+
+// parseProxyLines extracts proxy URLs from a line stream, tagging bare
+// host:port entries with the given protocol.
+func parseProxyLines(scanner *bufio.Scanner, protocol string) []string {
+	var localProxies []string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "<") {
+			continue
+		}
+		// Basic sanity check for host:port format
+		if strings.Contains(line, ":") && !strings.Contains(line, "://") {
+			localProxies = append(localProxies, fmt.Sprintf("%s://%s", protocol, line))
+		} else if strings.Contains(line, "://") {
+			localProxies = append(localProxies, line)
+		}
+	}
+	return localProxies
 }

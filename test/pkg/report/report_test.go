@@ -28,7 +28,7 @@ func TestReportGenerationAndExport(t *testing.T) {
 	}
 
 	// Add subdomains
-	if err := database.AddSubdomain(scan.ID, "www.example.com", "test"); err != nil {
+	if err := database.AddSubdomains(scan.ID, []string{"www.example.com"}, "test"); err != nil {
 		t.Fatalf("failed to add subdomain: %v", err)
 	}
 	if err := database.UpdateSubdomainLive(scan.ID, "www.example.com", true, "1.2.3.4"); err != nil {
@@ -36,22 +36,22 @@ func TestReportGenerationAndExport(t *testing.T) {
 	}
 
 	// Add port
-	if err := database.AddPort(scan.ID, "www.example.com", 443, "tcp", "https"); err != nil {
+	if err := database.AddPorts(scan.ID, []database.Port{{Host: "www.example.com", Port: 443, Protocol: "tcp", Service: "https"}}); err != nil {
 		t.Fatalf("failed to add port: %v", err)
 	}
 
 	// Add URL
-	if err := database.AddURL(scan.ID, "https://www.example.com/", 200, "text/html", "Example Domain", `["wordpress"]`, "httpx"); err != nil {
+	if err := database.AddURL(scan.ID, database.URLRecord{RawURL: "https://www.example.com/", StatusCode: 200, ContentType: "text/html", Title: "Example Domain", Tech: `["wordpress"]`, Source: "httpx"}); err != nil {
 		t.Fatalf("failed to add URL: %v", err)
 	}
 
 	// Add vuln
-	if err := database.AddVulnerability(scan.ID, "www.example.com", "https://www.example.com/", "test-cve", "Test Vuln", "high", "A test vuln", "pattern", "evidence line"); err != nil {
+	if err := database.AddVulnerability(scan.ID, database.VulnRecord{Host: "www.example.com", URL: "https://www.example.com/", TemplateID: "test-cve", Name: "Test Vuln", Severity: "high", Description: "A test vuln", Matcher: "pattern", Evidence: "evidence line"}); err != nil {
 		t.Fatalf("failed to add vuln: %v", err)
 	}
 
 	// Add endpoint
-	if err := database.AddEndpoint(scan.ID, "https://www.example.com/api", "GET", "katana"); err != nil {
+	if err := database.AddEndpoints(scan.ID, []database.Endpoint{{URL: "https://www.example.com/api", Method: "GET", Source: "katana"}}); err != nil {
 		t.Fatalf("failed to add endpoint: %v", err)
 	}
 
@@ -100,7 +100,7 @@ func TestMarkdownTableEscaping(t *testing.T) {
 	}
 
 	// Add subdomain with dangerous markdown chars: |, `, *
-	if err := database.AddSubdomain(scan.ID, "www.example|portal`code*bold.com", "test"); err != nil {
+	if err := database.AddSubdomains(scan.ID, []string{"www.example|portal`code*bold.com"}, "test"); err != nil {
 		t.Fatalf("failed to add subdomain: %v", err)
 	}
 	if err := database.UpdateSubdomainLive(scan.ID, "www.example|portal`code*bold.com", true, "1.2.3.4"); err != nil {
