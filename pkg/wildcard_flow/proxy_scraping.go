@@ -125,11 +125,7 @@ func (c *Ctx) runProxyScrapingAndRotation() {
 	}
 
 	if result == nil || result.TotalValid == 0 {
-		if harvestSkipped {
-			logger.ToolSkip("Proxy Scraping", "no valid proxies found")
-		} else {
-			logger.ToolSkip("Proxy Scraping", "no valid proxies found")
-		}
+		logger.ToolSkip("Proxy Scraping", "no valid proxies found")
 		return
 	}
 

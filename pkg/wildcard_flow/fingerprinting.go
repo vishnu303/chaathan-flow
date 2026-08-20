@@ -120,7 +120,7 @@ func sendWafNotifications(c *Ctx, base notify.Finding, knownVulnIDs map[int64]bo
 }
 
 // logFingerprintSummary prints a breakdown of detected WAFs (with hosts) and
-// technologies after Step 22 completes, so the user can see results at a glance.
+// technologies after Step 21 completes, so the user can see results at a glance.
 func logFingerprintSummary(c *Ctx) {
 	// WAF breakdown: group by WAF name (matcher field) → hosts
 	if c.ScanID > 0 {

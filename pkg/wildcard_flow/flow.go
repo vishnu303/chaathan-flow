@@ -259,7 +259,7 @@ type Ctx struct {
 
 // cancelled returns true when the parent context has been cancelled.
 func (c *Ctx) cancelled() bool {
-	return c.GoCtx.Err() != nil
+	return c.GoCtx != nil && c.GoCtx.Err() != nil
 }
 
 // urlSources returns the list of URL source files (used by step 15).
@@ -378,16 +378,21 @@ func Run(cfg RunConfig) error {
 	logger.Info("Press 's' at any time to skip the current tool")
 	logger.Info("Mode: %s", cfg.Mode)
 
-	// Wire scope from config
+	// Wire scope from config. A configured scope that fails to compile must
+	// abort the scan: continuing with ScopeFilter == nil would run fully
+	// permissive and silently scan targets the user explicitly excluded.
+	// Permissive mode is only valid when no scope rules were configured.
 	if cfg.Cfg != nil {
 		sc, err := scope.New(&cfg.Cfg.Scope)
 		if err != nil {
-			logger.Warning("Failed to compile scope rules: %v", err)
-		} else {
-			c.ScopeFilter = sc
-			if summary := sc.Summary(); summary != "All domains in scope" {
-				logger.Info("Scope: %s", summary)
+			if scanID > 0 {
+				_ = database.UpdateScanStatus(scanID, database.StatusFailed)
 			}
+			return fmt.Errorf("failed to compile scope rules: %w (fix the scope patterns in config.yaml)", err)
+		}
+		c.ScopeFilter = sc
+		if summary := sc.Summary(); summary != "All domains in scope" {
+			logger.Info("Scope: %s", summary)
 		}
 	}
 
@@ -415,7 +420,13 @@ func startSkipListener(goCtx context.Context) chan struct{} {
 				close(stdinCh)
 				return
 			}
-			stdinCh <- buf[0]
+			// Never block on the send once the dispatcher has exited —
+			// otherwise this goroutine leaks for the rest of the process.
+			select {
+			case stdinCh <- buf[0]:
+			case <-goCtx.Done():
+				return
+			}
 		}
 	}()
 	go func() {
@@ -482,11 +493,12 @@ func initScanRecord(cfg *RunConfig, stateMgr *scan.Manager, configJSON []byte) (
 	var scanID int64
 	dbScan, err := database.CreateScan(cfg.Domain, "wildcard", cfg.ResultDir, string(configJSON))
 	if err != nil {
-		logger.Warning("Failed to create scan record: %v", err)
+		// Without a scan record nothing can be persisted (subdomains, URLs,
+		// vulns, ROI) and resume is impossible — fail fast instead of
+		// silently running a scan whose results are discarded.
+		return 0, nil, fmt.Errorf("failed to create scan record: %w", err)
 	}
-	if dbScan != nil {
-		scanID = dbScan.ID
-	}
+	scanID = dbScan.ID
 
 	scanState, errState := stateMgr.CreateState(scanID, cfg.Domain, "wildcard", cfg.ResultDir, len(scan.WildcardSteps), configJSON)
 	if errState != nil {
@@ -932,6 +944,13 @@ func printNextStepHints(c *Ctx) {
 // If c.ResolversPath is empty, it writes a default set of public DNS resolvers
 // directly to the scan's intermediate directory and sets c.ResolversPath to that file.
 func (c *Ctx) SetupResolvers() error {
+	// An explicitly provided resolvers file that doesn't exist would be
+	// passed silently to dnsx/CNAME-refresh; fall back to defaults instead
+	// so every DNS-dependent step gets a usable resolver list.
+	if c.ResolversPath != "" && !utils.FileExists(c.ResolversPath) {
+		logger.Warning("Provided resolvers file not found: %s — falling back to default public resolvers", c.ResolversPath)
+		c.ResolversPath = ""
+	}
 	if c.ResolversPath == "" {
 		destPath := filepath.Join(filepath.Dir(c.F.ConsolidatedSubs), "resolvers.txt")
 		if !utils.FileExists(destPath) {

@@ -15,12 +15,15 @@ package wildcard_flow
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -100,7 +103,7 @@ func stepURLDiscovery(c *Ctx) flowkit.StepResult {
 
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.WaybackOut) {
-			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.WaybackOut, "waybackurls")
+			count, _ := ingestScopedURLsFile(c, c.F.WaybackOut, "waybackurls")
 			label := ""
 			if urlDiscoverySkipped {
 				label = " (partial)"
@@ -108,7 +111,7 @@ func stepURLDiscovery(c *Ctx) flowkit.StepResult {
 			logger.Result(count, "archived URLs via Wayback Machine%s", label)
 		}
 		if utils.FileExists(c.F.GauOut) {
-			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GauOut, "gau")
+			count, _ := ingestScopedURLsFile(c, c.F.GauOut, "gau")
 			label := ""
 			if urlDiscoverySkipped {
 				label = " (partial)"
@@ -203,7 +206,7 @@ func stepWebCrawling(c *Ctx) flowkit.StepResult {
 
 	if c.ScanID > 0 {
 		if utils.FileExists(c.F.KatanaOut) {
-			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.KatanaOut, "katana")
+			count, _ := ingestScopedURLsFile(c, c.F.KatanaOut, "katana")
 			label := ""
 			if crawlSkipped {
 				label = " (partial)"
@@ -211,7 +214,7 @@ func stepWebCrawling(c *Ctx) flowkit.StepResult {
 			logger.Result(count, "URLs crawled by Katana%s", label)
 		}
 		if utils.FileExists(c.F.GospiderOut) {
-			count, _ := ingest.ParseURLsFile(c.ScanID, c.F.GospiderOut, "gospider")
+			count, _ := ingestScopedURLsFile(c, c.F.GospiderOut, "gospider")
 			label := ""
 			if crawlSkipped {
 				label = " (partial)"
@@ -315,8 +318,34 @@ func stepParamDiscovery(c *Ctx) flowkit.StepResult {
 	return flowkit.StepResult{Cancelled: c.cancelled()}
 }
 
+// ingestScopedURLsFile ingests a crawler URL file into the DB, applying the
+// user scope filter when one is configured. The ingest layer only enforces
+// domain-suffix scope, so with a narrow scope config in-domain but
+// out-of-scope URLs would otherwise persist in the DB. The source file is
+// left untouched — downstream readers apply their own filtering.
+func ingestScopedURLsFile(c *Ctx, filePath, source string) (int, error) {
+	if c.ScopeFilter == nil {
+		return ingest.ParseURLsFile(c.ScanID, filePath, source)
+	}
+	tmp := filePath + ".scoped.tmp"
+	if err := copyFile(filePath, tmp); err != nil {
+		return ingest.ParseURLsFile(c.ScanID, filePath, source)
+	}
+	defer os.Remove(tmp)
+	_ = utils.FilterFileLines(tmp, func(line string) bool {
+		parsed, err := url.Parse(strings.TrimSpace(line))
+		if err != nil || parsed.Hostname() == "" {
+			return true // non-URL/noise lines pass through; the parser drops them
+		}
+		return c.ScopeFilter.IsInScope(parsed.Hostname()) && !c.ScopeFilter.IsOutOfScope(parsed.Hostname())
+	})
+	return ingest.ParseURLsFile(c.ScanID, tmp, source)
+}
+
 // collectX8Targets merges ffuf discoveries and high-signal crawler
-// endpoints, deduplicated and capped at paramDiscoveryCap.
+// endpoints, deduplicates them, ranks them by ROI score, and caps the
+// result at paramDiscoveryCap — the highest-value targets win instead of
+// whichever 150 happened to be read first.
 func collectX8Targets(c *Ctx) []string {
 	var x8Targets []string
 
@@ -335,13 +364,27 @@ func collectX8Targets(c *Ctx) []string {
 		c.F.GospiderOut,
 		c.F.JSEndpointsOut,
 	}
-	highSignal := collectHighSignalEndpoints(crawlerFiles)
+	highSignal := collectHighSignalEndpoints(c, crawlerFiles)
 	x8Targets = append(x8Targets, highSignal...)
 
-	// Deduplicate targets and cap at paramDiscoveryCap (150)
+	// Deduplicate, then rank by ROI score so the cap keeps the best targets.
 	x8Targets = utils.DedupeLines(x8Targets)
 	if len(x8Targets) > paramDiscoveryCap {
-		x8Targets = x8Targets[:paramDiscoveryCap]
+		type scoredTarget struct {
+			url   string
+			score int
+		}
+		scored := make([]scoredTarget, len(x8Targets))
+		for i, t := range x8Targets {
+			scored[i] = scoredTarget{url: t, score: urlROIScore(t)}
+		}
+		slices.SortStableFunc(scored, func(a, b scoredTarget) int {
+			return cmp.Compare(b.score, a.score)
+		})
+		x8Targets = make([]string, 0, paramDiscoveryCap)
+		for _, s := range scored[:paramDiscoveryCap] {
+			x8Targets = append(x8Targets, s.url)
+		}
 	}
 	return x8Targets
 }
@@ -378,9 +421,10 @@ func resolveX8ParamWordlist(c *Ctx) string {
 }
 
 // collectHighSignalEndpoints reads raw URLs from crawler and discovery files,
-// filters for high-signal parameters/endpoints (dynamic extensions, API paths, interesting keywords),
-// deduplicates them by host+path, and returns a slice of URLs.
-func collectHighSignalEndpoints(files []string) []string {
+// filters for in-scope high-signal parameters/endpoints (dynamic extensions,
+// API paths, interesting keywords), deduplicates them by host+path, and
+// returns a slice of URLs.
+func collectHighSignalEndpoints(c *Ctx, files []string) []string {
 	seen := make(map[string]bool)
 	var endpoints []string
 
@@ -405,15 +449,15 @@ func collectHighSignalEndpoints(files []string) []string {
 			continue
 		}
 
-		scanHighSignalFile(f, seen, &endpoints, extensions, keywords)
+		c.scanHighSignalFile(f, seen, &endpoints, extensions, keywords)
 		f.Close()
 	}
 
 	return endpoints
 }
 
-// scanHighSignalFile extracts deduplicated high-signal URLs from one file.
-func scanHighSignalFile(f *os.File, seen map[string]bool, endpoints *[]string, extensions, keywords []string) {
+// scanHighSignalFile extracts deduplicated, in-scope high-signal URLs from one file.
+func (c *Ctx) scanHighSignalFile(f *os.File, seen map[string]bool, endpoints *[]string, extensions, keywords []string) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -431,6 +475,11 @@ func scanHighSignalFile(f *os.File, seen map[string]bool, endpoints *[]string, e
 		// Parse URL to validate and normalize
 		parsed, err := url.Parse(rawURL)
 		if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
+			continue
+		}
+
+		// Crawler output may reference third-party hosts — never feed those to x8.
+		if !c.hostInScope(parsed.Hostname()) {
 			continue
 		}
 
@@ -452,6 +501,14 @@ func scanHighSignalFile(f *os.File, seen map[string]bool, endpoints *[]string, e
 func isHighSignalURL(parsed *url.URL, extensions, keywords []string) bool {
 	// Clean/normalize path
 	pathLower := strings.ToLower(parsed.Path)
+
+	// 0. Static resources cannot host injection points — reject them even
+	// when they carry query strings (e.g. /image.png?id=1).
+	for ext := range getStaticExtensions() {
+		if strings.HasSuffix(pathLower, ext) {
+			return false
+		}
+	}
 
 	// 1. Check extensions
 	for _, ext := range extensions {
@@ -702,10 +759,14 @@ func resolveFfufWordlist(c *Ctx) bool {
 	return false
 }
 
-// ffufTargetHosts returns the capped live-host list, falling back to the
-// root domain when no live hosts exist.
+// ffufTargetHosts returns the ROI-ranked, capped live-host list, falling
+// back to the root domain when no live hosts exist. Ranking before the cap
+// guarantees the highest-value hosts win the fuzzing budget instead of
+// whichever hosts happen to sit first in the file (port variants of
+// low-signal hosts would otherwise consume cap slots).
 func ffufTargetHosts(c *Ctx) []string {
 	liveHosts, _ := utils.ReadNonEmptyLines(c.F.HttpxLiveHosts)
+	liveHosts = rankLiveHosts(c.ScanID, liveHosts)
 	if len(liveHosts) > ffufHostCap {
 		liveHosts = liveHosts[:ffufHostCap]
 	}
@@ -717,11 +778,19 @@ func ffufTargetHosts(c *Ctx) []string {
 }
 
 // fuzzAllHostsWithFfuf runs ffuf across all hosts under a single step
-// timeout, appending decoded results under resultsMu.
+// timeout, granting each host a fair per-host budget (total / host count,
+// floor 2 min) so one slow host cannot consume the budget of the rest.
+// Decoded results are appended under resultsMu.
 func fuzzAllHostsWithFfuf(c *Ctx, sCtx context.Context, liveHosts []string, allResults *[]localFfufResult, resultsMu *sync.Mutex) error {
 	// Apply a single timeout for the entire ffuf step (all hosts combined).
-	stepCtx, cancel := context.WithTimeout(sCtx, ffufMaxTimeout(c))
+	totalBudget := ffufMaxTimeout(c)
+	stepCtx, cancel := context.WithTimeout(sCtx, totalBudget)
 	defer cancel()
+
+	perHostBudget := totalBudget / time.Duration(len(liveHosts))
+	if perHostBudget < 2*time.Minute {
+		perHostBudget = 2 * time.Minute
+	}
 
 	for _, host := range liveHosts {
 		select {
@@ -729,7 +798,9 @@ func fuzzAllHostsWithFfuf(c *Ctx, sCtx context.Context, liveHosts []string, allR
 			return stepCtx.Err()
 		default:
 		}
-		fuzzSingleHost(c, stepCtx, host, allResults, resultsMu)
+		hostCtx, hostCancel := context.WithTimeout(stepCtx, perHostBudget)
+		fuzzSingleHost(c, hostCtx, host, allResults, resultsMu)
+		hostCancel()
 	}
 	return nil
 }
@@ -761,6 +832,8 @@ func fuzzSingleHost(c *Ctx, stepCtx context.Context, host string, allResults *[]
 		appendFfufResults(tmpFfufOut, allResults, resultsMu)
 	} else if err != nil && stepCtx.Err() == nil {
 		logger.Warning("ffuf failed on host %s: %v", targetURL, err)
+	} else if err != nil && errors.Is(stepCtx.Err(), context.DeadlineExceeded) {
+		logger.FileDebug("ffuf per-host budget exhausted on %s", targetURL)
 	}
 	os.Remove(tmpFfufOut)
 }
@@ -793,15 +866,17 @@ func writeFfufOutputs(c *Ctx, allResults []localFfufResult) {
 		_ = os.WriteFile(c.F.FfufOut, jsData, 0644)
 	}
 
-	// Write extracted URLs to c.F.FfufDiscoveredURLs
+	// Write extracted URLs to c.F.FfufDiscoveredURLs (deduplicated — the same
+	// path can be discovered on multiple hosts).
 	if len(allResults) > 0 {
-		if fUrls, err := os.Create(c.F.FfufDiscoveredURLs); err == nil {
-			for _, res := range allResults {
-				if strings.TrimSpace(res.URL) != "" {
-					_, _ = fUrls.WriteString(res.URL + "\n")
-				}
+		var urls []string
+		for _, res := range allResults {
+			if u := strings.TrimSpace(res.URL); u != "" {
+				urls = append(urls, u)
 			}
-			fUrls.Close()
+		}
+		if urls = utils.DedupeLines(urls); len(urls) > 0 {
+			writeStringLinesFile(c.F.FfufDiscoveredURLs, urls)
 		}
 	}
 }
@@ -816,40 +891,6 @@ func cleanupFfufTmpFiles(referenceFile string) {
 	for _, m := range matches {
 		_ = os.Remove(m)
 	}
-}
-
-// collectJSURLsFromFile filters live URLs for JavaScript files, deduplicates
-// them, and writes up to limit entries into outputFile.
-func collectJSURLsFromFile(inputFile, outputFile string, limit int) int {
-	file, err := os.Open(inputFile)
-	if err != nil {
-		writeEmptyFile(outputFile)
-		return 0
-	}
-	defer file.Close()
-
-	f, err := os.Create(outputFile)
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-
-	seen := make(map[string]bool)
-	count := 0
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := extractPrimaryURL(scanner.Text())
-		if line == "" || seen[line] || !isUsefulJSURL(line) {
-			continue
-		}
-		seen[line] = true
-		fmt.Fprintln(f, line)
-		count++
-		if limit > 0 && count >= limit {
-			break
-		}
-	}
-	return count
 }
 
 // extractPrimaryURL strips auxiliary tokens (like httpx status codes) and
@@ -996,8 +1037,17 @@ func convertX8ToURLs(x8JSON, outputFile string) int {
 			continue
 		}
 		qs := strings.Join(paramPairs, "&")
+		// Insert discovered params before any #fragment — appending blindly
+		// would bury them inside the fragment where servers never see them.
 		base := r.URL
-		if strings.Contains(base, "?") {
+		if parsed, perr := url.Parse(r.URL); perr == nil {
+			if parsed.RawQuery != "" {
+				parsed.RawQuery += "&" + qs
+			} else {
+				parsed.RawQuery = qs
+			}
+			base = parsed.String()
+		} else if strings.Contains(base, "?") {
 			base += "&" + qs
 		} else {
 			base += "?" + qs

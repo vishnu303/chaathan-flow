@@ -49,7 +49,7 @@ func stepJSDeepAnalysis(c *Ctx) flowkit.StepResult {
 
 	// ── 14.1 Collect JS URLs ──────────────────────────────────
 	jsLimit := jsURLLimit(c)
-	allJSURLs := gatherJSURLs(c, jsLimit)
+	allJSURLs := gatherJSURLs(c)
 
 	if len(allJSURLs) == 0 {
 		logger.Info("No JavaScript files found in crawled content")
@@ -95,11 +95,11 @@ func stepJSDeepAnalysis(c *Ctx) flowkit.StepResult {
 	fetchCtx, fetchCancel := context.WithTimeout(c.GoCtx, stepTimeout)
 	defer fetchCancel()
 
-	userSkipped := false
+	userSkipped := &atomic.Bool{}
 	go func() {
 		select {
 		case <-c.SkipChan:
-			userSkipped = true
+			userSkipped.Store(true)
 			fetchCancel()
 		case <-fetchCtx.Done():
 		}
@@ -121,14 +121,16 @@ func stepJSDeepAnalysis(c *Ctx) flowkit.StepResult {
 	wg.Wait()
 
 	// On user skip or cancellation, save partial output and exit gracefully
-	if userSkipped {
+	if userSkipped.Load() {
 		logger.Skip("Skipped JS Deep Analysis — saving %d endpoints, %d secrets collected so far", len(agg.endpoints), len(agg.secretFindings))
 		writeJSPartialOutput(c, agg.endpoints, agg.secretFindings, agg.subdomains, agg.filesFetched, agg.mapsFetched, agg.totalBytes)
+		persistJSPartialFindingsToDB(c, agg.secretFindings)
 		c.markStepCompleteIfNoFailure("js_deep_analysis")
 		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 	if c.cancelled() {
 		writeJSPartialOutput(c, agg.endpoints, agg.secretFindings, agg.subdomains, agg.filesFetched, agg.mapsFetched, agg.totalBytes)
+		persistJSPartialFindingsToDB(c, agg.secretFindings)
 		return flowkit.StepResult{Cancelled: true}
 	}
 
@@ -140,6 +142,11 @@ func stepJSDeepAnalysis(c *Ctx) flowkit.StepResult {
 
 	// DB persistence
 	persistJSFindingsToDB(c, endpoints, agg.secretFindings)
+
+	// Re-sync the DB against the consolidated file now that JS-discovered
+	// subdomains were merged into it (the Step-6 purge predates this
+	// discovery source).
+	syncDBSubdomainsToConsolidated(c)
 
 	// Summary
 	confirmedCount := logJSSecretSummary(agg.secretFindings)
@@ -170,9 +177,10 @@ func jsURLLimit(c *Ctx) int {
 	return jsLimit
 }
 
-// gatherJSURLs collects unique, useful JS URLs from all crawler outputs,
-// falling back to the live URL set when crawler outputs are empty.
-func gatherJSURLs(c *Ctx, jsLimit int) []string {
+// gatherJSURLs collects unique, useful JS URLs from all crawler outputs and
+// ffuf discoveries. The consolidated live URL set is deliberately not used:
+// url_consolidation (Step 16) has not run yet at this point in the flow.
+func gatherJSURLs(c *Ctx) []string {
 	// Gather JS URLs from all crawler outputs
 	var allJSURLs []string
 	seen := make(map[string]bool)
@@ -181,6 +189,7 @@ func gatherJSURLs(c *Ctx, jsLimit int) []string {
 		c.F.GauOut,
 		c.F.KatanaOut,
 		c.F.GospiderOut,
+		c.F.FfufDiscoveredURLs,
 	}
 	for _, file := range crawlerFiles {
 		if !utils.FileExists(file) {
@@ -197,13 +206,8 @@ func gatherJSURLs(c *Ctx, jsLimit int) []string {
 		}
 	}
 
-	// Also collect from live hosts (page-level script tags are already crawled)
 	if len(allJSURLs) == 0 {
-		// Fallback: try the live URL set if crawler outputs are empty
-		if utils.FileExists(c.F.AllURLsLive) {
-			collectJSURLsFromFile(c.F.AllURLsLive, c.F.JSURLsFile, jsLimit)
-			allJSURLs, _ = utils.ReadNonEmptyLines(c.F.JSURLsFile)
-		}
+		logger.FileDebug("js_deep_analysis: no JS URLs in crawler/ffuf outputs (url_consolidation has not run yet)")
 	}
 	return allJSURLs
 }
@@ -238,9 +242,9 @@ func newJSHTTPClient(c *Ctx) *http.Client {
 }
 
 // newJSRateLimiter returns a ticker enforcing the global RPS limit, or nil
-// when no rate limit is configured.
+// when no rate limit is configured (or the toolbox is absent).
 func newJSRateLimiter(c *Ctx) *time.Ticker {
-	if c.Tb.RateLimits != nil && c.Tb.RateLimits.GlobalRPS > 0 {
+	if c.Tb != nil && c.Tb.RateLimits != nil && c.Tb.RateLimits.GlobalRPS > 0 {
 		interval := time.Second / time.Duration(c.Tb.RateLimits.GlobalRPS)
 		return time.NewTicker(interval)
 	}
@@ -276,7 +280,7 @@ func (c *Ctx) jsFetchWorker(jobs <-chan string, client *http.Client, fetchCtx co
 			}
 		}
 
-		body := fetchJSFile(c, client, jsURL, maxFileBytes)
+		body := fetchJSFile(c, fetchCtx, client, jsURL, maxFileBytes)
 
 		// Progress log every 200 files
 		cur := atomic.AddInt64(processed, 1)
@@ -293,15 +297,15 @@ func (c *Ctx) jsFetchWorker(jobs <-chan string, client *http.Client, fetchCtx co
 		agg.filesFetched++
 		agg.mu.Unlock()
 
-		agg.analyzeJSFile(c, client, jsURL, body, mapMaxBytes)
+		agg.analyzeJSFile(c, fetchCtx, client, jsURL, body, mapMaxBytes)
 	}
 }
 
 // analyzeJSFile runs jsluice endpoint extraction, secret scanning, source
 // map harvesting, and subdomain extraction on a single fetched JS body.
-func (agg *jsAnalysisAgg) analyzeJSFile(c *Ctx, client *http.Client, jsURL string, body []byte, mapMaxBytes int64) {
+func (agg *jsAnalysisAgg) analyzeJSFile(c *Ctx, fetchCtx context.Context, client *http.Client, jsURL string, body []byte, mapMaxBytes int64) {
 	// [A] jsluice endpoint extraction (via temp file)
-	localEndpoints := runJsluiceOnContent(c, body, jsURL)
+	localEndpoints := runJsluiceOnContent(c, fetchCtx, body, jsURL)
 
 	// [C] Secret pattern scan
 	localSecrets := scanSecrets(body, jsURL)
@@ -309,7 +313,7 @@ func (agg *jsAnalysisAgg) analyzeJSFile(c *Ctx, client *http.Client, jsURL strin
 	// [D] Source map harvesting
 	var mapSecrets []secretFinding
 	var mapEndpoints []string
-	mapBody := fetchSourceMap(c, client, jsURL, mapMaxBytes)
+	mapBody := fetchSourceMap(fetchCtx, client, jsURL, body, mapMaxBytes)
 	if mapBody != nil {
 		agg.mu.Lock()
 		agg.mapsFetched++
@@ -368,6 +372,13 @@ func writeJSOutputFiles(c *Ctx, endpoints []string, secretFindings []secretFindi
 	subdomains = filterJSSubdomainsToScope(c, utils.DedupeLines(subdomains))
 	if len(subdomains) > 0 {
 		writeStringLinesFile(c.F.JSSubdomainsOut, subdomains)
+		// Sync late-discovered subdomains into the subdomains table/report
+		// (scope was already filtered above).
+		if c.ScanID > 0 {
+			if _, err := ingest.ParseSubdomainsFile(c.ScanID, c.F.JSSubdomainsOut, "js"); err != nil {
+				logger.Warning("Failed to sync JS subdomains to database: %v", err)
+			}
+		}
 		// Append to consolidated subdomains so they appear in the report
 		if utils.FileExists(c.F.ConsolidatedSubs) {
 			if f, err := os.OpenFile(c.F.ConsolidatedSubs, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
@@ -393,6 +404,39 @@ func filterJSSubdomainsToScope(c *Ctx, subdomains []string) []string {
 		}
 	}
 	return filtered
+}
+
+// persistJSPartialFindingsToDB ingests partial (skip/cancel) JS output into
+// the DB so collected findings are not lost on disk only. Mirrors the
+// persistence of the full path (endpoints + secrets + subdomains).
+func persistJSPartialFindingsToDB(c *Ctx, secretFindings []secretFinding) {
+	if c.ScanID <= 0 {
+		return
+	}
+	if utils.FileExists(c.F.JSEndpointsOut) {
+		if count, _ := ingest.ParseEndpointsFile(c.ScanID, c.F.JSEndpointsOut, "jsluice"); count > 0 {
+			logger.Result(count, "API endpoints extracted from JavaScript (partial)")
+		}
+	}
+	if len(secretFindings) > 0 {
+		var parsed []database.GFMatch
+		for _, sf := range secretFindings {
+			parsed = append(parsed, database.GFMatch{
+				URL:     sf.URL,
+				Pattern: sf.Pattern,
+				Status:  sf.Status,
+			})
+		}
+		if err := database.InsertGFMatches(c.ScanID, parsed); err != nil {
+			logger.Warning("Failed to persist partial secret findings: %v", err)
+		}
+		flagJSSecretHosts(c.ScanID, secretFindings)
+	}
+	if utils.FileExists(c.F.JSSubdomainsOut) {
+		if _, err := ingest.ParseSubdomainsFile(c.ScanID, c.F.JSSubdomainsOut, "js"); err != nil {
+			logger.Warning("Failed to sync partial JS subdomains to database: %v", err)
+		}
+	}
 }
 
 // persistJSFindingsToDB stores endpoints and secret matches, flagging

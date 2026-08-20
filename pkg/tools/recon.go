@@ -91,7 +91,10 @@ func (t *ToolBox) RunAmassIntel(ctx context.Context, org string, outputFile stri
 	return err
 }
 
-func (t *ToolBox) RunDnsx(ctx context.Context, inputFile string, outputFile string) error {
+// RunDnsx resolves hosts from inputFile. When resolversPath points to an
+// existing resolver list it is passed via -r so dnsx honors the scan's
+// configured resolvers instead of the system default.
+func (t *ToolBox) RunDnsx(ctx context.Context, inputFile string, outputFile string, resolversPath string) error {
 	args := []string{
 		"-l", inputFile,
 		"-a", "-aaaa", "-cname", "-mx", "-txt", "-resp", "-json",
@@ -99,6 +102,9 @@ func (t *ToolBox) RunDnsx(ctx context.Context, inputFile string, outputFile stri
 		"-retry", "2", // retry failed queries twice before giving up
 		"-wt", "5", // wildcard detection threshold
 		"-o", outputFile,
+	}
+	if resolversPath != "" && utils.FileExists(resolversPath) {
+		args = append(args, "-r", resolversPath)
 	}
 	_, err := t.Runner.Run(ctx, ToolDnsx, args, runner.WithTimeout(t.dnsxMaxTimeout()))
 	return err

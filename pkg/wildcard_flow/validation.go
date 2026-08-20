@@ -12,12 +12,14 @@ package wildcard_flow
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"io"
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/vishnu303/chaathan/pkg/config"
@@ -60,6 +62,15 @@ func stepDNSConsolidation(c *Ctx) flowkit.StepResult {
 		return flowkit.StepResult{Cancelled: c.cancelled()}
 	}
 
+	// Canonicalize casing first: tool outputs mix upper/lowercase and
+	// MergeAndDeduplicate is case-sensitive, so "A.example.com" and
+	// "a.example.com" would otherwise survive as distinct subdomains.
+	if err := utils.MapFileLines(c.F.ConsolidatedSubs, strings.ToLower); err != nil {
+		c.markStepFailedSafe("dns_resolution", err)
+		logger.Error("Failed to normalize subdomain casing: %v", err)
+		return flowkit.StepResult{Cancelled: c.cancelled()}
+	}
+
 	// Filter out invalid domains and ensure they belong to the target domain
 	_ = utils.FilterFileLines(c.F.ConsolidatedSubs, func(line string) bool {
 		line = strings.ToLower(strings.TrimSpace(line))
@@ -87,11 +98,7 @@ func stepDNSConsolidation(c *Ctx) flowkit.StepResult {
 	}
 
 	// Purge out-of-scope / unconsolidated subdomains from the DB
-	if c.ScanID > 0 {
-		if purged, err := ingest.SyncSubdomainsWithConsolidated(c.ScanID, c.F.ConsolidatedSubs); err == nil && purged > 0 {
-			logger.FileDebug("purged %d out-of-scope subdomains from database", purged)
-		}
-	}
+	syncDBSubdomainsToConsolidated(c)
 
 	subCount, _ = utils.CountFileLines(c.F.ConsolidatedSubs)
 	if subCount == 0 {
@@ -115,7 +122,7 @@ func stepDNSConsolidation(c *Ctx) flowkit.StepResult {
 
 	var dnsxSkipped bool
 	if err := runWithSkip(c, "dnsx", func(sCtx context.Context) error {
-		return c.Tb.RunDnsx(sCtx, c.F.ConsolidatedSubs, c.F.DnsxOut)
+		return c.Tb.RunDnsx(sCtx, c.F.ConsolidatedSubs, c.F.DnsxOut, c.ResolversPath)
 	}); err != nil {
 		if err == ErrToolSkipped {
 			dnsxSkipped = true
@@ -208,6 +215,11 @@ func stepDNSBruteforce(c *Ctx) flowkit.StepResult {
 			logger.ToolFail("ShuffleDNS", err.Error())
 		}
 	} else {
+		// Scope-filter the raw brute-force output before merge AND before DB
+		// ingest below — the ingest layer only enforces domain-suffix scope,
+		// so with a narrow user scope out-of-scope subs would otherwise be
+		// persisted to the DB and never purged (the Step-6 purge already ran).
+		c.filterSubsToScope(c.F.ShufflednsOut)
 		beforeMerge, _ = utils.CountFileLines(c.F.ConsolidatedSubs)
 		// Merge brute-forced subs back into the consolidated list
 		if err := utils.MergeAndDeduplicate(
@@ -290,7 +302,7 @@ func stepHTTPProbing(c *Ctx) flowkit.StepResult {
 	}
 
 	if utils.FileExists(c.F.HttpxOut) {
-		collectLiveHostTargetsFromHttpx(c.F.HttpxOut, c.F.HttpxLiveHosts)
+		collectLiveHostTargetsFromHttpx(c, c.F.HttpxOut, c.F.HttpxLiveHosts)
 	}
 
 	if c.ScanID > 0 && utils.FileExists(c.F.HttpxOut) {
@@ -367,6 +379,12 @@ func runTLSAnalysisTool(c *Ctx) {
 		}
 		logger.Result(certVulns, "certificate issues (expired/self-signed/mismatch)%s", label)
 	}
+
+	// Re-sync the DB against the consolidated file: TLS-SAN subdomains were
+	// ingested above filtered only by domain suffix, so any in-domain but
+	// user-out-of-scope SANs must be purged now (the Step-6 purge predates
+	// this discovery source).
+	syncDBSubdomainsToConsolidated(c)
 
 	c.markStepCompleteIfNoFailure("tls_analysis")
 }
@@ -453,20 +471,23 @@ func reprobeSANSubdomains(c *Ctx, newSANs []string) {
 	// Process whatever output httpx produced — partial output may
 	// exist even when the run was skipped before completion.
 	if utils.FileExists(sanHttpxOutFile) {
-		if _, err := ingest.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
-			logger.Warning("Failed to parse SAN httpx output: %v", err)
+		if c.ScanID > 0 {
+			if _, err := ingest.ParseHttpxOutput(c.ScanID, sanHttpxOutFile); err != nil {
+				logger.Warning("Failed to parse SAN httpx output: %v", err)
+			}
 		}
 
 		// Extract live hosts
-		sanLiveCount := collectLiveHostTargetsFromHttpx(sanHttpxOutFile, sanHttpxLiveFile)
+		sanLiveCount := collectLiveHostTargetsFromHttpx(c, sanHttpxOutFile, sanHttpxLiveFile)
 		if sanLiveCount > 0 {
 			reprobeLabel := ""
 			if reprobeSkipped {
 				reprobeLabel = " (partial)"
 			}
 			logger.Result(sanLiveCount, "live hosts from SAN subdomains%s", reprobeLabel)
-			// Merge live hosts back
+			// Merge live hosts back (then re-collapse http/https dupes across files)
 			_ = utils.MergeAndDeduplicate([]string{c.F.HttpxLiveHosts, sanHttpxLiveFile}, c.F.HttpxLiveHosts)
+			dedupeHostURLsFile(c.F.HttpxLiveHosts)
 		}
 
 		// Append sanHttpxOutFile contents to c.F.HttpxOut
@@ -490,7 +511,7 @@ func enrichHostMetadata(c *Ctx) {
 	if c.ScanID <= 0 || !utils.FileExists(c.F.HttpxOut) {
 		return
 	}
-	hostTargetCount := collectLiveHostTargetsFromHttpx(c.F.HttpxOut, c.F.HttpxLiveHosts)
+	hostTargetCount := collectLiveHostTargetsFromHttpx(c, c.F.HttpxOut, c.F.HttpxLiveHosts)
 	if hostTargetCount <= 0 {
 		return
 	}
@@ -507,7 +528,7 @@ func enrichHostMetadata(c *Ctx) {
 	}
 
 	logger.SubStep("Collecting lightweight host metadata for ROI scoring...")
-	hostTargets := allLive
+	hostTargets := rankLiveHosts(c.ScanID, allLive)
 	if len(hostTargets) > metadataHostCap {
 		hostTargets = hostTargets[:metadataHostCap]
 	}
@@ -516,6 +537,64 @@ func enrichHostMetadata(c *Ctx) {
 	} else if count > 0 {
 		logger.Result(count, "live hosts enriched with metadata")
 	}
+}
+
+// rankLiveHosts orders live host URLs by DB-derived ROI signals so the
+// metadata cap keeps the most interesting hosts instead of the first N in
+// file order: JS-secret flags, login surface, open-port breadth, and
+// parameterized URL count. Ties preserve input order.
+//
+// Note: at Step-10 timing the JS-secret/login/URL signals are mostly
+// unpopulated (those phases run later), so ranking here effectively leans
+// on port breadth; URL-side ranking happens again after Step 16 via
+// collectROIMetadataTargetsFromFile. The same ranking is reused by the
+// ffuf step (Phase 3), where more signals are available.
+func rankLiveHosts(scanID int64, hosts []string) []string {
+	score := make(map[string]int)
+	if metas, err := database.GetHostMetadata(scanID); err == nil {
+		for _, m := range metas {
+			h := strings.ToLower(m.Host)
+			if m.HasJSSecrets {
+				score[h] += 20
+			}
+			if m.LoginSurface {
+				score[h] += 5
+			}
+		}
+	}
+	if ports, err := database.GetPorts(scanID); err == nil {
+		for _, p := range ports {
+			score[strings.ToLower(p.Host)] += 2
+		}
+	}
+	if urls, err := database.GetURLs(scanID); err == nil {
+		for _, u := range urls {
+			if strings.Contains(u.URL, "?") && strings.Contains(u.URL, "=") {
+				score[strings.ToLower(u.Host)]++
+			}
+		}
+	}
+
+	type rankedHost struct {
+		url   string
+		score int
+	}
+	ranked := make([]rankedHost, len(hosts))
+	for i, h := range hosts {
+		host := ""
+		if parsed, err := neturl.Parse(h); err == nil {
+			host = strings.ToLower(parsed.Hostname())
+		}
+		ranked[i] = rankedHost{url: h, score: score[host]}
+	}
+	slices.SortStableFunc(ranked, func(a, b rankedHost) int {
+		return cmp.Compare(b.score, a.score)
+	})
+	out := make([]string, len(ranked))
+	for i, r := range ranked {
+		out[i] = r.url
+	}
+	return out
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -578,5 +657,18 @@ func (c *Ctx) filterSubsToScope(filePath string) {
 			logger.Info("Scope filter: removed %d out-of-scope subdomains", filtered)
 			logger.FileDebug("scope filter (%s): %d -> %d subdomains", filePath, subCount, afterCount)
 		}
+	}
+}
+
+// syncDBSubdomainsToConsolidated purges DB subdomains that are absent from
+// the scope-filtered consolidated file. Runs after Step 6 and is re-run
+// after every later subdomain-producing step (TLS-SAN, JS extraction) so
+// late discoveries can never leave out-of-scope rows in the database.
+func syncDBSubdomainsToConsolidated(c *Ctx) {
+	if c.ScanID <= 0 {
+		return
+	}
+	if purged, err := ingest.SyncSubdomainsWithConsolidated(c.ScanID, c.F.ConsolidatedSubs); err == nil && purged > 0 {
+		logger.FileDebug("purged %d out-of-scope subdomains from database", purged)
 	}
 }

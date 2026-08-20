@@ -12,8 +12,13 @@ package wildcard_flow
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"regexp"
@@ -210,27 +215,119 @@ func extractTokenFromContext(pattern, ctx string) string {
 	return ""
 }
 
+// validateAWSKey verifies an AWS access key ID by signing a proper SigV4
+// GetCallerIdentity request with the secret key found alongside it. An
+// unsigned request to STS reveals nothing about key validity, so without a
+// secret key the finding stays unverified — a bare 403 never confirms.
 func validateAWSKey(ctx context.Context, client *http.Client, context string) string {
 	key := extractTokenFromContext("aws-keys", context)
 	if key == "" || !strings.HasPrefix(key, "AKIA") {
 		return "unverified"
 	}
-	// Lightweight check: attempt unsigned request to STS
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://sts.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15", nil)
+	secret := extractAWSSecretFromContext(context)
+	if secret == "" {
+		// Cannot sign without the secret key; STS responses to unsigned
+		// requests are uninformative, so leave the finding unverified.
+		return "unverified"
+	}
+	req, err := newAWSSignedGetCallerIdentity(ctx, key, secret)
 	if err != nil {
 		return "unverified"
 	}
-	req.Header.Set("X-Amz-Access-Key", key)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "unverified"
 	}
-	resp.Body.Close()
-	// 403 with specific error means key exists but lacks permission = valid key
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusOK {
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
 		return "confirmed"
 	}
-	return "invalid"
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	switch awsErrorCode(string(body)) {
+	case "InvalidClientTokenId", "UnrecognizedClientException":
+		return "invalid"
+	case "AccessDenied", "UnauthorizedAccess":
+		// Signed request was accepted (credentials parsed) but the identity
+		// lacks sts:GetCallerIdentity — the key pair is real.
+		return "confirmed"
+	default:
+		// IncompleteSignature, throttling, network-layer rejections, etc.
+		return "unverified"
+	}
+}
+
+// awsSecretContextRe matches a secret access key assigned near the access
+// key ID (e.g. secretAccessKey: "…", AWS_SECRET_ACCESS_KEY=…).
+var awsSecretContextRe = regexp.MustCompile(`(?i)(?:secret[_-]?access[_-]?key|aws[_-]?secret(?:[_-]?access)?[_-]?key|secret[_-]?key)\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})["']?`)
+
+// extractAWSSecretFromContext returns a plausible AWS secret access key from
+// the finding context, or "" when none is present.
+func extractAWSSecretFromContext(context string) string {
+	m := awsSecretContextRe.FindStringSubmatch(context)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// newAWSSignedGetCallerIdentity builds a SigV4-signed STS GetCallerIdentity
+// POST using stdlib crypto only (no AWS SDK dependency).
+func newAWSSignedGetCallerIdentity(ctx context.Context, accessKey, secretKey string) (*http.Request, error) {
+	const (
+		awsHost    = "sts.amazonaws.com"
+		awsRegion  = "us-east-1"
+		awsService = "sts"
+	)
+	body := "Action=GetCallerIdentity&Version=2011-06-15"
+	contentType := "application/x-www-form-urlencoded; charset=utf-8"
+	now := time.Now().UTC()
+	amzDate := now.Format("20060102T150405Z")
+	dateStamp := now.Format("20060102")
+
+	canonicalHeaders := "content-type:" + contentType + "\nhost:" + awsHost + "\nx-amz-date:" + amzDate + "\n"
+	signedHeaders := "content-type;host;x-amz-date"
+	canonicalRequest := strings.Join([]string{"POST", "/", "", canonicalHeaders, signedHeaders, awsSHA256Hex(body)}, "\n")
+	scope := dateStamp + "/" + awsRegion + "/" + awsService + "/aws4_request"
+	stringToSign := strings.Join([]string{"AWS4-HMAC-SHA256", amzDate, scope, awsSHA256Hex(canonicalRequest)}, "\n")
+
+	kDate := awsHMACSHA256([]byte("AWS4"+secretKey), dateStamp)
+	kRegion := awsHMACSHA256(kDate, awsRegion)
+	kService := awsHMACSHA256(kRegion, awsService)
+	kSigning := awsHMACSHA256(kService, "aws4_request")
+	signature := hex.EncodeToString(awsHMACSHA256(kSigning, stringToSign))
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://"+awsHost+"/", strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-Amz-Date", amzDate)
+	req.Header.Set("Authorization", fmt.Sprintf(
+		"AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
+		accessKey, scope, signedHeaders, signature))
+	return req, nil
+}
+
+func awsSHA256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func awsHMACSHA256(key []byte, data string) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(data))
+	return h.Sum(nil)
+}
+
+var awsErrorCodeRe = regexp.MustCompile(`<Code>([A-Za-z]+)</Code>`)
+
+// awsErrorCode extracts the <Code> element from an STS XML error body.
+func awsErrorCode(body string) string {
+	m := awsErrorCodeRe.FindStringSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 func validateGitHubToken(ctx context.Context, client *http.Client, context string) string {
@@ -263,7 +360,12 @@ func validateGoogleAPIKey(ctx context.Context, client *http.Client, context stri
 	if key == "" {
 		return "unverified"
 	}
-	checkURL := "https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + key
+	// tokeninfo only understands OAuth access tokens, so AIza API keys can
+	// never be confirmed there. Use the read-only Timezone API instead: OK
+	// proves the key works, an explicit "invalid key" denial proves it does
+	// not, and everything else (restricted keys, quota, errors) stays
+	// unverified.
+	checkURL := "https://maps.googleapis.com/maps/api/timezone?location=0,0&timestamp=0&key=" + key
 	req, err := http.NewRequestWithContext(ctx, "GET", checkURL, nil)
 	if err != nil {
 		return "unverified"
@@ -272,10 +374,25 @@ func validateGoogleAPIKey(ctx context.Context, client *http.Client, context stri
 	if err != nil {
 		return "unverified"
 	}
-	resp.Body.Close()
-	// 200 = valid token, 400 = invalid
-	if resp.StatusCode == http.StatusOK {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "unverified"
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	var res struct {
+		Status       string `json:"status"`
+		ErrorMessage string `json:"error_message"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return "unverified"
+	}
+	switch res.Status {
+	case "OK":
 		return "confirmed"
+	case "REQUEST_DENIED":
+		if strings.Contains(strings.ToLower(res.ErrorMessage), "invalid") {
+			return "invalid"
+		}
 	}
 	return "unverified"
 }
@@ -334,6 +451,10 @@ func validateSlackWebhook(ctx context.Context, client *http.Client, context stri
 	if webhookURL == "" {
 		return "unverified"
 	}
+	// Empty JSON body: Slack rejects it with 400 ("no_text") without posting
+	// anything. 400 proves the webhook is alive, 404 proves it is dead. A 200
+	// would imply a message was posted, which must never happen here, so it
+	// is deliberately not treated as confirmation.
 	req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, strings.NewReader("{}"))
 	if err != nil {
 		return "unverified"
@@ -344,11 +465,13 @@ func validateSlackWebhook(ctx context.Context, client *http.Client, context stri
 		return "unverified"
 	}
 	resp.Body.Close()
-	// 404 = dead webhook, anything else = alive
-	if resp.StatusCode == http.StatusNotFound {
+	switch resp.StatusCode {
+	case http.StatusBadRequest:
+		return "confirmed"
+	case http.StatusNotFound:
 		return "invalid"
 	}
-	return "confirmed"
+	return "unverified"
 }
 
 func validateJWT(context string) string {
@@ -374,12 +497,14 @@ func validateJWT(context string) string {
 		return "unverified"
 	}
 
-	// Check expiry
+	// A structurally valid, unexpired token is still only a static
+	// observation — there is no safe live check for it. JWTs therefore never
+	// reach "confirmed" so they do not fire confirmed-secret notifications or
+	// inflate the "verified active" count.
 	if exp, ok := claims["exp"].(float64); ok {
 		if time.Unix(int64(exp), 0).Before(time.Now()) {
 			return "invalid" // expired
 		}
-		return "confirmed" // valid and not expired
 	}
 	return "unverified"
 }
@@ -498,5 +623,3 @@ func extractSecretContext(content string, re *regexp.Regexp, match string) strin
 	}
 	return prefix + snippet + suffix
 }
-
-// jsAnalysisCfg returns the JS analysis config with safe defaults.

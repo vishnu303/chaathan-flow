@@ -227,6 +227,24 @@ func FilterFileLines(filePath string, keep func(string) bool) error {
 	return writeLines(filePath, kept)
 }
 
+// MapFileLines rewrites every non-empty line of filePath through transform
+// and deduplicates the results (sorted). Lines that transform to an empty
+// string are dropped. Use it to canonicalize line content (e.g. casing)
+// before case-sensitive merge/dedupe steps.
+func MapFileLines(filePath string, transform func(string) string) error {
+	mapped, err := readFilteredLines(filePath, func(line string) bool { return true })
+	if err != nil {
+		return err
+	}
+	unique := make(map[string]struct{}, len(mapped))
+	for _, line := range mapped {
+		if t := transform(line); t != "" {
+			unique[t] = struct{}{}
+		}
+	}
+	return writeLines(filePath, slices.Sorted(maps.Keys(unique)))
+}
+
 // readSanitizedURLLines reads a file and returns sanitized, distinct URLs.
 // If isAllowedHost is not nil, it filters out URLs with hostnames that don't pass the check.
 func readSanitizedURLLines(filePath string, isAllowedHost func(string) bool) ([]string, error) {

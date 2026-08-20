@@ -55,22 +55,22 @@ Phase 5: Fingerprinting (Step 21)      ──► Output: WAF/Tech JSON
 - **Step 5: `search_engine_recon`** (uncover search engine scraping; skip with `--skip-uncover`).
 
 ### Phase 2 — Validation (`validation.go`)
-- **Step 6: `dns_resolution`** (dnsx validation of gathered subdomains).
+- **Step 6: `dns_resolution`** (dnsx validation of gathered subdomains; dnsx runs through the configured resolver list via `-r <resolvers.txt>`). The consolidated subdomain list is lowercased and deduplicated before merge so casing variants never survive as separate hosts.
 - **Step 7: `dns_bruteforce`** (shuffledns + massdns brute forcing; skip with `--skip-shuffledns`; auto-detects SecLists on device if `--dns-wordlist` is omitted).
 - **Step 8: `port_scanning`** (naabu TCP scan; skip with `--skip-naabu`). Open ports are merged into the target list for subsequent probing.
-- **Step 9: `http_probing`** (httpx probing for live web servers on both standard ports and naabu-discovered ports).
+- **Step 9: `http_probing`** (httpx probing for live web servers on both standard ports and naabu-discovered ports). The live-host list is scope-filtered (redirect destinations outside scope are dropped) and deduped per host preferring `https://` over `http://`; explicit `host:port` variants (naabu discoveries) stay separate targets.
 - **Step 10: `tls_analysis`** (tlsx certificate extraction; skip with `--skip-tlsx`). Extracts newly discovered subdomains from SANs, probes them, and merges them back.
 
 ### Phase 3 — Content Discovery (`content_discovery.go`, `js_deep_analysis.go`)
 - **Step 11: `url_discovery`** (waybackurls + gau passive crawl).
 - **Step 12: `web_crawling`** (katana + gospider crawling; skip with `--skip-crawl`).
-- **Step 13: `js_deep_analysis`** (jsluice AST-based JS URL/object extraction + strict-format secret scanning with live validation + source map harvesting + subdomain extraction; priority-ranked top-5000 JS URLs; configurable via `general.js_analysis` in config.yaml).
-- **Step 14: `dir_fuzzing`** (ffuf directory fuzzing on up to 1000 live hosts; auto-detects SecLists on device if `--wordlist` is omitted). Fuzzing results write to `ffuf_discovered_urls.txt`.
-- **Step 15: `param_discovery`** (x8 parameter discovery; skip with `--skip-x8`; auto-detects SecLists parameter list on device). Natively routes through the rotating proxy using direct proxy arguments `-x`. Targets ONLY curated dynamic endpoints (extracted from crawls) and fuzzed directory URLs, completely bypassing flat live hostlists.
+- **Step 13: `js_deep_analysis`** (jsluice AST-based JS URL/object extraction + strict-format secret scanning with live validation + source map harvesting + subdomain extraction; priority-ranked top-5000 JS URLs; configurable via `general.js_analysis` in config.yaml). JS URLs are gathered from crawler outputs **and ffuf discoveries**. Secret validation is provider-correct: AWS keys are verified with a SigV4-signed STS call (a bare 403 never confirms), JWTs are never marked confirmed, and Slack webhooks are probed non-destructively. Late-discovered subdomains are scope-filtered and synced to the subdomains table with source `js`.
+- **Step 14: `dir_fuzzing`** (ffuf directory fuzzing on up to 1000 live hosts; auto-detects SecLists on device if `--wordlist` is omitted). Fuzzing results write to `ffuf_discovered_urls.txt`. The total fuzzing budget is split into fair per-host time budgets (`total / host count`, floor 2 minutes) so early hosts cannot starve the rest.
+- **Step 15: `param_discovery`** (x8 parameter discovery; skip with `--skip-x8`; auto-detects SecLists parameter list on device). Natively routes through the rotating proxy using direct proxy arguments `-x`. Targets ONLY curated dynamic endpoints (extracted from crawls, scope-filtered, static-extension URLs rejected) and fuzzed directory URLs, completely bypassing flat live hostlists; merged targets are ranked by ROI score before the 150-target cap so the highest-value URLs always win.
 - **Step 16: `url_consolidation`** (httpx live URL validation and ROI metadata collection).
 
 ### Phase 4 — Vulnerability Scanning (`vulnerability_scanning.go`)
-- **Step 17: `takeover_detection`** (Nuclei takeover checking on CNAME-filtered subdomains; runs first in Phase 4 for early alerts). CNAME data is refreshed into `intermediate_files/dnsx_cname_refresh.json` (never clobbers Step-6 `dnsx_resolved.json`); falls back to `dnsx_resolved.json` if the refresh yields 0 CNAME records.
+- **Step 17: `takeover_detection`** (Nuclei takeover checking on CNAME-filtered subdomains; runs first in Phase 4 for early alerts). CNAME data is refreshed into `intermediate_files/dnsx_cname_refresh.json` (never clobbers Step-6 `dnsx_resolved.json`; refresh also honors the `-r` resolver list); falls back to `dnsx_resolved.json` if the refresh yields 0 CNAME records. Only **validated** takeovers are ever persisted: every candidate is re-verified (CNAME + HTTP fingerprint) before DB ingestion, the validated file is rewritten atomically (temp file + rename), and if validation fails or is cancelled the step fails without parsing the unvalidated output.
 - **Step 18: `vuln_scanning`** (Nuclei infra scan: CVE check + misconfigs).
 - **Step 19: `vuln_scanning_urls`** (Nuclei DAST fuzzing mode on consolidated URL lists).
 - **Step 20: `xss_scanning`** (dalfox parameter fuzzing; skip with `--skip-dalfox`).
@@ -94,6 +94,8 @@ To process huge URL lists (100k+ inputs) without crashing VPS systems:
 
 ### 3. Scope Rules & Constraints
 - **Optional Nature**: Scope configuration is strictly optional. If no scope config is defined, the scan operates in permissive mode (everything is in-scope, all ports are allowed, no IP exclusions).
+- **Fail-Fast Compilation**: If a configured scope fails to compile (invalid regex), the scan aborts immediately with an error — it never falls back to permissive mode, which would silently scan targets the user excluded.
+- **DB Re-Sync**: The DB subdomain table is re-synced against the scope-filtered consolidated file after every subdomain-producing step (DNS consolidation, TLS-SAN, JS extraction) so late discoveries can never leave out-of-scope rows in the database.
 - **Default Anchoring**: User-provided scope patterns are automatically anchored as `^(?:PATTERN)$` (unless they already start with `^` or end with `$`) to prevent substring-bypass injection (e.g. `example.com` matching `evil-example.com`).
 - **IP Target Filtering**: Bare-IP targets are denied if `in_scope` patterns are defined but the target domain is empty. If no `in_scope` patterns are configured, bare-IP targets are permitted.
 

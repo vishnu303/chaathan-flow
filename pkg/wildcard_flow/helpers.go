@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -58,6 +59,12 @@ func (c *Ctx) markStepCompleteIfNoFailure(stepName string) {
 // markStepFailedSafe marks a step failed only when state tracking is active.
 func (c *Ctx) markStepFailedSafe(stepName string, stepErr error) {
 	if c.StateMgr == nil || c.State == nil || stepErr == nil {
+		return
+	}
+	// A user cancellation (Ctrl-C / signal) aborts the running tool with a
+	// context error — that is an interruption, not a failure. Marking the
+	// step failed would break resume semantics; leave it incomplete instead.
+	if c.cancelled() {
 		return
 	}
 	_ = c.StateMgr.MarkStepFailed(c.State, stepName, stepErr)
@@ -123,27 +130,58 @@ func drainSkipSignal(c *Ctx) {
 // File helpers
 // ─────────────────────────────────────────────────────────────
 
-// collectLiveHostTargetsFromHttpx reads a JSONL httpx output file and
-// writes unique host URLs to outputFile. Returns the number written.
-func collectLiveHostTargetsFromHttpx(inputFile, outputFile string) int {
+// hostInScope reports whether a hostname is inside the scan scope. When no
+// scope filter is configured, only the target domain and its subdomains
+// qualify; with no domain at all nothing can be anchored, so everything
+// passes (the wildcard flow always sets c.Domain).
+func (c *Ctx) hostInScope(host string) bool {
+	if c.ScopeFilter != nil {
+		return c.ScopeFilter.IsInScope(host) && !c.ScopeFilter.IsOutOfScope(host)
+	}
+	if c.Domain == "" {
+		return true
+	}
+	host = strings.ToLower(host)
+	return host == c.Domain || strings.HasSuffix(host, "."+c.Domain)
+}
+
+// isDefaultSchemePort reports whether port is the well-known port for scheme.
+func isDefaultSchemePort(scheme, port string) bool {
+	return (scheme == "http" && port == "80") || (scheme == "https" && port == "443")
+}
+
+// hostURLKey returns the dedup key for a host URL: lowercased hostname,
+// suffixed with the port when it is not the scheme's default.
+func hostURLKey(u *url.URL) string {
+	key := strings.ToLower(u.Hostname())
+	if port := u.Port(); port != "" && !isDefaultSchemePort(u.Scheme, port) {
+		key += ":" + port
+	}
+	return key
+}
+
+// collectLiveHostTargetsFromHttpx reads a JSONL httpx output file and writes
+// unique in-scope host URLs to outputFile. Redirect destinations outside the
+// scope are dropped, and a host seen under both http:// and https:// is kept
+// once (https preferred). Explicit host:port variants (naabu discoveries)
+// stay separate targets. Returns the number written.
+func collectLiveHostTargetsFromHttpx(c *Ctx, inputFile, outputFile string) int {
 	file, err := os.Open(inputFile)
 	if err != nil {
 		return 0
 	}
 	defer file.Close()
 
-	f, err := os.Create(outputFile)
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-
 	type httpxTarget struct {
 		URL string `json:"url"`
 	}
 
-	seen := make(map[string]bool)
-	count := 0
+	// Dedup key -> chosen URL, preserving first-seen order; https wins over
+	// http for the same host key.
+	best := make(map[string]string)
+	var order []string
+	seenURLs := make(map[string]bool)
+
 	scanner := bufio.NewScanner(file)
 	// 4 MB max line buffer — httpx JSONL can exceed 1 MB when extensive
 	// tech detection, header data, or TLS info is emitted.
@@ -159,21 +197,81 @@ func collectLiveHostTargetsFromHttpx(inputFile, outputFile string) int {
 		if err := json.Unmarshal([]byte(line), &result); err != nil {
 			continue
 		}
-		if result.URL == "" || seen[result.URL] {
+		if result.URL == "" || seenURLs[result.URL] {
 			continue
 		}
-		seen[result.URL] = true
-		fmt.Fprintln(f, result.URL)
-		count++
+		seenURLs[result.URL] = true
+
+		// httpx with -follow-redirects records the final redirect target in
+		// "url", which can sit outside the scan scope — never emit those.
+		u, err := url.Parse(result.URL)
+		if err != nil || u.Hostname() == "" {
+			continue
+		}
+		if !c.hostInScope(u.Hostname()) {
+			continue
+		}
+
+		key := hostURLKey(u)
+
+		existing, ok := best[key]
+		if !ok {
+			best[key] = result.URL
+			order = append(order, key)
+			continue
+		}
+		if strings.HasPrefix(existing, "http://") && strings.HasPrefix(result.URL, "https://") {
+			best[key] = result.URL
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		logger.Warning("httpx JSONL scanner error (some lines may have been skipped): %v", err)
 	}
-	return count
+
+	f, err := os.Create(outputFile)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	for _, key := range order {
+		fmt.Fprintln(f, best[key])
+	}
+	return len(order)
 }
 
-// loadLineSlice reads up to limit non-empty lines from inputFile into a slice.
-// Pass limit ≤ 0 to read all lines.
+// dedupeHostURLsFile rewrites a host URL list file in place, keeping one URL
+// per host key (https preferred over http; explicit non-default ports stay
+// separate). Unparseable lines are dropped.
+func dedupeHostURLsFile(filePath string) {
+	lines, err := utils.ReadNonEmptyLines(filePath)
+	if err != nil || len(lines) == 0 {
+		return
+	}
+	best := make(map[string]string)
+	var order []string
+	for _, line := range lines {
+		u, err := url.Parse(strings.TrimSpace(line))
+		if err != nil || u.Hostname() == "" {
+			continue
+		}
+		key := hostURLKey(u)
+		existing, ok := best[key]
+		if !ok {
+			best[key] = strings.TrimSpace(line)
+			order = append(order, key)
+			continue
+		}
+		if strings.HasPrefix(existing, "http://") && strings.HasPrefix(strings.TrimSpace(line), "https://") {
+			best[key] = strings.TrimSpace(line)
+		}
+	}
+	out := make([]string, 0, len(order))
+	for _, key := range order {
+		out = append(out, best[key])
+	}
+	writeStringLinesFile(filePath, out)
+}
 
 // extractUncoverHosts reads an uncover JSONL output file and writes unique
 // hostnames (one per line) to outputFile. Returns the number written.
@@ -284,9 +382,3 @@ func filterCNAMESubdomains(dnsxJSONFile, outputFile string) int {
 	}
 	return count
 }
-
-// ─────────────────────────────────────────────────────────────
-// Scoped URL filtering for DAST and Dalfox
-// ─────────────────────────────────────────────────────────────
-
-// junkDomainSuffixes are 3rd-party domains that should never be scanned.

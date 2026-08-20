@@ -14,7 +14,8 @@ import (
 )
 
 // collectROIMetadataTargetsFromFile selects high-value URLs from inputFile,
-// capped at perHostLimit per host and totalLimit overall.
+// ranked by ROI score, capped at perHostLimit per host and totalLimit
+// overall. Highest-scoring URLs win regardless of their position in the file.
 func collectROIMetadataTargetsFromFile(inputFile, outputFile string, perHostLimit, totalLimit int) int {
 	file, err := os.Open(inputFile)
 	if err != nil {
@@ -22,15 +23,13 @@ func collectROIMetadataTargetsFromFile(inputFile, outputFile string, perHostLimi
 	}
 	defer file.Close()
 
-	f, err := os.Create(outputFile)
-	if err != nil {
-		return 0
+	type candidate struct {
+		url   string
+		host  string
+		score int
 	}
-	defer f.Close()
-
 	seen := make(map[string]bool)
-	perHost := make(map[string]int)
-	count := 0
+	var candidates []candidate
 	scanner := bufio.NewScanner(file)
 
 	for scanner.Scan() {
@@ -42,12 +41,31 @@ func collectROIMetadataTargetsFromFile(inputFile, outputFile string, perHostLimi
 		if host == "" {
 			continue
 		}
-		if perHostLimit > 0 && perHost[host] >= perHostLimit {
+		seen[line] = true
+		candidates = append(candidates, candidate{url: line, host: host, score: urlROIScore(line)})
+	}
+	if len(candidates) == 0 {
+		return 0
+	}
+
+	slices.SortStableFunc(candidates, func(a, b candidate) int {
+		return cmp.Compare(b.score, a.score)
+	})
+
+	f, err := os.Create(outputFile)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+
+	perHost := make(map[string]int)
+	count := 0
+	for _, cd := range candidates {
+		if perHostLimit > 0 && perHost[cd.host] >= perHostLimit {
 			continue
 		}
-		seen[line] = true
-		perHost[host]++
-		fmt.Fprintln(f, line)
+		perHost[cd.host]++
+		fmt.Fprintln(f, cd.url)
 		count++
 		if totalLimit > 0 && count >= totalLimit {
 			break
@@ -55,8 +73,6 @@ func collectROIMetadataTargetsFromFile(inputFile, outputFile string, perHostLimi
 	}
 	return count
 }
-
-// writeEmptyFile truncates or creates a file so retry paths do not reuse stale output.
 
 // isHighValueURL returns true for parameterised URLs or those containing
 // known sensitive path markers (admin panels, APIs, auth endpoints, etc.).
@@ -81,11 +97,6 @@ func hostFromRawURL(raw string) string {
 	}
 	return strings.ToLower(parsed.Hostname())
 }
-
-// extractUncoverHosts reads an uncover JSONL output file and writes unique
-// hostnames (one per line) to outputFile. Returns the number written.
-// This converts Uncover's JSON format into a plain-text list that can be
-// merged into all_subdomains.txt by stepDNSConsolidation (Step 6).
 
 // junkDomainSuffixes are 3rd-party domains that should never be scanned.
 func getJunkDomains() []string {
@@ -140,13 +151,14 @@ func hasStaticExtension(rawURL string) bool {
 
 // pathKey extracts a deduplication key from a URL — the scheme+host+path
 // without query parameters, so /api/user?id=1 and /api/user?id=2 map
-// to the same key.
+// to the same key. Only scheme+host are lowercased: paths can be
+// case-sensitive on the server, so /Admin and /admin stay distinct.
 func pathKey(rawURL string) string {
 	parsed, err := neturl.Parse(rawURL)
 	if err != nil || (parsed.Scheme == "" && parsed.Host == "") {
 		return rawURL
 	}
-	return strings.ToLower(parsed.Scheme + "://" + parsed.Host + parsed.Path)
+	return strings.ToLower(parsed.Scheme+"://"+parsed.Host) + parsed.Path
 }
 
 // urlItem represents a tracked, evaluated URL target candidate.
@@ -385,10 +397,12 @@ func urlROIScore(rawURL string) int {
 		}
 	}
 
-	// Interesting parameter names (+3 each)
+	// Interesting parameter names (+3 each). Presence matters even with an
+	// empty value (?debug=), so check Has instead of a non-empty value.
 	if parsed != nil {
+		query := parsed.Query()
 		for _, key := range getInterestingParameters() {
-			if parsed.Query().Get(key) != "" {
+			if query.Has(key) {
 				score += 3
 			}
 		}

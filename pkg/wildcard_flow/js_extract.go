@@ -12,6 +12,7 @@ package wildcard_flow
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -21,6 +22,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vishnu303/chaathan/utils"
@@ -69,25 +71,18 @@ func scoreJSURL(raw string) int {
 		}
 	}
 
-	// Priority 3: Recent wayback URLs (year >= current-2)
+	// Priority 3: Recent wayback URLs (year >= current-2). Year tokens only
+	// count as cache-dir-style path segments (/2026/...) — a year anywhere
+	// in the string (ids, versions, prices) is not a freshness signal.
 	currentYear := time.Now().Year()
 	for y := currentYear; y >= currentYear-2; y-- {
-		if strings.Contains(raw, fmt.Sprintf("%d", y)) {
+		if strings.Contains(lower, fmt.Sprintf("/%d/", y)) {
 			return 25
 		}
 	}
 
 	return 0
 }
-
-// ─────────────────────────────────────────────────────────────
-// Main step
-// ─────────────────────────────────────────────────────────────
-
-// stepJSDeepAnalysis is the unified JavaScript analysis step. It fetches JS
-// files once and runs endpoint extraction (jsluice), secret scanning, source
-// map harvesting, and subdomain extraction in a single pass.
-// Returns true if the scan should be cancelled.
 
 // writeJSPartialOutput saves whatever was collected so far when the step is
 // skipped or cancelled mid-execution. This ensures no findings are lost.
@@ -109,13 +104,23 @@ func writeJSPartialOutput(c *Ctx, endpoints []string, secrets []secretFinding, s
 			f.Close()
 		}
 	}
-	subdomains = utils.DedupeLines(subdomains)
+	subdomains = filterJSSubdomainsToScope(c, utils.DedupeLines(subdomains))
 	if len(subdomains) > 0 {
 		if f, err := os.Create(c.F.JSSubdomainsOut); err == nil {
 			for _, s := range subdomains {
 				fmt.Fprintln(f, s)
 			}
 			f.Close()
+		}
+		// Append to consolidated subdomains so partial discoveries still
+		// appear in the report (mirrors the full-path behavior).
+		if utils.FileExists(c.F.ConsolidatedSubs) {
+			if f, err := os.OpenFile(c.F.ConsolidatedSubs, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+				for _, s := range subdomains {
+					fmt.Fprintln(f, s)
+				}
+				f.Close()
+			}
 		}
 	}
 	meta := fmt.Sprintf("// JS Deep Analysis (PARTIAL) | Files: %d | Maps: %d | Size: %.2f MB | Endpoints: %d | Secrets: %d | Subdomains: %d\n",
@@ -129,8 +134,8 @@ func writeJSPartialOutput(c *Ctx, endpoints []string, secrets []secretFinding, s
 
 // runJsluiceOnContent writes JS content to a temp file, runs jsluice urls,
 // and returns extracted endpoints. Falls back to regex extraction on failure.
-// The step-level timeout (2h) governs overall execution; no per-file timeout.
-func runJsluiceOnContent(c *Ctx, body []byte, sourceURL string) []string {
+// fetchCtx (step timeout + skip signal) governs the jsluice execution.
+func runJsluiceOnContent(c *Ctx, fetchCtx context.Context, body []byte, sourceURL string) []string {
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("jsluice_%d_%d.js", os.Getpid(), rand.IntN(1000000)))
 	if err := os.WriteFile(tmpFile, body, 0644); err != nil {
 		return regexExtractEndpoints(string(body), sourceURL)
@@ -140,7 +145,7 @@ func runJsluiceOnContent(c *Ctx, body []byte, sourceURL string) []string {
 	tmpOut := tmpFile + ".urls.json"
 	defer os.Remove(tmpOut)
 
-	if err := c.Tb.RunJsluiceURLs(c.GoCtx, tmpFile, tmpOut); err != nil || !utils.FileExists(tmpOut) {
+	if err := c.Tb.RunJsluiceURLs(fetchCtx, tmpFile, tmpOut); err != nil || !utils.FileExists(tmpOut) {
 		// Fallback to regex extraction
 		return regexExtractEndpoints(string(body), sourceURL)
 	}
@@ -193,10 +198,13 @@ func parseJsluiceOutput(file, sourceURL string) []string {
 	return endpoints
 }
 
+// endpointPathRe matches quoted URL paths with at least two segments.
+// Compiled once — regexExtractEndpoints runs once per fetched JS file.
+var endpointPathRe = regexp.MustCompile(`["']((?:/[a-zA-Z0-9_\-./]+){2,})["']`)
+
 // regexExtractEndpoints is the fallback when jsluice is unavailable or times out.
 func regexExtractEndpoints(content, sourceURL string) []string {
-	re := regexp.MustCompile(`["']((?:/[a-zA-Z0-9_\-./]+){2,})["']`)
-	matches := re.FindAllStringSubmatch(content, -1)
+	matches := endpointPathRe.FindAllStringSubmatch(content, -1)
 
 	var endpoints []string
 	seen := make(map[string]bool)
@@ -249,15 +257,33 @@ func extractEndpointsFromSourceMap(mapBody []byte) []string {
 // Secret validation
 // ─────────────────────────────────────────────────────────────
 
+// jsSubdomainReCache caches per-domain subdomain regexes — the pattern
+// depends only on the scan domain, so compiling it once per file is waste.
+var (
+	jsSubdomainReCache   = make(map[string]*regexp.Regexp)
+	jsSubdomainReCacheMu sync.Mutex
+)
+
+func jsSubdomainRegex(domain string) *regexp.Regexp {
+	jsSubdomainReCacheMu.Lock()
+	defer jsSubdomainReCacheMu.Unlock()
+	if re, ok := jsSubdomainReCache[domain]; ok {
+		return re
+	}
+	re := regexp.MustCompile(`[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.` + regexp.QuoteMeta(domain))
+	jsSubdomainReCache[domain] = re
+	return re
+}
+
 func extractSubdomainsFromJS(content, domain string) []string {
 	if domain == "" {
 		return nil
 	}
 
 	// Match subdomains of the target domain
-	re := regexp.MustCompile(`[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.` + regexp.QuoteMeta(domain))
-	matches := re.FindAllString(content, -1)
+	matches := jsSubdomainRegex(domain).FindAllString(content, -1)
 
+	staticExts := getStaticExtensions()
 	seen := make(map[string]bool)
 	var subs []string
 	for _, m := range matches {
@@ -265,8 +291,9 @@ func extractSubdomainsFromJS(content, domain string) []string {
 		if m == domain || seen[m] {
 			continue
 		}
-		// Filter obvious non-subdomains
-		if strings.HasSuffix(m, ".js") || strings.HasSuffix(m, ".css") || strings.HasSuffix(m, ".png") {
+		// Filter matches that are really static filenames (any known
+		// static extension, not just .js/.css/.png).
+		if idx := strings.LastIndex(m, "."); idx >= 0 && staticExts[m[idx:]] {
 			continue
 		}
 		seen[m] = true

@@ -206,9 +206,9 @@ Chaathan orchestrates complex multi-stage recon chains, consolidating raw output
 | 12 | `katana`, `gospider` | Dynamic web spiders crawling client assets | `--skip-crawl` |
 | 13 | `jsluice` | JavaScript Deep Analysis (AST URL extraction + secrets + source maps) | `--skip-js` |
 | 14 | `ffuf` | Focused path discovery using wordlists | Needs `--wordlist` |
-| 15 | `x8` | Query parameter and hidden field discovery (targets curated dynamic endpoints + fuzzing results) | `--skip-x8` |
+| 15 | `x8` | Query parameter and hidden field discovery (ROI-ranked curated dynamic endpoints + fuzzing results) | `--skip-x8` |
 | 16 | `httpx` | Live verification of extracted discovery links | - |
-| 17 | `nuclei` | Proactive subdomain takeover analysis | `--skip-takeovers` |
+| 17 | `nuclei` | Proactive subdomain takeover analysis (findings live-verified before reporting) | `--skip-takeovers` |
 | 18 | `nuclei` | General infra misconfiguration & public CVE auditing | `--skip-nuclei` |
 | 19 | `nuclei` | Dynamic application testing (DAST) payload fuzzing | `--skip-nuclei` |
 | 20 | `dalfox` | High-efficiency parameterized cross-site scripting (XSS) audit | `--skip-dalfox` |

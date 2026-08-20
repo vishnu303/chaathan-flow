@@ -1,7 +1,9 @@
 package wildcard_flow_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/vishnu303/chaathan/pkg/database"
 	"github.com/vishnu303/chaathan/pkg/ingest"
 	"github.com/vishnu303/chaathan/pkg/paths"
+	"github.com/vishnu303/chaathan/pkg/scan"
 	"github.com/vishnu303/chaathan/pkg/scope"
 	"github.com/vishnu303/chaathan/pkg/wildcard_flow"
 )
@@ -22,7 +25,9 @@ func TestPathKeyAndROIScore(t *testing.T) {
 		expected string
 	}{
 		{"http://example.com/api/v1/user?id=123&token=abc", "http://example.com/api/v1/user"},
-		{"HTTPS://EXAMPLE.COM/PATH/", "https://example.com/path/"},
+		// Path case is preserved (only scheme+host lowercased) so dynamic
+		// routes with case-sensitive segments are not collapsed wrongly.
+		{"HTTPS://EXAMPLE.COM/PATH/", "https://example.com/PATH/"},
 		{"malformed_url", "malformed_url"},
 	}
 	for _, tc := range pathTests {
@@ -42,6 +47,12 @@ func TestPathKeyAndROIScore(t *testing.T) {
 	}
 	if score3 <= score2 {
 		t.Errorf("expected score with interesting param name (%d) to be higher than standard param name (%d)", score3, score2)
+	}
+
+	// Interesting params count even when their value is empty (?debug=).
+	scoreEmptyVal := wildcard_flow.URLROIScore("http://example.com/api/v1/user?debug=")
+	if scoreEmptyVal <= score1 {
+		t.Errorf("expected score with empty-value interesting param (%d) to be higher than without (%d)", scoreEmptyVal, score1)
 	}
 }
 
@@ -251,5 +262,50 @@ func TestPurgeUnconsolidatedSubdomains(t *testing.T) {
 	}
 	if subsAfter[0].Domain != "in.example.com" {
 		t.Errorf("expected 'in.example.com' to remain, got %q", subsAfter[0].Domain)
+	}
+}
+
+// TestMarkStepFailedSafe_CancellationNotFailure verifies that a parent
+// context cancellation (Ctrl-C) never records the step as failed — the step
+// must stay incomplete so resume re-runs it instead of skipping it.
+func TestMarkStepFailedSafe_CancellationNotFailure(t *testing.T) {
+	paths.ResetForTest()
+	tempDir := t.TempDir()
+	t.Setenv("CHAATHAN_HOME", tempDir)
+	_ = paths.Init()
+
+	stateMgr := scan.NewManager(paths.StateDir())
+	state, err := stateMgr.CreateState(456, "example.com", "wildcard", tempDir, len(scan.WildcardSteps), nil)
+	if err != nil {
+		t.Fatalf("failed to create state: %v", err)
+	}
+
+	// Cancelled context: failure marking must be suppressed.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c := &wildcard_flow.Ctx{
+		RunConfig: wildcard_flow.RunConfig{Domain: "example.com"},
+		GoCtx:     ctx,
+		StateMgr:  stateMgr,
+		State:     state,
+	}
+	c.MarkStepFailedSafe("passive_enum", errors.New("context canceled"))
+	if state.IsStepFailed("passive_enum") {
+		t.Error("expected cancelled step NOT to be marked failed")
+	}
+	if state.IsStepCompleted("passive_enum") {
+		t.Error("expected cancelled step to remain incomplete")
+	}
+
+	// Control: live context still records genuine failures.
+	c2 := &wildcard_flow.Ctx{
+		RunConfig: wildcard_flow.RunConfig{Domain: "example.com"},
+		GoCtx:     context.Background(),
+		StateMgr:  stateMgr,
+		State:     state,
+	}
+	c2.MarkStepFailedSafe("active_enum", errors.New("tool crashed"))
+	if !state.IsStepFailed("active_enum") {
+		t.Error("expected genuine failure to be recorded when not cancelled")
 	}
 }
