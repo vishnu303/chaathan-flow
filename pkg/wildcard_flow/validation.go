@@ -3,11 +3,11 @@
 // Validates discovered assets through DNS resolution, HTTP probing,
 // TLS analysis, and port scanning.
 //
-//  7. Consolidation & DNS Resolution (DNSx)
-//  8. DNS Brute-force (ShuffleDNS) [Optional]
-//  9. Port Scanning (Naabu) [Optional]
-//  10. Live Web Server Probing (Httpx)
-//  11. TLS Certificate Analysis (tlsx) + host metadata enrichment [Optional]
+//  6. Consolidation & DNS Resolution (DNSx)
+//  7. DNS Brute-force (ShuffleDNS) [Optional]
+//  8. Port Scanning (Naabu) [Optional]
+//  9. Live Web Server Probing (Httpx)
+//  10. TLS Certificate Analysis (tlsx) + host metadata enrichment [Optional]
 package wildcard_flow
 
 import (
@@ -32,7 +32,7 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────
-// Step 7 — Consolidation & DNS Resolution
+// Step 6 — Consolidation & DNS Resolution
 // ─────────────────────────────────────────────────────────────
 
 // stepDNSConsolidation merges all passive sources and resolves them with DNSx.
@@ -148,7 +148,7 @@ func stepDNSConsolidation(c *Ctx) flowkit.StepResult {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 8 — DNS Brute-force (ShuffleDNS)
+// Step 7 — DNS Brute-force (ShuffleDNS)
 // ─────────────────────────────────────────────────────────────
 
 // stepDNSBruteforce runs ShuffleDNS when a dns-wordlist is provided.
@@ -262,7 +262,7 @@ func stepDNSBruteforce(c *Ctx) flowkit.StepResult {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 10 — Live Web Server Probing (Httpx)
+// Step 9 — Live Web Server Probing (Httpx)
 // ─────────────────────────────────────────────────────────────
 
 // stepHTTPProbing probes all consolidated subdomains with Httpx.
@@ -320,7 +320,7 @@ func stepHTTPProbing(c *Ctx) flowkit.StepResult {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 11 — TLS Certificate Analysis (tlsx) + host metadata
+// Step 10 — TLS Certificate Analysis (tlsx) + host metadata
 // ─────────────────────────────────────────────────────────────
 
 // stepTLSAnalysis examines TLS certificates and enriches host metadata.
@@ -598,7 +598,7 @@ func rankLiveHosts(scanID int64, hosts []string) []string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 9 — Port Scanning (Naabu)
+// Step 8 — Port Scanning (Naabu)
 // ─────────────────────────────────────────────────────────────
 
 // stepPortScanning runs Naabu against all discovered subdomains.

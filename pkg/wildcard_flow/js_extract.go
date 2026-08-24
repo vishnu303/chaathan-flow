@@ -114,14 +114,7 @@ func writeJSPartialOutput(c *Ctx, endpoints []string, secrets []secretFinding, s
 		}
 		// Append to consolidated subdomains so partial discoveries still
 		// appear in the report (mirrors the full-path behavior).
-		if utils.FileExists(c.F.ConsolidatedSubs) {
-			if f, err := os.OpenFile(c.F.ConsolidatedSubs, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
-				for _, s := range subdomains {
-					fmt.Fprintln(f, s)
-				}
-				f.Close()
-			}
-		}
+		appendSubsToConsolidated(c, subdomains)
 	}
 	meta := fmt.Sprintf("// JS Deep Analysis (PARTIAL) | Files: %d | Maps: %d | Size: %.2f MB | Endpoints: %d | Secrets: %d | Subdomains: %d\n",
 		filesFetched, mapsFetched, float64(totalBytes)/(1024*1024), len(endpoints), len(secrets), len(subdomains))

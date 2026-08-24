@@ -41,16 +41,13 @@ var jsSecretPatterns = []secretPattern{
 	{"jwt", regexp.MustCompile(`eyJhbGciOi[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)},
 	{"private-key", regexp.MustCompile(`-----BEGIN [A-Z ]+ PRIVATE KEY-----`)},
 	{"db-connection", regexp.MustCompile(`(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis)://[^\s"'<>]+`)},
-	{"firebase", regexp.MustCompile(`[a-z0-9-]+\.firebaseio\.com`)},
+	{"firebase", regexp.MustCompile(`[a-z0-9-]+\.(?:firebaseio\.com|firebasedatabase\.app)`)},
 	{"generic-secret", regexp.MustCompile(`(?i)(?:api[_-]?key|secret|token|password)\s*[=:]\s*["']([A-Za-z0-9+/=_\-]{16,})["']`)},
 }
 
 // ─────────────────────────────────────────────────────────────
-// Priority ranking
+// Secret findings
 // ─────────────────────────────────────────────────────────────
-
-// rankJSURLs scores and sorts JS URLs by priority so high-value files are
-// fetched first. Returns a new sorted slice (does not mutate input).
 
 type secretFinding struct {
 	URL     string
@@ -145,6 +142,12 @@ func scanSourceMapContent(mapBody []byte, jsURL string) []secretFinding {
 					continue
 				}
 				ctx := extractSecretContext(content, sp.Regex, m[0])
+				// Same false-positive gate as scanSecrets — public-by-design
+				// values (Datadog RUM tokens etc.) must not surface from
+				// source maps either.
+				if isFalsePositiveContext(ctx) {
+					continue
+				}
 				findings = append(findings, secretFinding{
 					URL:     source,
 					Pattern: sp.Name,
@@ -422,8 +425,9 @@ func validateStripeKey(ctx context.Context, client *http.Client, context string)
 }
 
 func validateFirebase(ctx context.Context, client *http.Client, context string) string {
-	// Extract firebase project URL
-	re := regexp.MustCompile(`([a-z0-9-]+\.firebaseio\.com)`)
+	// Extract firebase project URL (legacy *.firebaseio.com and current
+	// *.firebasedatabase.app default RTDB domains).
+	re := regexp.MustCompile(`([a-z0-9-]+\.(?:firebaseio\.com|firebasedatabase\.app))`)
 	m := re.FindString(context)
 	if m == "" {
 		return "unverified"

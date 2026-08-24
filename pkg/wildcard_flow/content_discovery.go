@@ -4,12 +4,12 @@
 // Wayback/GAU run here (not in Phase 1) so URLs are collected
 // only for validated live hosts.
 //
-//  12. Historical URL Discovery (Waybackurls + GAU) [Parallel]
-//  13. Web Crawling (Katana + GoSpider) [Parallel, Optional]
-//  14. JavaScript Deep Analysis (jsluice + secrets) — see js_deep_analysis.go
-//  15. Directory Fuzzing (ffuf) [Optional — requires --wordlist]
-//  16. HTTP Parameter Discovery (x8) [Optional]
-//  17. URL Consolidation & Live Check (httpx) + ROI metadata
+//  11. Historical URL Discovery (Waybackurls + GAU) [Parallel]
+//  12. Web Crawling (Katana + GoSpider) [Parallel, Optional]
+//  13. JavaScript Deep Analysis (jsluice + secrets) — see js_deep_analysis.go
+//  14. Directory Fuzzing (ffuf) [Optional — requires --wordlist]
+//  15. HTTP Parameter Discovery (x8) [Optional]
+//  16. URL Consolidation & Live Check (httpx) + ROI metadata
 package wildcard_flow
 
 import (
@@ -236,12 +236,12 @@ func stepWebCrawling(c *Ctx) flowkit.StepResult {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 16 — HTTP Parameter Discovery (x8)
+// Step 15 — HTTP Parameter Discovery (x8)
 // ─────────────────────────────────────────────────────────────
 
-// stepParamDiscovery discovers HTTP parameters with x8 (Step 16).
+// stepParamDiscovery discovers HTTP parameters with x8 (Step 15).
 // After a successful run it converts discovered params into parameterized URLs
-// (written to X8URLsOut) so they flow into Step 17 consolidation and
+// (written to X8URLsOut) so they flow into Step 16 consolidation and
 // downstream scanners (Nuclei/Dalfox).
 // Returns true if the scan should be cancelled.
 func stepParamDiscovery(c *Ctx) flowkit.StepResult {
@@ -529,7 +529,7 @@ func isHighSignalURL(parsed *url.URL, extensions, keywords []string) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 15 — URL Consolidation & Live Check
+// Step 16 — URL Consolidation & Live Check
 // ─────────────────────────────────────────────────────────────
 
 // stepURLConsolidation merges all URL sources, live-checks them with Httpx,
@@ -655,7 +655,7 @@ func enrichROIMetadata(c *Ctx) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Step 17 — Directory Fuzzing (ffuf)
+// Step 14 — Directory Fuzzing (ffuf)
 // ─────────────────────────────────────────────────────────────
 
 // ffufMaxTimeout returns the total time budget for the entire ffuf step
@@ -780,7 +780,9 @@ func ffufTargetHosts(c *Ctx) []string {
 // fuzzAllHostsWithFfuf runs ffuf across all hosts under a single step
 // timeout, granting each host a fair per-host budget (total / host count,
 // floor 2 min) so one slow host cannot consume the budget of the rest.
-// Decoded results are appended under resultsMu.
+// When the per-host floor pushes host count × floor past the total budget,
+// the list is truncated (hosts are ROI-ranked, so the tail would otherwise
+// run with zero effective time). Decoded results are appended under resultsMu.
 func fuzzAllHostsWithFfuf(c *Ctx, sCtx context.Context, liveHosts []string, allResults *[]localFfufResult, resultsMu *sync.Mutex) error {
 	// Apply a single timeout for the entire ffuf step (all hosts combined).
 	totalBudget := ffufMaxTimeout(c)
@@ -790,6 +792,16 @@ func fuzzAllHostsWithFfuf(c *Ctx, sCtx context.Context, liveHosts []string, allR
 	perHostBudget := totalBudget / time.Duration(len(liveHosts))
 	if perHostBudget < 2*time.Minute {
 		perHostBudget = 2 * time.Minute
+	}
+
+	maxHosts := int(totalBudget / perHostBudget)
+	if maxHosts < 1 {
+		maxHosts = 1
+	}
+	if len(liveHosts) > maxHosts {
+		logger.Info("ffuf time budget (%s) allows %d of %d live hosts at %s/host — remaining hosts skipped (ROI-ranked)",
+			totalBudget, maxHosts, len(liveHosts), perHostBudget)
+		liveHosts = liveHosts[:maxHosts]
 	}
 
 	for _, host := range liveHosts {
@@ -941,7 +953,7 @@ func isJavaScriptURL(raw string) bool {
 }
 
 // ─────────────────────────────────────────────────────────────
-// convertX8ToURLs — Step 16 helper
+// convertX8ToURLs — Step 15 helper
 // ─────────────────────────────────────────────────────────────
 
 // x8Result represents one entry in x8's -O json output.

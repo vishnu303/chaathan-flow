@@ -62,7 +62,7 @@ func fetchJSFile(c *Ctx, fetchCtx context.Context, client *http.Client, jsURL st
 
 // sourceMappingURLRe matches the source map directive comment
 // ("//# sourceMappingURL=..." or legacy "//@ sourceMappingURL=...").
-var sourceMappingURLRe = regexp.MustCompile(`[//@]#\s*sourceMappingURL=(\S+)`)
+var sourceMappingURLRe = regexp.MustCompile(`(?://#|//@)\s*sourceMappingURL=(\S+)`)
 
 // sourceMapCandidates returns candidate source map URLs for a JS file:
 // first the sourceMappingURL directive resolved against the JS URL, then

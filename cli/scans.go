@@ -287,6 +287,12 @@ func resumeScanByID(scanID int64) {
 
 	switch state.Type {
 	case "wildcard":
+		// Auth material is persisted as presence flags only (never values),
+		// so authenticated resumes need the flags supplied again.
+		if boolOpt("custom_cookie") || boolOpt("custom_token") || sliceOpt("custom_headers") != nil {
+			logger.Warning("Original scan used --cookie/--header/--token authentication; pass them again to resume with authentication.")
+		}
+
 		// Resolve GitHub token from config file (token not stored in state for security)
 		token := ""
 		if Cfg != nil {
@@ -320,9 +326,6 @@ func resumeScanByID(scanID int64) {
 			ResumeScanID:    scanID,
 			GenerateReport:  true,
 			SaveLog:         boolOpt("save_log"),
-			CustomCookie:    strOpt("custom_cookie"),
-			CustomHeaders:   sliceOpt("custom_headers"),
-			CustomToken:     strOpt("custom_token"),
 			AutoProxy:       boolOpt("auto_proxy"),
 		}); err != nil {
 			logger.Error("Resume failed: %v", err)

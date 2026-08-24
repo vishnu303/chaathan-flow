@@ -475,9 +475,11 @@ func marshalRunConfig(cfg RunConfig) []byte {
 		"github":           cfg.GitHubToken != "",
 		"auto_proxy":       cfg.AutoProxy,
 		"save_log":         cfg.SaveLog,
-		"custom_cookie":    cfg.CustomCookie,
-		"custom_headers":   cfg.CustomHeaders,
-		"custom_token":     cfg.CustomToken,
+		// Auth material is persisted as presence flags only — never store
+		// cookie/token values in the on-disk scan state.
+		"custom_cookie":  cfg.CustomCookie != "",
+		"custom_headers": len(cfg.CustomHeaders) > 0,
+		"custom_token":   cfg.CustomToken != "",
 	})
 	return configJSON
 }
@@ -562,6 +564,9 @@ func warnResumeConfigDiffs(scanState *scan.State, cfg *RunConfig) {
 	checkBoolDiff("skip_js", cfg.SkipJS)
 	checkBoolDiff("auto_proxy", cfg.AutoProxy)
 	checkBoolDiff("save_log", cfg.SaveLog)
+	// Auth options are persisted as presence flags (see marshalRunConfig).
+	checkBoolDiff("custom_cookie", cfg.CustomCookie != "")
+	checkBoolDiff("custom_token", cfg.CustomToken != "")
 
 	checkStringDiff := func(key string, current string) {
 		if val, ok := persistedMap[key].(string); ok && val != current {
@@ -571,8 +576,6 @@ func warnResumeConfigDiffs(scanState *scan.State, cfg *RunConfig) {
 	checkStringDiff("wordlist", cfg.WordlistPath)
 	checkStringDiff("dns_wordlist", cfg.DNSWordlistPath)
 	checkStringDiff("resolvers", cfg.ResolversPath)
-	checkStringDiff("custom_cookie", cfg.CustomCookie)
-	checkStringDiff("custom_token", cfg.CustomToken)
 }
 
 // stepEntry pairs a scan step name with its phase label and implementation.
@@ -766,7 +769,7 @@ func (c *Ctx) stepFindingFiles() map[string][]string {
 		// Subdomains are consolidated later, but we can count the underlying outputs.
 		"active_enum":             {c.F.AmassOut},
 		"github_recon":            {c.F.GithubSubsOut},
-		"search_engine_recon":     {c.F.UncoverOut},
+		"search_engine_recon":     {c.F.UncoverHostsOut},
 		"dns_bruteforce":          {c.F.ShufflednsOut},
 		"http_probing":            {c.F.HttpxLiveHosts},
 		"tls_analysis":            {c.F.TlsxOut},
@@ -912,6 +915,7 @@ func generateFinalReport(c *Ctx, status string) {
 	logger.Info("Generating report...")
 	rpt, err := report.Generate(c.ScanID)
 	if err != nil {
+		logger.Warning("Failed to generate report: %v", err)
 		return
 	}
 	reportPath := filepath.Join(paths.ReportsDir(), fmt.Sprintf("scan_%d.md", c.ScanID))

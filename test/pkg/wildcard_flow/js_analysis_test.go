@@ -43,6 +43,7 @@ func TestSourceMapCandidates(t *testing.T) {
 			body: "//@ sourceMappingURL=legacy.map\n",
 			want: []string{
 				"https://example.com/legacy.map",
+				"https://example.com/legacy.js.map",
 			},
 		},
 		{

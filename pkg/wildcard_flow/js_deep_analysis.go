@@ -11,11 +11,15 @@
 package wildcard_flow
 
 import (
+	"bufio"
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -180,6 +184,8 @@ func jsURLLimit(c *Ctx) int {
 // gatherJSURLs collects unique, useful JS URLs from all crawler outputs and
 // ffuf discoveries. The consolidated live URL set is deliberately not used:
 // url_consolidation (Step 16) has not run yet at this point in the flow.
+// Files are streamed line-by-line so huge wayback/gau outputs never load
+// fully into memory.
 func gatherJSURLs(c *Ctx) []string {
 	// Gather JS URLs from all crawler outputs
 	var allJSURLs []string
@@ -195,15 +201,21 @@ func gatherJSURLs(c *Ctx) []string {
 		if !utils.FileExists(file) {
 			continue
 		}
-		lines, _ := utils.ReadNonEmptyLines(file)
-		for _, line := range lines {
-			u := extractPrimaryURL(line)
+		f, err := os.Open(file)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for scanner.Scan() {
+			u := extractPrimaryURL(scanner.Text())
 			if u == "" || seen[u] || !isUsefulJSURL(u) {
 				continue
 			}
 			seen[u] = true
 			allJSURLs = append(allJSURLs, u)
 		}
+		f.Close()
 	}
 
 	if len(allJSURLs) == 0 {
@@ -334,8 +346,22 @@ func (agg *jsAnalysisAgg) analyzeJSFile(c *Ctx, fetchCtx context.Context, client
 	agg.mu.Unlock()
 }
 
+// secretValidationPriority ranks patterns by live-validation value.
+// Provider-checkable findings outrank generic/unvalidatable ones so the
+// validation limit keeps the most actionable candidates.
+var secretValidationPriority = map[string]int{
+	"aws-keys":      0,
+	"github":        1,
+	"stripe":        2,
+	"google-api":    3,
+	"slack-webhook": 4,
+	"firebase":      5,
+	"jwt":           6,
+}
+
 // validateJSSecrets runs live validation against provider APIs for the top
-// secret findings.
+// secret findings. Findings are sorted in place (validation mutates them)
+// so confirmed statuses flow through to persistence and notifications.
 func validateJSSecrets(c *Ctx, client *http.Client, cfg jsAnalysisDefaults, secretFindings []secretFinding) {
 	if cfg.SkipValidation || len(secretFindings) == 0 {
 		return
@@ -345,6 +371,9 @@ func validateJSSecrets(c *Ctx, client *http.Client, cfg jsAnalysisDefaults, secr
 		validateLimit = len(secretFindings)
 	}
 	logger.ToolStart("Secret Validation")
+	slices.SortStableFunc(secretFindings, func(a, b secretFinding) int {
+		return cmp.Compare(secretValidationPriority[a.Pattern], secretValidationPriority[b.Pattern])
+	})
 	validateSecrets(c.GoCtx, client, secretFindings[:validateLimit])
 }
 
@@ -380,14 +409,7 @@ func writeJSOutputFiles(c *Ctx, endpoints []string, secretFindings []secretFindi
 			}
 		}
 		// Append to consolidated subdomains so they appear in the report
-		if utils.FileExists(c.F.ConsolidatedSubs) {
-			if f, err := os.OpenFile(c.F.ConsolidatedSubs, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
-				for _, s := range subdomains {
-					fmt.Fprintln(f, s)
-				}
-				f.Close()
-			}
-		}
+		appendSubsToConsolidated(c, subdomains)
 	}
 	return endpoints, subdomains
 }
@@ -404,6 +426,40 @@ func filterJSSubdomainsToScope(c *Ctx, subdomains []string) []string {
 		}
 	}
 	return filtered
+}
+
+// appendSubsToConsolidated appends subdomains to ConsolidatedSubs, skipping
+// entries already present so the product file never accumulates duplicate
+// lines across full runs and partial (skip/cancel) saves.
+func appendSubsToConsolidated(c *Ctx, subdomains []string) {
+	if len(subdomains) == 0 || !utils.FileExists(c.F.ConsolidatedSubs) {
+		return
+	}
+	existing := make(map[string]bool)
+	if f, err := os.Open(c.F.ConsolidatedSubs); err == nil {
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			if line := strings.ToLower(strings.TrimSpace(scanner.Text())); line != "" {
+				existing[line] = true
+			}
+		}
+		f.Close()
+	}
+	var fresh []string
+	for _, s := range subdomains {
+		if !existing[strings.ToLower(strings.TrimSpace(s))] {
+			fresh = append(fresh, s)
+		}
+	}
+	if len(fresh) == 0 {
+		return
+	}
+	if f, err := os.OpenFile(c.F.ConsolidatedSubs, os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+		for _, s := range fresh {
+			fmt.Fprintln(f, s)
+		}
+		f.Close()
+	}
 }
 
 // persistJSPartialFindingsToDB ingests partial (skip/cancel) JS output into

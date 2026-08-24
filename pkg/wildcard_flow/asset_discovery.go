@@ -178,16 +178,18 @@ func stepActiveEnum(c *Ctx) flowkit.StepResult {
 // stepGitHubRecon runs github-subdomains when a token is available.
 // Returns true if the scan should be cancelled.
 func stepGitHubRecon(c *Ctx) flowkit.StepResult {
+	// Resume check first — consistent with every other step so a resumed
+	// scan never re-marks an incomplete step behind a skip guard.
+	if skipped, cancelled := c.resumeOrSkip("github_recon", "Step 4: GitHub Subdomain Discovery"); skipped {
+		return flowkit.StepResult{Cancelled: cancelled}
+	}
+
 	if c.GitHubToken == "" {
 		logger.StepHeader("Step 4: Skipping GitHub Recon (set api_keys.github or --github-token)")
 		logger.Warning("Set api_keys.github in config.yaml or pass --github-token flag for GitHub recon")
 		logger.FileDebug("github_recon skipped: no token provided")
 		c.markStepCompleteIfNoFailure("github_recon")
 		return flowkit.StepResult{Cancelled: c.cancelled()}
-	}
-
-	if skipped, cancelled := c.resumeOrSkip("github_recon", "Step 4: GitHub Subdomain Discovery"); skipped {
-		return flowkit.StepResult{Cancelled: cancelled}
 	}
 
 	writeEmptyFile(c.F.GithubSubsOut)
